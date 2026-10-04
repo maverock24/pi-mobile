@@ -66,29 +66,25 @@ the composer and partial words show above it. Nothing is sent until you tap
 
 ## Updates
 
-The repository is **private**. Updates travel over your tailnet instead of a public
-URL:
+Every push to `main` builds a signed release APK in GitHub Actions and replaces the
+rolling `latest-build` release, together with a `latest.json` manifest carrying the
+versionCode, APK url, sha256 and commit. That release is public, so the app needs no
+credential to update:
 
-1. CI builds a signed APK on every push to main and publishes it to this repo's
-   rolling `latest-build` release.
-2. `pi-remote-release-sync` on the laptop (enabled as a 15 minute systemd timer,
-   `/etc/systemd/system/pi-remote-release-sync.timer`) pulls those assets into
-   `~/.local/share/pi-remote/release/`.
-3. The bridge serves them at `GET /api/release/latest.json` and
-   `GET /api/release/apk`, both behind the device token, and rewrites the APK url
-   in the manifest to a path on itself.
-4. The app checks that manifest against its configured bridge URL and installs
-   only what matches the manifest sha256 **and** this app's signing certificate.
+1. On launch, and on **Update** in the title bar, the app fetches
+   `releases/latest/download/latest.json`.
+2. If the versionCode is newer, it downloads the APK from the url in the manifest.
+3. It installs only what passes both checks: the sha256 from the manifest, and a
+   comparison of the APK's signing certificate against the installed app's. The
+   second one is the check that matters, since it is pinned on the device rather
+   than fetched.
 
-Because the app fetches from the bridge, nothing about the release is public, and
-the update works from mobile data as long as Tailscale is up.
+The manifest url is allowlisted to `https://github.com/maverock24/pi-mobile/releases/`,
+so a tampered manifest cannot redirect the download elsewhere.
 
-### Old section, kept for reference
-
-Every push to `main` builds a signed release APK in GitHub Actions and replaces
-the rolling `latest-build` release, together with a `latest.json` manifest
-(versionCode, APK url, sha256, commit). The app checks that manifest on launch and
-offers to install newer builds; **Update** in the title bar checks on demand.
+An optional second path exists if this repository ever goes private again: the bridge
+carries `GET /api/release/latest.json` and `GET /api/release/apk` behind the device
+token, fed by `pi-remote-release-sync`. The app does not use it today.
 
 ## Releases and secrets
 
