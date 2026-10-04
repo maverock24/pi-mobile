@@ -29,7 +29,10 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
     private fun builder(path: String): Request.Builder {
         val (base, token) = config()
         val url = base.trim().trimEnd('/') + path
-        return Request.Builder().url(url).header("Authorization", "Bearer $token")
+        val request = runCatching { Request.Builder().url(url) }.getOrElse {
+            throw IOException("invalid bridge URL '$base' — it needs a scheme, host and port")
+        }
+        return request.header("Authorization", "Bearer $token")
     }
 
     private fun execute(request: Request): JSONObject {

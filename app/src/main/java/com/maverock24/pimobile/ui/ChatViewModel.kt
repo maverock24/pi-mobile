@@ -72,21 +72,28 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         statusLine = "connecting to ${store.baseUrl}"
-        streamCall = client.streamEvents(
-            onOpen = { main.post { connected = true; statusLine = "connected" } },
-            onEvent = { event -> main.post { handleEvent(event) } },
-            onClosed = { error ->
-                main.post {
-                    connected = false
-                    busy = false
-                    statusLine = if (error == null) {
-                        "disconnected"
-                    } else {
-                        Diagnostics.describe(error, store.baseUrl)
+        val call = runCatching {
+            client.streamEvents(
+                onOpen = { main.post { connected = true; statusLine = "connected" } },
+                onEvent = { event -> main.post { handleEvent(event) } },
+                onClosed = { error ->
+                    main.post {
+                        connected = false
+                        busy = false
+                        statusLine = if (error == null) {
+                            "disconnected"
+                        } else {
+                            Diagnostics.describe(error, store.baseUrl)
+                        }
                     }
-                }
-            },
-        )
+                },
+            )
+        }.getOrElse { error ->
+            statusLine = Diagnostics.describe(error, store.baseUrl)
+            connected = false
+            return
+        }
+        streamCall = call
         reloadHistory()
         refreshState()
     }

@@ -102,7 +102,8 @@ object UpdateChecker {
         runCatching { context.startActivity(intent) }
     }
 
-    fun install(context: Context, apk: File) {
+    /** Returns null on success, or a message describing why the installer could not start. */
+    fun install(context: Context, apk: File): String? = runCatching {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
@@ -110,5 +111,5 @@ object UpdateChecker {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
-    }
+    }.exceptionOrNull()?.let { "could not start installer (${it.javaClass.simpleName})" }
 }

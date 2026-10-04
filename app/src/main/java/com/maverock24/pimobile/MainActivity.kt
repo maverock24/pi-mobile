@@ -128,8 +128,7 @@ class MainActivity : ComponentActivity() {
                                                 notice = "Allow installs for Pi Remote, then tap the banner again"
                                                 pendingUpdate = null
                                             } else {
-                                                UpdateChecker.install(context, file)
-                                                notice = "Installer launched"
+                                                notice = UpdateChecker.install(context, file) ?: "Installer launched"
                                             }
                                         }
                                         .onFailure { notice = "Update failed: ${it.message}" }
@@ -148,7 +147,7 @@ class MainActivity : ComponentActivity() {
                                                     UpdateChecker.requestInstallPermission(context)
                                                     notice = "Allow installs for Pi Remote, then check for updates again"
                                                 } else {
-                                                    UpdateChecker.install(context, file)
+                                                    notice = UpdateChecker.install(context, file)
                                                 }
                                             }
                                             .onFailure { notice = "Update failed: ${it.message}" }

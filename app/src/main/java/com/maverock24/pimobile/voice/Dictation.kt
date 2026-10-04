@@ -62,9 +62,16 @@ class Dictation(
 
     private fun beginSession() {
         if (!listening) return
-        val existing = recognizer ?: SpeechRecognizer.createSpeechRecognizer(context).also {
-            it.setRecognitionListener(listener)
-            recognizer = it
+        val existing = recognizer ?: runCatching {
+            SpeechRecognizer.createSpeechRecognizer(context).also {
+                it.setRecognitionListener(listener)
+                recognizer = it
+            }
+        }.getOrElse {
+            listening = false
+            onListeningChanged(false)
+            onError("Speech recogniser unavailable: ${it.javaClass.simpleName}")
+            return
         }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
