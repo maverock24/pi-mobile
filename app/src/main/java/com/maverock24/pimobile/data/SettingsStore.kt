@@ -19,6 +19,8 @@ class SettingsStore(context: Context) {
         get() = token.isNotBlank()
 
     companion object {
-        const val DEFAULT_BASE_URL = "http://192.0.2.1:8787"
+        // MagicDNS name: Android's cleartext policy is evaluated per hostname, so
+        // the name is more reliable than the raw tailnet IP.
+        const val DEFAULT_BASE_URL = "http://your-laptop.your-tailnet.ts.net:8787"
     }
 }

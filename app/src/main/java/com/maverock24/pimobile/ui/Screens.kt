@@ -262,11 +262,12 @@ fun SettingsScreen(
                 value = baseUrl,
                 onValueChange = { baseUrl = it },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("http://192.0.2.1:8787") },
+                placeholder = { Text("http://your-laptop.your-tailnet.ts.net:8787") },
             )
             Text(
-                text = "The laptop address on your tailnet. Inside Termux on the laptop: " +
-                    "`tailscale ip -4` prints it.",
+                text = "The laptop on your tailnet. The MagicDNS name is the default because " +
+                    "Android evaluates its cleartext-HTTP policy per hostname; `tailscale ip -4` on " +
+                    "the laptop prints the raw address if you need it.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -285,7 +286,7 @@ fun SettingsScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { onSave(baseUrl, token) }) { Text("Save") }
                 Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(onClick = onTest) { Text("Test") }
+                TextButton(onClick = onTest) { Text("Test") }
             }
             if (statusLine.isNotBlank()) {
                 Text(statusLine, style = MaterialTheme.typography.bodyMedium)

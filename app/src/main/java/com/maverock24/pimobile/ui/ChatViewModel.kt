@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.maverock24.pimobile.data.SettingsStore
+import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
 import kotlinx.coroutines.launch
 import okhttp3.Call
@@ -77,7 +78,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 main.post {
                     connected = false
                     busy = false
-                    statusLine = error?.message ?: "disconnected"
+                    statusLine = if (error == null) {
+                        "disconnected"
+                    } else {
+                        Diagnostics.describe(error, store.baseUrl)
+                    }
                 }
             },
         )
@@ -105,7 +110,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         .filter { it.isNotBlank() }
                         .joinToString(" · ")
                 }
-                .onFailure { lastError = "state: ${it.message}" }
+                .onFailure { lastError = "state: ${Diagnostics.describe(it, store.baseUrl)}" }
         }
     }
 
@@ -122,7 +127,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     messages.clear()
                     messages.addAll(parsed)
                 }
-                .onFailure { lastError = "history: ${it.message}" }
+                .onFailure { lastError = "history: ${Diagnostics.describe(it, store.baseUrl)}" }
         }
     }
 
@@ -148,7 +153,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { client.prompt(trimmed) }
                 .onFailure {
                     busy = false
-                    lastError = "prompt failed: ${it.message}"
+                    lastError = "prompt: ${Diagnostics.describe(it, store.baseUrl)}"
                 }
         }
     }
@@ -159,9 +164,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun testConnection() {
         viewModelScope.launch {
+            val context = getApplication<Application>()
+            statusLine = Diagnostics.probe(context, store.baseUrl)
             runCatching { client.state() }
-                .onSuccess { statusLine = "connection OK · ${store.baseUrl}" }
-                .onFailure { statusLine = "failed: ${it.message}" }
+                .onSuccess { statusLine = "$statusLine · HTTP OK" }
+                .onFailure { statusLine = "$statusLine · ${Diagnostics.describe(it, store.baseUrl)}" }
         }
     }
 
