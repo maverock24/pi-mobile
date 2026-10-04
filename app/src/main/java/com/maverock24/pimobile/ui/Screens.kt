@@ -125,7 +125,6 @@ fun ChatScreen(
                     items(results, key = { it.id }) { message ->
                         AnswerView(
                             text = message.text,
-                            streaming = message.streaming,
                             modifier = Modifier.widthIn(max = AnswerStyle.measure),
                         )
                     }

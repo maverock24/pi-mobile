@@ -14,7 +14,8 @@ package com.maverock24.pimobile.ui
 sealed interface AnswerBlock {
     data class Heading(val level: Int, val text: String) : AnswerBlock
     data class Paragraph(val text: String) : AnswerBlock
-    data class Bullets(val items: List<String>, val ordered: Boolean) : AnswerBlock
+    data class Quote(val text: String) : AnswerBlock
+    data class Bullets(val items: List<BulletItem>, val ordered: Boolean) : AnswerBlock
     data class Code(val language: String?, val code: String) : AnswerBlock
     data class Diff(val path: String?, val lines: List<DiffLine>) : AnswerBlock {
         val added: Int get() = lines.count { it.kind == DiffLine.Kind.ADD }
@@ -24,13 +25,17 @@ sealed interface AnswerBlock {
     data object Rule : AnswerBlock
 }
 
+/** One list entry. [level] is nesting depth, [marker] marks a bullet inside an ordered list. */
+data class BulletItem(val text: String, val level: Int = 0, val marker: Boolean = false)
+
 data class DiffLine(val kind: Kind, val text: String) {
     enum class Kind { ADD, DEL, CONTEXT }
 }
 
 private val headingRegex = Regex("^(#{1,6})\\s+(.*)$")
-private val bulletRegex = Regex("^\\s*[-*+]\\s+(.*)$")
-private val orderedRegex = Regex("^\\s*\\d+[.)]\\s+(.*)$")
+private val bulletRegex = Regex("^(\\s*)[-*+]\\s+(.*)$")
+private val orderedRegex = Regex("^(\\s*)\\d+[.)]\\s+(.*)$")
+private val quoteRegex = Regex("^\\s*>\\s?(.*)$")
 private val ruleRegex = Regex("^\\s*([-*_])\\1{2,}\\s*$")
 private val tableRowRegex = Regex("^\\s*\\|(.+)\\|\\s*$")
 private val tableDividerRegex = Regex("^\\s*\\|?[\\s:-]*-[\\s|:-]*$")
@@ -101,24 +106,40 @@ fun parseAnswerBlocks(text: String): List<AnswerBlock> {
             continue
         }
 
-        if (bulletRegex.matches(trimmed) || orderedRegex.matches(trimmed)) {
+        if (quoteRegex.matches(line)) {
             flushParagraph()
-            val ordered = orderedRegex.matches(trimmed)
-            val items = ArrayList<String>()
+            val quoted = ArrayList<String>()
             while (index < lines.size) {
-                val candidate = lines[index].trim()
-                val match = if (ordered) orderedRegex.find(candidate) else bulletRegex.find(candidate)
+                val match = quoteRegex.find(lines[index])
                 if (match == null) break
-                items.add(match.groupValues[1].trim())
+                quoted.add(match.groupValues[1].trim())
+                index++
+            }
+            blocks.add(AnswerBlock.Quote(quoted.joinToString(" ").trim()))
+            continue
+        }
+
+        if (bulletRegex.matches(line) || orderedRegex.matches(line)) {
+            flushParagraph()
+            val ordered = orderedRegex.matches(line)
+            val items = ArrayList<BulletItem>()
+            while (index < lines.size) {
+                val isOrdered = orderedRegex.matches(lines[index])
+                val isBullet = bulletRegex.matches(lines[index])
+                if (!isOrdered && !isBullet) break
+                val match = (if (isOrdered) orderedRegex else bulletRegex).find(lines[index])!!
+                val level = (match.groupValues[1].length / 2).coerceIn(0, 3)
+                items.add(BulletItem(text = match.groupValues[2].trim(), level = level, marker = ordered && isBullet))
                 index++
                 // continuation lines belong to the current item
                 while (index < lines.size) {
                     val next = lines[index]
                     if (next.isBlank()) break
                     val nextTrimmed = next.trim()
-                    if (bulletRegex.matches(nextTrimmed) || orderedRegex.matches(nextTrimmed)) break
-                    if (headingRegex.matches(nextTrimmed) || nextTrimmed.startsWith("```")) break
-                    items[items.size - 1] = items[items.size - 1] + " " + nextTrimmed
+                    if (bulletRegex.matches(next) || orderedRegex.matches(next)) break
+                    if (headingRegex.matches(nextTrimmed) || nextTrimmed.startsWith("```") || quoteRegex.matches(next)) break
+                    val last = items.removeAt(items.size - 1)
+                    items.add(last.copy(text = last.text + " " + nextTrimmed))
                     index++
                 }
             }

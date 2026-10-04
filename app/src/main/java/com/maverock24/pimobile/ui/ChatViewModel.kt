@@ -56,7 +56,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     private var streamCall: Call? = null
-    private var streamingId: String? = null
+
+    /**
+     * Answers are committed only when the run settles, and only if the message
+     * carried no tool calls. Intermediate narration ("let me check the file")
+     * therefore never reaches the screen: the phone shows the result, not the
+     * process.
+     */
+    private val runCandidates = ArrayList<Pair<String, Boolean>>()
+    private var activeAssistant: StringBuilder? = null
+    private var activeHasToolCalls = false
 
     val baseUrl: String get() = store.baseUrl
     val token: String get() = store.token
@@ -139,7 +148,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val parsed = ArrayList<ChatMessage>()
                     for (index in 0 until array.length()) {
                         val entry = array.optJSONObject(index) ?: continue
-                        toMessage(entry)?.let { parsed.add(it) }
+                        val message = toMessage(entry) ?: continue
+                        if (message.role == "assistant" && message.toolName != null) {
+                            continue // narration on the way to a tool call
+                        }
+                        parsed.add(message)
                     }
                     messages.clear()
                     messages.addAll(parsed)
@@ -249,66 +262,70 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 if (file.isNotBlank()) sessionTitle = data.optString("sessionName").takeIf { it.isNotBlank() && it != "null" } ?: file
             }
             "prompt_accepted", "agent_start", "turn_start" -> busy = true
-            "agent_settled", "agent_end" -> {
+            "agent_settled" -> {
                 busy = false
-                streamingId = null
+                commitRun()
+                refreshState()
+            }
+            "agent_end" -> {
+                // The run may still retry or pick up a queued follow-up, so keep
+                // the busy state and wait for agent_settled before showing text.
                 refreshState()
             }
             "message_start" -> {
                 val message = data.optJSONObject("message")
-                val role = message?.optString("role").orEmpty()
-                if (role == "assistant") {
-                    val id = "assistant-${UUID.randomUUID()}"
-                    streamingId = id
-                    messages.add(ChatMessage(id = id, role = "assistant", text = textOf(message, "content"), streaming = true))
-                } else if (role == "user") {
-                    val text = textOf(message, "content")
-                    if (text.isNotBlank() && messages.none { it.role == "user" && it.text == text }) {
-                        messages.add(ChatMessage(id = "user-${UUID.randomUUID()}", role = "user", text = text))
+                when (message?.optString("role").orEmpty()) {
+                    "assistant" -> {
+                        activeAssistant = StringBuilder(textOf(message, "content"))
+                        activeHasToolCalls = hasToolCalls(message)
                     }
+                    "user" -> runCandidates.clear() // a new prompt starts a new answer
                 }
             }
             "message_update" -> {
                 val delta = data.optJSONObject("assistantMessageEvent")?.optString("delta").orEmpty()
-                val id = streamingId ?: return
-                val index = messages.indexOfFirst { it.id == id }
-                if (index >= 0 && delta.isNotEmpty()) {
-                    val current = messages[index]
-                    messages[index] = current.copy(text = current.text + delta)
+                if (delta.isNotEmpty()) {
+                    activeAssistant?.append(delta)
                 }
             }
             "message_end" -> {
                 val message = data.optJSONObject("message")
-                val id = streamingId
-                if (id != null && message?.optString("role") == "assistant") {
-                    val index = messages.indexOfFirst { it.id == id }
-                    if (index >= 0) {
-                        val finalText = textOf(message, "content").ifBlank { messages[index].text }
-                        messages[index] = messages[index].copy(text = finalText, streaming = false)
-                    }
+                if (message?.optString("role") == "assistant") {
+                    val text = activeAssistant?.toString()?.ifBlank { textOf(message, "content") }
+                        ?: textOf(message, "content")
+                    runCandidates.add(text to (activeHasToolCalls || hasToolCalls(message)))
+                    activeAssistant = null
+                    activeHasToolCalls = false
                 }
-                streamingId = null
             }
-            "tool_execution_start" -> {
-                val name = data.optString("toolName")
-                messages.add(
-                    ChatMessage(
-                        id = "tool-${data.optString("toolCallId", UUID.randomUUID().toString())}",
-                        role = "tool",
-                        text = summarizeArgs(data.opt("args")),
-                        toolName = name,
-                    ),
-                )
-            }
-            "tool_execution_end" -> {
-                val callId = data.optString("toolCallId")
-                val index = messages.indexOfFirst { it.id == "tool-$callId" }
-                if (index >= 0 && data.optBoolean("isError", false)) {
-                    messages[index] = messages[index].copy(isError = true)
-                }
+            "tool_execution_start", "tool_execution_end" -> {
+                // Tool activity stays off the screen by design.
             }
             "model_select" -> refreshState()
         }
+    }
+
+    /** Shows the last answer of the finished run, if it was not tool narration. */
+    private fun commitRun() {
+        val answer = runCandidates.lastOrNull { !it.second && it.first.isNotBlank() }
+        runCandidates.clear()
+        activeAssistant = null
+        if (answer != null) {
+            messages.add(
+                ChatMessage(id = "answer-${UUID.randomUUID()}", role = "assistant", text = answer.first.trim()),
+            )
+        }
+    }
+
+    /** True when the message exists mainly to call tools. */
+    private fun hasToolCalls(message: JSONObject?): Boolean {
+        val content = message?.opt("content") ?: return false
+        if (content !is JSONArray) return false
+        for (index in 0 until content.length()) {
+            val block = content.optJSONObject(index) ?: continue
+            if (block.optString("type") == "toolCall") return true
+        }
+        return false
     }
 
     private fun toMessage(entry: JSONObject): ChatMessage? {
@@ -316,11 +333,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val role = message.optString("role").ifBlank { return null }
         val text = textOf(message, "content")
         if (text.isBlank() && role != "toolResult") return null
+        val marker = when {
+            role == "toolResult" -> message.optString("toolName").takeIf { it.isNotBlank() }
+            role == "assistant" && hasToolCalls(message) -> "toolCall"
+            else -> null
+        }
         return ChatMessage(
             id = entry.optString("id", UUID.randomUUID().toString()),
             role = if (role == "toolResult") "tool" else role,
             text = text,
-            toolName = message.optString("toolName").takeIf { role == "toolResult" && it.isNotBlank() },
+            toolName = marker,
         )
     }
 

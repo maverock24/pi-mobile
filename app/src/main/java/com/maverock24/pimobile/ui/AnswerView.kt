@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -53,22 +54,19 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun AnswerView(
     text: String,
-    streaming: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val blocks = remember(text) { parseAnswerBlocks(text) }
     val scheme = MaterialTheme.colorScheme
     val linkColor = scheme.primary
     val chipColor = AnswerStyle.chipBackground(scheme.background.luminance() < 0.5f)
-    val cursorColor = scheme.primary
 
     SelectionContainer {
         Column(
             modifier = modifier,
             verticalArrangement = Arrangement.spacedBy(AnswerStyle.paragraphGap),
         ) {
-            blocks.forEachIndexed { index, block ->
-                val isLast = index == blocks.lastIndex
+            blocks.forEach { block ->
                 when (block) {
                     is AnswerBlock.Heading -> Text(
                         text = inlineText(block.text, linkColor, chipColor),
@@ -76,34 +74,53 @@ fun AnswerView(
                         fontSize = AnswerStyle.headingSize,
                         lineHeight = AnswerStyle.headingSize * 1.3,
                         color = scheme.onBackground,
-                        modifier = Modifier.padding(top = AnswerStyle.paragraphGap),
+                        modifier = Modifier.padding(top = AnswerStyle.headingGap),
                     )
 
-                    is AnswerBlock.Paragraph -> Row(verticalAlignment = Alignment.Top) {
+                    is AnswerBlock.Paragraph -> Text(
+                        text = inlineText(block.text, linkColor, chipColor),
+                        fontSize = AnswerStyle.bodySize,
+                        lineHeight = AnswerStyle.bodyLineHeight,
+                        color = scheme.onBackground,
+                    )
+
+                    is AnswerBlock.Quote -> Row(verticalAlignment = Alignment.Top) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 2.dp, bottom = 2.dp, end = 10.dp)
+                                .width(3.dp)
+                                .heightIn(min = 18.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(scheme.primary),
+                        )
                         Text(
                             text = inlineText(block.text, linkColor, chipColor),
                             fontSize = AnswerStyle.bodySize,
                             lineHeight = AnswerStyle.bodyLineHeight,
-                            color = scheme.onBackground,
+                            color = scheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f, fill = false),
                         )
-                        if (streaming && isLast) {
-                            PulsingDot(cursorColor)
-                        }
                     }
 
-                    is AnswerBlock.Bullets -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        block.items.forEachIndexed { itemIndex, item ->
-                            Row(verticalAlignment = Alignment.Top) {
+                    is AnswerBlock.Bullets -> Column(
+                        verticalArrangement = Arrangement.spacedBy(AnswerStyle.listItemGap),
+                    ) {
+                        var counter = 0
+                        block.items.forEach { item ->
+                            if (!item.marker) counter++
+                            Row(
+                                verticalAlignment = Alignment.Top,
+                                modifier = Modifier.padding(start = AnswerStyle.bulletIndent * item.level),
+                            ) {
                                 Text(
-                                    text = if (block.ordered) "${itemIndex + 1}." else "•",
-                                    color = if (block.ordered) linkColor else scheme.onSurfaceVariant,
+                                    text = if (block.ordered && !item.marker) "$counter." else "•",
+                                    color = if (block.ordered && !item.marker) linkColor else scheme.onSurfaceVariant,
                                     fontSize = AnswerStyle.bodySize,
                                     lineHeight = AnswerStyle.bodyLineHeight,
-                                    modifier = Modifier.width(AnswerStyle.indent),
+                                    modifier = Modifier.width(AnswerStyle.bulletIndent),
                                 )
                                 Text(
-                                    text = inlineText(item, linkColor, chipColor),
+                                    text = inlineText(item.text, linkColor, chipColor),
                                     fontSize = AnswerStyle.bodySize,
                                     lineHeight = AnswerStyle.bodyLineHeight,
                                     color = scheme.onBackground,
@@ -114,6 +131,7 @@ fun AnswerView(
                     }
 
                     is AnswerBlock.Code -> Surface(
+                        modifier = Modifier.padding(top = AnswerStyle.blockGap),
                         shape = RoundedCornerShape(AnswerStyle.codeRadius),
                         color = scheme.surfaceVariant,
                         border = BorderStroke(1.dp, scheme.outline),
@@ -130,12 +148,17 @@ fun AnswerView(
                         )
                     }
 
-                    is AnswerBlock.Diff -> DiffBlock(block)
+                    is AnswerBlock.Diff -> Box(modifier = Modifier.padding(top = AnswerStyle.blockGap)) {
+                        DiffBlock(block)
+                    }
 
-                    is AnswerBlock.Table -> TableBlock(block)
+                    is AnswerBlock.Table -> Box(modifier = Modifier.padding(top = AnswerStyle.blockGap)) {
+                        TableBlock(block)
+                    }
 
                     AnswerBlock.Rule -> Box(
                         modifier = Modifier
+                            .padding(vertical = AnswerStyle.blockGap)
                             .fillMaxWidth()
                             .height(1.dp)
                             .background(scheme.outline),
@@ -189,8 +212,13 @@ private fun DiffBlock(block: AnswerBlock.Diff) {
 @Composable
 private fun TableBlock(block: AnswerBlock.Table) {
     val scheme = MaterialTheme.colorScheme
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(scheme.surfaceVariant)
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+        ) {
             block.header.forEach { cell ->
                 Text(
                     text = cell,
@@ -201,9 +229,11 @@ private fun TableBlock(block: AnswerBlock.Table) {
                 )
             }
         }
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(scheme.outline))
-        block.rows.forEach { row ->
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        block.rows.forEachIndexed { index, row ->
+            if (index > 0) {
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant))
+            }
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
                 row.forEach { cell ->
                     Text(
                         text = cell,
@@ -215,25 +245,6 @@ private fun TableBlock(block: AnswerBlock.Table) {
             }
         }
     }
-}
-
-/** Pulsing dot marking text that is still arriving. */
-@Composable
-fun PulsingDot(color: Color) {
-    val transition = rememberInfiniteTransition(label = "cursor")
-    val alpha by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.2f,
-        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
-        label = "cursorAlpha",
-    )
-    Spacer(
-        modifier = Modifier
-            .padding(start = 4.dp, top = 5.dp)
-            .size(8.dp)
-            .clip(CircleShape)
-            .background(color.copy(alpha = alpha)),
-    )
 }
 
 /**

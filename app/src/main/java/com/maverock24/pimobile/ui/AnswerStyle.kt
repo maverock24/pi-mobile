@@ -20,10 +20,28 @@ import androidx.compose.ui.unit.sp
 object AnswerStyle {
 
     val bodySize = 14.sp
-    val bodyLineHeight = 20.sp
 
-    /** 0.35em at 14sp. */
-    val paragraphGap = 6.dp
+    /**
+     * 1.5 lines. The lab choice was 1.42 (tight), which reads as cramped once a
+     * real answer has several paragraphs; 1.5 is the smallest value that still
+     * keeps prose comfortable at 14sp.
+     */
+    val bodyLineHeight = 21.sp
+
+    /** 0.57em at 14sp, raised from the lab's 0.35em for the same reason. */
+    val paragraphGap = 8.dp
+
+    /** Extra room above structural blocks so they do not run into prose. */
+    val blockGap = 10.dp
+
+    /** Space above a heading, on top of the paragraph gap. */
+    val headingGap = 12.dp
+
+    /** Space between list items. */
+    val listItemGap = 6.dp
+
+    /** Indent step for one bullet level. */
+    val bulletIndent = 18.dp
 
     /** 1.18em at 14sp. */
     val headingSize = 16.5.sp
@@ -44,8 +62,6 @@ object AnswerStyle {
      * readable column instead of 120-character lines.
      */
     val measure = 400.dp
-
-    val indent = 22.dp
 
     // Indigo accent, matching the lab's default.
     private val accentDark = Color(0xFF7AA2F7)
