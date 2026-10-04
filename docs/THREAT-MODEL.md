@@ -291,3 +291,45 @@ aapt2 dump permissions pi-remote-*.apk 2>/dev/null || unzip -p pi-remote-*.apk A
 - DNS rebinding against loopback services — https://en.wikipedia.org/wiki/DNS_rebinding
 - Prompt injection and the "lethal trifecta" — https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/
 - Termux process limits and background killing — https://github.com/termux/termux-app
+
+---
+
+## 10. Remediation status (2026-10-04, after the review)
+
+| Finding | Status | What changed |
+| --- | --- | --- |
+| F1 design-lab helper cross-site | **Fixed** | Lab token (0600, injected only into its own page, sent as `Authorization`), `Host` allowlist for DNS rebinding, `Origin` and `Sec-Fetch-Site` same-origin check, `application/json` required. Verified: no auth 401, rebound host 403, cross-origin with valid token 403, legitimate same-origin 200 |
+| F2 agent runs as root | **Documented, open** | Needs a workflow decision: run bridge-served pi as an unprivileged user, or accept the token as a root credential in writing. The token is no longer world-readable by accident, and the fs token is now labeled per device so it can be revoked |
+| F3 keystore next to its password | **Fixed** | Password moved to `/root/pi-mobile-keys/keystore-password.txt` (root-only, user read denied). The keystore alone is useless now. GitHub Actions keeps its own copy for releases. A key rotation is still advisable once a new distribution path exists |
+| F4 cleartext to a DNS name | **Partly fixed** | The bridge now also listens on loopback so `tailscale serve` can front it with a real certificate. Enabling HTTPS certificates is a tailnet-console toggle, which is why this is not fully closed |
+| F5 any tailnet member can reach everything | **Partly fixed** | Bridge: per-device tokens in `tokens.json`, `/remote rotate` and `/remote revoke`, failed-auth backoff (429 after 5 attempts), and prompt/abort/rotation entries in `audit.log`. Host: `nftables` rule drops tailnet traffic to 8787 and 22 from anything but the phone, persisted by `pi-remote-firewall.service`. A tailnet ACL rule remains the belt-and-braces version |
+| F6 `/api/state` discloses paths | **Open** | Audit logging and per-device labels landed; the state payload still returns absolute session paths. Cheap to trim when the UI is next touched |
+| F7 prompt injection with root and internet | **Documented, open** | Structural: needs sandboxing or tool allowlists for untrusted repositories |
+| F8 token not user-auth bound | **Partly fixed** | Settings is now `FLAG_SECURE`, so the token cannot be captured in a screenshot or the recents thumbnail. A biometric gate still needs on-device testing before it ships |
+| F9 update manifest in the same channel as the APK | **Accepted** | Android's signature check is the real gate and now depends on F3, which is fixed |
+| F11 root-owned question directory | **Fixed** | `~/.config/pi-remote` and `~/.local/share/pi-remote` are owned by the user (0700); root sessions still have access, so both can publish questions and answers |
+
+Also fixed while in there: the extension no longer fails to load when the config
+directory is unwritable (that used to take pi down with an `EACCES` at load time), an
+empty token set disables the bridge instead of authorising everything, and `tick()` no
+longer references a token captured at load, which had silently broken bridge startup on
+the first version of this change.
+
+### Still on you
+
+1. **Re-pair the phone.** The token was rotated to a per-device `phone` entry, so the app
+   needs the new value: run `pi-remote-token` on the laptop, paste it into Settings, then
+   Test. Rotation takes effect for the bridge when that pane reloads the extension.
+2. **Rotate the GitHub Copilot tokens** printed into an earlier session transcript.
+3. **Optional ACL tightening** (the host firewall already enforces the same intent):
+   replace the default allow-all with per-device rules, for example
+   ```json
+   { "action": "accept", "src": ["nokia-xr20"], "dst": ["your-laptop:*"] },
+   { "action": "accept", "src": ["your-laptop"], "dst": ["nokia-xr20:*"] }
+   ```
+   Warning: this blocks every other tailnet device from the laptop. Extend the list before
+   adding devices, or you will lock yourself out.
+4. **HTTPS**: enable HTTPS certificates in the tailnet console, then
+   `sudo tailscale serve --bg --https=443 http://127.0.0.1:8787` and switch the app URL to
+   `https://your-laptop.your-tailnet.ts.net`.
+5. **Biometric gate** and **unprivileged pi** remain open by design decision, not by oversight.
