@@ -287,9 +287,9 @@ fun SettingsScreen(
                 placeholder = { Text("http://your-laptop.your-tailnet.ts.net:8787") },
             )
             Text(
-                text = "The laptop on your tailnet. The MagicDNS name is the default because " +
-                    "Android evaluates its cleartext-HTTP policy per hostname; `tailscale ip -4` on " +
-                    "the laptop prints the raw address if you need it.",
+                text = "The laptop on your tailnet. A pairing QR fills this in for you; the " +
+                    "address itself never ships with the app. Use the MagicDNS name, not a raw " +
+                    "IP: Android checks its cleartext-HTTP policy per hostname.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

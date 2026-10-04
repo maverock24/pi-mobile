@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- HTTPS everywhere. Cleartext is allowed only for the bridge: the tailnet
-     MagicDNS name and its address, plus loopback.
+<!-- HTTPS everywhere. Cleartext HTTP is allowed only for loopback and for any
+     Tailscale MagicDNS name, i.e. the *.ts.net namespace, which resolves only
+     inside the tailnet.
 
-     Android evaluates this policy per hostname, so prefer the MagicDNS name
-     (the app's default) over a raw IP in the settings screen. -->
+     Naming the concrete host here would mean hard-coding the laptop's address in
+     the source and in every published APK, which is what pairing exists to avoid.
+     Android evaluates this policy per hostname, so the app must therefore also be
+     given a MagicDNS name (not a raw 100.x.y.z address) at pairing time. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">your-laptop.your-tailnet.ts.net</domain>
-        <domain includeSubdomains="true">xxxxxxxx.ts.net</domain>
-        <domain includeSubdomains="false">192.0.2.1</domain>
+        <domain includeSubdomains="true">ts.net</domain>
         <domain includeSubdomains="false">localhost</domain>
         <domain includeSubdomains="false">127.0.0.1</domain>
     </domain-config>

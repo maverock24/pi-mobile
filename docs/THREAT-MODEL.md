@@ -14,7 +14,7 @@ the last section.
 ```
  phone (Tailscale node)                 laptop
  ┌────────────────────┐                ┌───────────────────────────────────────────┐
- │ Pi Remote app      │  WireGuard     │ tailscaled  → 192.0.2.1               │
+ │ Pi Remote app      │  WireGuard     │ tailscaled  → <laptop tailnet address>     │
  │  · token (AES-GCM, │ ─────────────► │                                            │
  │    keystore key)   │  HTTP+SSE      │ pi-remote bridge :8787  (bearer token)     │
  │  · REQUEST_INSTALL │                │   └── pi process, RUNS AS ROOT             │
@@ -117,18 +117,25 @@ hardware-backed distribution path.
 
 ### F4 — MEDIUM: cleartext HTTP plus a DNS name means a hostile network can collect the token
 
-The app's default bridge URL is the MagicDNS name
-(`http://your-laptop.your-tailnet.ts.net:8787`) and cleartext is whitelisted for
-that host in `network_security_config.xml`. If the phone's Tailscale DNS is not in play (VPN
-down, MagicDNS disabled, split DNS not applied), that name resolves through the local
-resolver — a hostile Wi-Fi or carrier DNS can answer with its own address, and the app will
-happily send `Authorization: Bearer <token>` in cleartext to it. The tailnet IP chosen
-earlier as the default avoided this, because a route to `192.0.2.1` only exists inside
-the tunnel.
+The bridge speaks cleartext HTTP, and `network_security_config.xml` permits cleartext for
+the whole `*.ts.net` namespace (plus loopback) rather than for one named host, because the
+address now arrives with the pairing QR instead of being compiled in. If the phone's
+Tailscale DNS is not in play (VPN down, MagicDNS disabled, split DNS not applied), that name
+resolves through the local resolver — a hostile Wi-Fi or carrier DNS can answer with its own
+address, and the app will happily send `Authorization: Bearer <token>` in cleartext to it.
+The tailnet IP that was the old default avoided this, because a route to a `100.x` address
+only exists inside the tunnel; the app now refuses cleartext to a bare IP, which closes the
+old gap but not the DNS one.
 
-Recommended: prefer `tailscale serve` HTTPS with its real certificate (name validation then
-binds the identity to the certificate and the DNS attack is void), or use the raw tailnet IP
-with cleartext and no DNS dependency, or pin the certificate/SPKI in the app.
+**Verified 2026-10-04:** `tailscale cert <magicdns name>` returns
+`500 Internal Server Error: your Tailscale account does not support getting TLS certs`, i.e.
+HTTPS certificates are not enabled for this tailnet, so the `tailscale serve` plan below
+cannot run yet. Enable HTTPS certificates in the tailnet console (admin → DNS) to unblock it.
+
+Recommended: enable HTTPS certificates and use `tailscale serve` (name validation then binds
+the identity to the certificate and the DNS attack is void); alternatively generate a
+self-signed certificate on the bridge and put its SHA-256 fingerprint in the pairing QR so
+the app can pin it, or pin the certificate/SPKI in a build.
 
 ### F5 — MEDIUM: any tailnet member can reach the bridge, with no rate limit and no rotation
 
@@ -221,6 +228,31 @@ window small.
 Recommended: put the bridge behind the `tailscale serve` listener (F4). Then the code is
 protected in transit, and this endpoint can be rate limited per identity rather than per
 address.
+
+### F13 — LOW: the laptop's tailnet address is published, and stays published in the history
+
+The concrete address used to be compiled into the app and written through these documents:
+
+| Where | Before | Now |
+| --- | --- | --- |
+| `SettingsStore.DEFAULT_BASE_URL` | the MagicDNS name | removed; the field starts empty |
+| settings placeholder, diagnostics hint | the MagicDNS name | generic placeholders |
+| `network_security_config.xml` | machine name, tailnet name, raw IP | `*.ts.net` plus loopback |
+| `README.md`, this document | IP, MagicDNS name, tailnet name | `<laptop>.<tailnet>.ts.net` |
+
+The laptop's address now reaches the phone only through the pairing QR, and the app carries no
+default URL, so no published APK names the laptop.
+
+What this does **not** fix: commits up to and including the v0.0.27 release still contain the
+strings, and the repository is public. Anyone who cloned or scraped it already has them;
+rewriting history would break existing clones without recalling the copies. **Decision
+(2026-10-04): accept and leave the history alone.**
+
+Why that is acceptable: a `100.x.y.z` address and a MagicDNS name route and resolve only
+inside the tailnet. Without a tailnet key they are inert — they describe the shape of the
+setup, they do not grant access. The gates are the tailnet key and the device token, not the
+address being unknown. Treat these addresses as public, and if they ever need to change,
+change them on the Tailscale side rather than relying on the repository.
 
 ## 5. What already holds up
 
@@ -348,12 +380,12 @@ the first version of this change.
 3. **Optional ACL tightening** (the host firewall already enforces the same intent):
    replace the default allow-all with per-device rules, for example
    ```json
-   { "action": "accept", "src": ["nokia-xr20"], "dst": ["your-laptop:*"] },
-   { "action": "accept", "src": ["your-laptop"], "dst": ["nokia-xr20:*"] }
+   { "action": "accept", "src": ["<phone>"], "dst": ["<laptop>:*"] },
+   { "action": "accept", "src": ["<laptop>"], "dst": ["<phone>:*"] }
    ```
    Warning: this blocks every other tailnet device from the laptop. Extend the list before
    adding devices, or you will lock yourself out.
-4. **HTTPS**: enable HTTPS certificates in the tailnet console, then
-   `sudo tailscale serve --bg --https=443 http://127.0.0.1:8787` and switch the app URL to
-   `https://your-laptop.your-tailnet.ts.net`.
+4. **HTTPS**: enable HTTPS certificates in the tailnet console (currently refused, see F4),
+   then `sudo tailscale serve --bg --https=443 http://127.0.0.1:8787` and point the app at
+   `https://<laptop>.<tailnet>.ts.net`.
 5. **Biometric gate** and **unprivileged pi** remain open by design decision, not by oversight.

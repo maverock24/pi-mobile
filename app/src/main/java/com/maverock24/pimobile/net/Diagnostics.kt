@@ -77,8 +77,8 @@ object Diagnostics {
     fun hint(error: Throwable): String {
         val message = error.message.orEmpty()
         if (message.contains("CLEARTEXT", ignoreCase = true)) {
-            return "Android blocked cleartext HTTP for this host. Use the MagicDNS name " +
-                "(your-laptop.your-tailnet.ts.net) instead of the raw IP."
+            return "Android blocked cleartext HTTP for this host. Pair again to get the " +
+                "laptop's MagicDNS name; a bare tailnet IP is not allowed through."
         }
         return when (error) {
             is android.os.NetworkOnMainThreadException ->

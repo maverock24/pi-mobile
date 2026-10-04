@@ -7,8 +7,14 @@ class SettingsStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("pi-mobile", Context.MODE_PRIVATE)
 
+    /**
+     * Empty until a pairing (or a hand-typed URL) fills it in. The app deliberately
+     * ships no default: the laptop's tailnet address is handed over by the QR at
+     * pairing time, so it does not sit in the source, in every APK and in the
+     * published releases for anyone to read.
+     */
     var baseUrl: String
-        get() = prefs.getString("baseUrl", DEFAULT_BASE_URL)?.takeIf { it.isNotBlank() } ?: DEFAULT_BASE_URL
+        get() = prefs.getString("baseUrl", "")?.trim().orEmpty()
         set(value) = prefs.edit().putString("baseUrl", value.trim().trimEnd('/')).apply()
 
     /**
@@ -40,10 +46,4 @@ class SettingsStore(context: Context) {
 
     val isConfigured: Boolean
         get() = token.isNotBlank()
-
-    companion object {
-        // MagicDNS name: Android's cleartext policy is evaluated per hostname, so
-        // the name is more reliable than the raw tailnet IP.
-        const val DEFAULT_BASE_URL = "http://your-laptop.your-tailnet.ts.net:8787"
-    }
 }

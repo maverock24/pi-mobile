@@ -10,7 +10,7 @@ on the desktop. Everything travels over Tailscale: nothing is exposed to the
 internet, and no port is opened on the LAN.
 
 ```
-Pixel/phone ──Tailscale (WireGuard)──► laptop:192.0.2.1:8787
+Pixel/phone ──Tailscale (WireGuard)──► laptop:<laptop>.<tailnet>.ts.net:8787
                                           │  pi-remote extension (HTTP + SSE)
                                           ▼
                                       pi session (the live one, same process)
@@ -49,9 +49,14 @@ rendered too, and the whole answer is selectable for copying.
 
 ## Phone side
 
-Install the APK from the latest release, open Settings, and paste:
+Install the APK from the latest release. The app ships **no** default bridge URL: the
+laptop's address reaches the phone only through the pairing QR (below), so it is not
+readable in the source or in any published APK.
 
-- Bridge URL: `http://192.0.2.1:8787`
+Pairing fills both fields. Doing it by hand in Settings means:
+
+- Bridge URL: `http://<laptop>.<tailnet>.ts.net:8787` (the MagicDNS name — a raw tailnet
+  IP is refused, see the note on cleartext below)
 - Token: the value from `~/.config/pi-remote/token`
 
 A 401 in the status line means the token is wrong. A timeout means Tailscale is
@@ -70,7 +75,7 @@ Run `/pair` in the pi session that owns the bridge. It draws a QR in a widget ab
 editor and in a PNG window, and mints a one-time code valid for two minutes:
 
 ```
-pi-remote://pair?v=1&u=<base64url of http://<tailnet-ip>:8787>&c=<code>
+pi-remote://pair?v=1&u=<base64url of http://<laptop>.<tailnet>.ts.net:8787>&c=<code>
 ```
 
 Scan it with the phone camera. Android opens Pi Remote, the app posts the code to
