@@ -307,14 +307,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Shows the last answer of the finished run, if it was not tool narration. */
     private fun commitRun() {
-        val answer = runCandidates.lastOrNull { !it.second && it.first.isNotBlank() }
+        val answer = runCandidates.lastOrNull { !it.second && it.first.isNotBlank() }?.first?.trim()
         runCandidates.clear()
         activeAssistant = null
-        if (answer != null) {
-            messages.add(
-                ChatMessage(id = "answer-${UUID.randomUUID()}", role = "assistant", text = answer.first.trim()),
-            )
+        if (answer.isNullOrBlank()) {
+            return
         }
+        // Connecting mid-run can load the same answer with the history fetch.
+        val lastCommitted = messages.lastOrNull { it.role == "assistant" }?.text?.trim()
+        if (answer == lastCommitted) {
+            return
+        }
+        messages.add(ChatMessage(id = "answer-${UUID.randomUUID()}", role = "assistant", text = answer))
     }
 
     /** True when the message exists mainly to call tools. */
