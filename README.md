@@ -66,6 +66,25 @@ the composer and partial words show above it. Nothing is sent until you tap
 
 ## Updates
 
+The repository is **private**. Updates travel over your tailnet instead of a public
+URL:
+
+1. CI builds a signed APK on every push to main and publishes it to this repo's
+   rolling `latest-build` release.
+2. `pi-remote-release-sync` on the laptop (enabled as a 15 minute systemd timer,
+   `/etc/systemd/system/pi-remote-release-sync.timer`) pulls those assets into
+   `~/.local/share/pi-remote/release/`.
+3. The bridge serves them at `GET /api/release/latest.json` and
+   `GET /api/release/apk`, both behind the device token, and rewrites the APK url
+   in the manifest to a path on itself.
+4. The app checks that manifest against its configured bridge URL and installs
+   only what matches the manifest sha256 **and** this app's signing certificate.
+
+Because the app fetches from the bridge, nothing about the release is public, and
+the update works from mobile data as long as Tailscale is up.
+
+### Old section, kept for reference
+
 Every push to `main` builds a signed release APK in GitHub Actions and replaces
 the rolling `latest-build` release, together with a `latest.json` manifest
 (versionCode, APK url, sha256, commit). The app checks that manifest on launch and
