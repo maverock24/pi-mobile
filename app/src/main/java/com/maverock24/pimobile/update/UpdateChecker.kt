@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
-import com.maverock24.pimobile.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -16,12 +15,7 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Self-update from the rolling release published on every push to main, served by
- * the bridge on this tailnet at /api/release/latest.json and /api/release/apk, so
- * the repository itself stays private and no public URL is involved.
- *
- * The bearer token is required for both requests, and the APK url may be relative
- * to the bridge.
+ * Self-update from the rolling GitHub release published on every push to main.
  *
  * Two checks guard the installer, and neither relies on the other:
  *  1. the manifest must carry a valid sha256 and an APK url inside this repo's
@@ -35,8 +29,10 @@ import java.io.File
  */
 object UpdateChecker {
 
-    /** Kept so a manifest that still points at the old public location is handled. */
-    private const val LEGACY_APK_URL_PREFIX =
+    const val MANIFEST_URL =
+        "https://github.com/maverock24/pi-mobile/releases/latest/download/latest.json"
+
+    private const val ALLOWED_APK_URL_PREFIX =
         "https://github.com/maverock24/pi-mobile/releases/"
 
     private val SHA256 = Regex("^[0-9a-fA-F]{64}$")
@@ -51,28 +47,12 @@ object UpdateChecker {
 
     private val http = OkHttpClient()
 
-    private fun manifestUrl(baseUrl: String): String =
-        baseUrl.trim().trimEnd('/') + "/api/release/latest.json"
-
-    /** A manifest may name the APK by relative path on the bridge. */
-    private fun resolveApkUrl(baseUrl: String, url: String): String =
-        if (url.startsWith("http://") || url.startsWith("https://")) url
-        else baseUrl.trim().trimEnd('/') + "/" + url.trimStart('/')
-
-    private fun headers(builder: Request.Builder, token: String) = builder
-        .header("Authorization", "Bearer $token")
-        .header("X-Pi-Client", "${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}")
-
     /** Returns release info only when it is newer and verifiable. */
-    suspend fun check(baseUrl: String, token: String, currentVersionCode: Int): Info? =
-        withContext(Dispatchers.IO) {
-        if (baseUrl.isBlank() || token.isBlank()) return@withContext null
-        val request = headers(
-            Request.Builder()
-                .url("${manifestUrl(baseUrl)}?ts=${System.currentTimeMillis()}")
-                .header("Accept", "application/json"),
-            token,
-        ).build()
+    suspend fun check(currentVersionCode: Int): Info? = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("$MANIFEST_URL?ts=${System.currentTimeMillis()}")
+            .header("Accept", "application/json")
+            .build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@withContext null
             val body = response.body?.string().orEmpty()
@@ -80,10 +60,10 @@ object UpdateChecker {
             val json = JSONObject(body)
             val code = json.optInt("versionCode", 0)
             if (code <= currentVersionCode) return@withContext null
-            val url = resolveApkUrl(baseUrl, json.optString("url"))
+            val url = json.optString("url")
             val sha256 = json.optString("sha256")
             // Fail closed: never offer an update that cannot be verified.
-            if (!isTrustedApkUrl(baseUrl, url) || !SHA256.matches(sha256)) return@withContext null
+            if (!isTrustedApkUrl(url) || !SHA256.matches(sha256)) return@withContext null
             Info(
                 versionCode = code,
                 versionName = json.optString("versionName", "v$code"),
@@ -94,12 +74,11 @@ object UpdateChecker {
         }
     }
 
-    suspend fun download(context: Context, baseUrl: String, token: String, info: Info): File =
-        withContext(Dispatchers.IO) {
-        require(isTrustedApkUrl(baseUrl, info.url)) { "release manifest points outside the bridge" }
+    suspend fun download(context: Context, info: Info): File = withContext(Dispatchers.IO) {
+        require(isTrustedApkUrl(info.url)) { "release manifest points outside the expected repository" }
         require(SHA256.matches(info.sha256)) { "release manifest has no valid sha256" }
         val target = File(context.cacheDir, "update-${info.versionCode}.apk")
-        val request = headers(Request.Builder().url(info.url), token).build()
+        val request = Request.Builder().url(info.url).build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("download failed: HTTP ${response.code}")
             val body = response.body ?: error("download failed: empty body")
@@ -119,12 +98,7 @@ object UpdateChecker {
         target
     }
 
-    /** The APK must live on the configured bridge, or at the old public location. */
-    private fun isTrustedApkUrl(baseUrl: String, url: String): Boolean {
-        val bridge = baseUrl.trim().trimEnd('/')
-        if (bridge.isNotEmpty() && url.startsWith("$bridge/")) return true
-        return url.startsWith(LEGACY_APK_URL_PREFIX)
-    }
+    private fun isTrustedApkUrl(url: String): Boolean = url.startsWith(ALLOWED_APK_URL_PREFIX)
 
     private fun sha256(file: File): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
