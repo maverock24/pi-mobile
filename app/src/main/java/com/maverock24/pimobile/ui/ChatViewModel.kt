@@ -52,6 +52,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var pendingQuestion by mutableStateOf<PendingQuestion?>(null)
         private set
+    var appearance by mutableStateOf(store.appearance)
+        private set
 
     private var streamCall: Call? = null
     private var streamingId: String? = null
@@ -161,6 +163,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 lastError = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
             }
         }
+    }
+
+    fun setAppearance(value: String) {
+        store.appearance = value
+        appearance = value
     }
 
     fun updateDraft(value: String) {

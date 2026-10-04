@@ -33,6 +33,11 @@ class SettingsStore(context: Context) {
             editor.apply()
         }
 
+    /** "dark", "light" or "system". The design lab choice was dark. */
+    var appearance: String
+        get() = prefs.getString("appearance", "dark") ?: "dark"
+        set(value) = prefs.edit().putString("appearance", value).apply()
+
     val isConfigured: Boolean
         get() = token.isNotBlank()
 

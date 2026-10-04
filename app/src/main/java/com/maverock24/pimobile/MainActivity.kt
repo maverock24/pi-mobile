@@ -40,9 +40,9 @@ class MainActivity : ComponentActivity() {
             )
         }
         setContent {
-            PiRemoteTheme {
+            val vm: ChatViewModel = viewModel()
+            PiRemoteTheme(mode = vm.appearance) {
                 val context = LocalContext.current
-                val vm: ChatViewModel = viewModel()
                 val scope = rememberCoroutineScope()
 
                 var showSettings by rememberSaveable { mutableStateOf(false) }
@@ -115,6 +115,8 @@ class MainActivity : ComponentActivity() {
                         initialToken = vm.token,
                         statusLine = vm.statusLine,
                         versionLabel = "Pi Remote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                        appearance = vm.appearance,
+                        onAppearanceChange = vm::setAppearance,
                         onSave = { url, token ->
                             vm.saveSettings(url, token)
                             showSettings = false

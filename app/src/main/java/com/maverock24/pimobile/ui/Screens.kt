@@ -12,17 +12,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
@@ -33,8 +32,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,12 +42,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 @Composable
-fun PiRemoteTheme(content: @Composable () -> Unit) {
-    val scheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
-    MaterialTheme(colorScheme = scheme, content = content)
+fun PiRemoteTheme(mode: String = "dark", content: @Composable () -> Unit) {
+    val dark = when (mode) {
+        "dark" -> true
+        "light" -> false
+        else -> isSystemInDarkTheme()
+    }
+    MaterialTheme(colorScheme = if (dark) AnswerStyle.darkScheme else AnswerStyle.lightScheme, content = content)
 }
 
 /**
@@ -73,11 +73,6 @@ fun ChatScreen(
 ) {
     val listState = rememberLazyListState()
     val results = vm.messages.filter { it.role == "assistant" && it.text.isNotBlank() }
-    val status = when {
-        vm.busy -> "thinking…"
-        !vm.connected -> vm.statusLine
-        else -> ""
-    }
 
     LaunchedEffect(results.size, results.lastOrNull()?.text?.length) {
         if (results.isNotEmpty()) {
@@ -91,21 +86,13 @@ fun ChatScreen(
                 title = {
                     Column {
                         Text(vm.sessionTitle, style = MaterialTheme.typography.titleMedium)
-                        if (status.isNotBlank()) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (vm.busy) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.height(12.dp).width(12.dp),
-                                        strokeWidth = 1.5.dp,
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                }
-                                Text(
-                                    text = status,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                        when {
+                            vm.busy -> WorkingShimmer(modifier = Modifier.padding(top = 4.dp))
+                            !vm.connected && vm.statusLine.isNotBlank() -> Text(
+                                text = vm.statusLine,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 },
@@ -133,9 +120,15 @@ fun ChatScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
                 ) {
-                    items(results, key = { it.id }) { message -> ResultBlock(message) }
+                    items(results, key = { it.id }) { message ->
+                        AnswerView(
+                            text = message.text,
+                            streaming = message.streaming,
+                            modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                        )
+                    }
                 }
             }
 
@@ -162,21 +155,6 @@ fun ChatScreen(
                 onStop = vm::abort,
             )
         }
-    }
-}
-
-@Composable
-private fun ResultBlock(message: ChatMessage) {
-    SelectionContainer {
-        Text(
-            text = ResultFormat.toAnnotatedString(
-                answer = if (message.streaming) "${message.text}▌" else message.text,
-                linkColor = MaterialTheme.colorScheme.primary,
-            ),
-            fontSize = 15.sp,
-            lineHeight = 21.sp,
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 
@@ -247,6 +225,8 @@ fun SettingsScreen(
     initialToken: String,
     statusLine: String,
     versionLabel: String,
+    appearance: String,
+    onAppearanceChange: (String) -> Unit,
     onSave: (String, String) -> Unit,
     onTest: () -> Unit,
     onCheckUpdates: () -> Unit,
@@ -297,6 +277,17 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text("Appearance", style = MaterialTheme.typography.labelLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                listOf("dark" to "Dark", "light" to "Light", "system" to "System").forEach { (value, label) ->
+                    OutlinedButton(
+                        onClick = { onAppearanceChange(value) },
+                        modifier = Modifier.padding(end = 8.dp),
+                    ) {
+                        Text(if (appearance == value) "• $label" else label)
+                    }
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { onSave(baseUrl, token) }) { Text("Save") }
                 Spacer(modifier = Modifier.width(8.dp))
