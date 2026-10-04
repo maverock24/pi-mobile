@@ -87,6 +87,18 @@ class MainActivity : ComponentActivity() {
                     onDispose { dictation.destroy() }
                 }
 
+                // Returning from the background: the event stream is usually dead
+                // by then, so re-establish it and refresh any open question.
+                DisposableEffect(Unit) {
+                    val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                        if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                            vm.ensureConnected()
+                        }
+                    }
+                    this@MainActivity.lifecycle.addObserver(observer)
+                    onDispose { this@MainActivity.lifecycle.removeObserver(observer) }
+                }
+
                 // The settings screen shows the bridge token: keep it out of
                 // screenshots, screen recordings and the recents thumbnail.
                 DisposableEffect(showSettings) {

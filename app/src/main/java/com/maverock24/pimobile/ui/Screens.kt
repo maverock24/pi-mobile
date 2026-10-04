@@ -87,6 +87,12 @@ fun ChatScreen(
                     Column {
                         Text(vm.sessionTitle, style = MaterialTheme.typography.titleMedium)
                         when {
+                            vm.pendingQuestion != null -> Text(
+                                text = "waiting for your answer",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
                             vm.busy -> WorkingShimmer(modifier = Modifier.padding(top = 4.dp))
                             !vm.connected && vm.statusLine.isNotBlank() -> Text(
                                 text = vm.statusLine,
@@ -106,6 +112,17 @@ fun ChatScreen(
             }
             vm.lastError?.let { error ->
                 NoticeBar(text = error, onDismiss = vm::dismissError, isError = true)
+            }
+
+            // Above the answers on purpose: an open widget blocks pi, so the way
+            // to answer it has to be the first thing on screen.
+            vm.pendingQuestion?.let { pending ->
+                QuestionCard(
+                    pending = pending,
+                    onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
+                    onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
+                    onCancel = vm::cancelQuestion,
+                )
             }
 
             if (results.isEmpty()) {
@@ -129,15 +146,6 @@ fun ChatScreen(
                         )
                     }
                 }
-            }
-
-            vm.pendingQuestion?.let { pending ->
-                QuestionCard(
-                    pending = pending,
-                    onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
-                    onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
-                    onCancel = vm::cancelQuestion,
-                )
             }
 
             Composer(
@@ -363,18 +371,23 @@ private fun QuestionCard(
                         color = MaterialTheme.colorScheme.primary,
                     )
                 } else {
-                    question.options.forEach { option ->
-                        OutlinedButton(
+                    question.options.forEachIndexed { index, option ->
+                        Button(
                             onClick = { onSelect(question.id, option.value) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                            shape = RoundedCornerShape(10.dp),
                         ) {
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                                Text(
+                                    text = "${index + 1}. ${option.label}",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                )
                                 option.description?.let { description ->
                                     Text(
                                         text = description,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
                                     )
                                 }
                             }

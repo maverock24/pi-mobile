@@ -13,6 +13,9 @@ import com.maverock24.pimobile.data.SettingsStore
 import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.Call
 import org.json.JSONArray
@@ -56,6 +59,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     private var streamCall: Call? = null
+    private var pollJob: Job? = null
 
     /**
      * Answers are committed only when the run settles, and only if the message
@@ -109,6 +113,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         streamCall = call
         reloadHistory()
         refreshState()
+        startPolling()
         safeLaunch {
             runCatching { client.question() }
                 .onSuccess { applyQuestion(it.optJSONObject("pending")) }
@@ -118,19 +123,47 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun disconnect() {
         streamCall?.cancel()
         streamCall = null
+        pollJob?.cancel()
+        pollJob = null
         connected = false
         busy = false
+    }
+
+    /**
+     * Someone has to notice when pi opens a question widget or goes idle. The
+     * event stream is the fast path, but it dies whenever the phone sleeps or
+     * switches networks, and a missed "question" event used to leave the app
+     * with no way to answer at all. A slow poll is the safety net.
+     */
+    private fun startPolling() {
+        pollJob?.cancel()
+        pollJob = viewModelScope.launch {
+            while (isActive) {
+                delay(3000)
+                if (!store.isConfigured) continue
+                runCatching { client.state() }.onSuccess { applyState(it) }
+            }
+        }
+    }
+
+    /** Called when the app comes back to the foreground. */
+    fun ensureConnected() {
+        if (!connected) connect() else refreshState()
+    }
+
+    private fun applyState(state: JSONObject) {
+        busy = !state.optBoolean("idle", true)
+        val name = state.optString("sessionName").takeIf { it.isNotBlank() && it != "null" }
+        val file = state.optString("sessionFile").substringAfterLast('/')
+        sessionTitle = name ?: file.ifBlank { "pi session" }
+        applyQuestion(state.optJSONObject("question"))
     }
 
     fun refreshState() {
         safeLaunch {
             runCatching { client.state() }
                 .onSuccess { state ->
-                    busy = !state.optBoolean("idle", true)
-                    val name = state.optString("sessionName").takeIf { it.isNotBlank() && it != "null" }
-                    val file = state.optString("sessionFile").substringAfterLast('/')
-                    sessionTitle = name ?: file.ifBlank { "pi session" }
-                    applyQuestion(state.optJSONObject("question"))
+                    applyState(state)
                     val model = state.optJSONObject("model")?.optString("id").orEmpty()
                     statusLine = listOf(if (connected) "connected" else statusLine, model)
                         .filter { it.isNotBlank() }

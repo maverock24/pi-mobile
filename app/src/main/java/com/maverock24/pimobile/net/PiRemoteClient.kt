@@ -1,5 +1,6 @@
 package com.maverock24.pimobile.net
 
+import com.maverock24.pimobile.BuildConfig
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -34,7 +35,9 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
         val request = runCatching { Request.Builder().url(url) }.getOrElse {
             throw IOException("invalid bridge URL '$base' — it needs a scheme, host and port")
         }
-        return request.header("Authorization", "Bearer $token")
+        return request
+            .header("Authorization", "Bearer $token")
+            .header("X-Pi-Client", "${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}")
     }
 
     /**
