@@ -116,7 +116,7 @@ class MainActivity : ComponentActivity() {
                         statusLine = vm.statusLine,
                         versionLabel = "Pi Remote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
                         appearance = vm.appearance,
-                        onAppearanceChange = vm::setAppearance,
+                        onAppearanceChange = vm::updateAppearance,
                         onSave = { url, token ->
                             vm.saveSettings(url, token)
                             showSettings = false

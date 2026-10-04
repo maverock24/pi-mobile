@@ -165,7 +165,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setAppearance(value: String) {
+    fun updateAppearance(value: String) {
         store.appearance = value
         appearance = value
     }
