@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import com.maverock24.pimobile.data.SettingsStore
 import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import okhttp3.Call
 import org.json.JSONArray
@@ -98,7 +99,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshState() {
-        viewModelScope.launch {
+        safeLaunch {
             runCatching { client.state() }
                 .onSuccess { state ->
                     busy = !state.optBoolean("idle", true)
@@ -115,7 +116,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun reloadHistory() {
-        viewModelScope.launch {
+        safeLaunch {
             runCatching { client.history(80) }
                 .onSuccess { payload ->
                     val array = payload.optJSONArray("messages") ?: JSONArray()
@@ -128,6 +129,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     messages.addAll(parsed)
                 }
                 .onFailure { lastError = "history: ${Diagnostics.describe(it, store.baseUrl)}" }
+        }
+    }
+
+    /**
+     * Runs a coroutine with a crash guard. This app talks to the network and to
+     * platform services from several places, and one unexpected exception should
+     * surface as an error line instead of taking the process down.
+     */
+    private fun safeLaunch(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            try {
+                block()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Throwable) {
+                lastError = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+            }
         }
     }
 
@@ -149,7 +167,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (trimmed.isEmpty()) return
         messages.add(ChatMessage(id = "local-${UUID.randomUUID()}", role = "user", text = trimmed))
         busy = true
-        viewModelScope.launch {
+        safeLaunch {
             runCatching { client.prompt(trimmed) }
                 .onFailure {
                     busy = false
@@ -159,13 +177,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun abort() {
-        viewModelScope.launch { runCatching { client.abort() }.onFailure { lastError = it.message } }
+        safeLaunch { runCatching { client.abort() }.onFailure { lastError = it.message } }
     }
 
     fun testConnection() {
-        viewModelScope.launch {
+        safeLaunch {
             val context = getApplication<Application>()
-            statusLine = Diagnostics.probe(context, store.baseUrl)
+            statusLine = runCatching { Diagnostics.probe(context, store.baseUrl) }
+                .getOrElse { "probe error: ${it.javaClass.simpleName}" }
             runCatching { client.state() }
                 .onSuccess { statusLine = "$statusLine · HTTP OK" }
                 .onFailure { statusLine = "$statusLine · ${Diagnostics.describe(it, store.baseUrl)}" }

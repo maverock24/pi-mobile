@@ -105,7 +105,8 @@ class MainActivity : ComponentActivity() {
                                     Manifest.permission.RECORD_AUDIO,
                                 ) == PackageManager.PERMISSION_GRANTED
                                 if (granted) {
-                                    dictation.start()
+                                    runCatching { dictation.start() }
+                                        .onFailure { notice = "Could not start dictation: ${it.javaClass.simpleName}" }
                                 } else {
                                     permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 }
