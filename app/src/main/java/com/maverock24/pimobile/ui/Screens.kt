@@ -1,5 +1,9 @@
 package com.maverock24.pimobile.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -37,13 +41,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 @Composable
 fun PiRemoteTheme(mode: String = "dark", content: @Composable () -> Unit) {
@@ -255,6 +264,7 @@ fun SettingsScreen(
     sessionLabel: String,
     appearance: String,
     onAppearanceChange: (String) -> Unit,
+    onPairLink: (String) -> Unit,
     onSave: (String, String) -> Unit,
     onTest: () -> Unit,
     onCheckUpdates: () -> Unit,
@@ -262,6 +272,30 @@ fun SettingsScreen(
 ) {
     var baseUrl by rememberSaveable { mutableStateOf(initialBaseUrl) }
     var token by rememberSaveable { mutableStateOf(initialToken) }
+
+    // Pairing lives here rather than in the chat screen because it is setup work: the
+    // scanner reads the QR /pair drew, and both routes end in the same link parser.
+    val context = LocalContext.current
+    var pastedLink by rememberSaveable { mutableStateOf("") }
+    var pairingStatus by remember { mutableStateOf("") }
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val scanned = result.contents
+        if (scanned.isNullOrBlank()) {
+            pairingStatus = "No QR code was read"
+        } else {
+            pairingStatus = "Using the scanned link…"
+            onPairLink(scanned)
+        }
+    }
+    val cameraPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            scanLauncher.launch(pairingScanOptions())
+        } else {
+            pairingStatus = "Camera permission is denied; paste the link below instead"
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -279,6 +313,51 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Text("Pairing", style = MaterialTheme.typography.labelLarge)
+            val pairButton = Modifier.heightIn(min = AnswerStyle.buttonHeight)
+            val pairLabel = MaterialTheme.typography.bodyLarge
+            Button(
+                onClick = {
+                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                        PackageManager.PERMISSION_GRANTED
+                    if (granted) {
+                        scanLauncher.launch(pairingScanOptions())
+                    } else {
+                        cameraPermission.launch(Manifest.permission.CAMERA)
+                    }
+                },
+                modifier = pairButton,
+            ) {
+                Text("Scan the pairing QR", style = pairLabel)
+            }
+            Text(
+                text = "On the laptop run /pair in the pi session that serves the bridge; a window " +
+                    "with the QR opens. Scanning it fills in the address and the token below and " +
+                    "pairs straight away. The camera is used to read that one code.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = pastedLink,
+                onValueChange = { pastedLink = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("pi-remote://pair?v=1&u=…&c=…") },
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = {
+                        onPairLink(pastedLink)
+                        pastedLink = ""
+                    },
+                    enabled = pastedLink.isNotBlank(),
+                    modifier = pairButton,
+                ) {
+                    Text("Pair with this link", style = pairLabel)
+                }
+            }
+            if (pairingStatus.isNotBlank()) {
+                Text(pairingStatus, style = MaterialTheme.typography.bodySmall)
+            }
             Text("Bridge URL", style = MaterialTheme.typography.labelLarge)
             OutlinedTextField(
                 value = baseUrl,
@@ -345,6 +424,14 @@ fun SettingsScreen(
         }
     }
 }
+
+/** ZXing runs the scan in its own activity and hands back the raw QR text. */
+private fun pairingScanOptions(): ScanOptions = ScanOptions()
+    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+    .setPrompt("Scan the pairing QR from the laptop")
+    .setBeepEnabled(false)
+    .setOrientationLocked(false)
+    .setBarcodeImageEnabled(false)
 
 /**
  * Answer a question widget from the phone. pi cannot continue until the widget

@@ -254,6 +254,26 @@ setup, they do not grant access. The gates are the tailnet key and the device to
 address being unknown. Treat these addresses as public, and if they ever need to change,
 change them on the Tailscale side rather than relying on the repository.
 
+### F14 — LOW: the app asks for the camera, for the pairing scanner
+
+Pairing needed a scanner inside the app. The system camera resolves `http(s)` links but shows
+a `pi-remote://` payload as inert text, so a scanned QR could neither open the app nor hand it
+the code — measured on the user's phone, which displayed the payload with nowhere to put it.
+The app now bundles ZXing (`com.journeyapps:zxing-android-embedded:4.3.0`) and requests
+`android.permission.CAMERA` for it.
+
+- Requested at runtime, only when the scan button is tapped. Denying it leaves pairing working
+  through the paste field, and `android.hardware.camera` is declared `required="false"`, so the
+  app still installs on a device without a camera.
+- Decoding is on-device: ZXing reads frames from the camera and returns the text. No frame and
+  no image is written to disk or sent to the bridge.
+- The camera is not touched by the chat, dictation or update paths.
+
+Residual: a camera permission is a camera permission — anything holding it can see what the
+lens sees while it is in the foreground. Pairing happens once and the permission can be
+revoked afterwards in Android settings without breaking the paired session, because the token,
+not the camera, is what the bridge authenticates.
+
 ## 5. What already holds up
 
 | Property | Evidence |
@@ -332,6 +352,8 @@ sudo sshd -T | grep -E 'passwordauth|permitrootlogin|allowusers'
 wc -c ~/.ssh/authorized_keys
 
 # does the app ask for anything unexpected?
+# expect INTERNET, ACCESS_NETWORK_STATE, RECORD_AUDIO, REQUEST_INSTALL_PACKAGES, and CAMERA
+# (CAMERA is the pairing scanner only: runtime-requested, revocable, paste-link fallback)
 aapt2 dump permissions pi-remote-*.apk 2>/dev/null || unzip -p pi-remote-*.apk AndroidManifest.xml | strings -e l | grep -i permission
 ```
 
@@ -364,6 +386,7 @@ aapt2 dump permissions pi-remote-*.apk 2>/dev/null || unzip -p pi-remote-*.apk A
 | F9 update manifest in the same channel as the APK | **Accepted, by choice** | The repository is public so the app can update without holding a credential, which also means the manifest and APK are publicly readable, as are the infrastructure details in this repository (tailnet addresses, the bridge port). The signature check is the real gate: the manifest sha256 plus a signing-certificate comparison against the installed app, and the APK url is allowlisted. A bridge-served variant behind the device token exists for a future private repository |
 | F12 unauthenticated pairing endpoint | **Mitigated, watched** | `/api/pair` is the only route in front of the auth gate, because a phone with no token needs somewhere to spend a code. Guards: single-use 16-byte code, two-minute expiry, constant-time compare, five attempts per address then a minute of lockout, one audit line per attempt, and it is reachable only on the tailnet. Verified anonymously: `/api/pair` answers while every other route still 401s. Residual: a tailnet observer could replay a code inside its window over plain HTTP, which F4 fixes, not this endpoint |
 | F11 root-owned question directory | **Fixed** | `~/.config/pi-remote` and `~/.local/share/pi-remote` are owned by the user (0700); root sessions still have access, so both can publish questions and answers |
+| F14 camera permission for the pairing scanner | **Accepted, scoped** | The camera is requested at runtime for the scan button only, and denial leaves the paste-the-link path intact. ZXing decodes on-device, no frame leaves the phone, and `uses-feature android.hardware.camera required="false"` keeps camera-less installs working. The deep link stays as a second path for devices that resolve it |
 
 Also fixed while in there: the extension no longer fails to load when the config
 directory is unwritable (that used to take pi down with an `EACCES` at load time), an

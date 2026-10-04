@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Pairing only: ZXing decodes the QR /pair draws. Not required for chat or
+         dictation, so the app still installs on a device without a camera. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:allowBackup="false"
@@ -21,8 +25,9 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- QR pairing. The phone camera opens this link; no CAMERA permission
-                 and no scanning library are involved. -->
+            <!-- QR pairing. The app has its own scanner (ZXing) and normally reads the
+                 code there; this filter keeps a scanned deep link working too, since the
+                 system camera resolves pi-remote:// on some devices. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

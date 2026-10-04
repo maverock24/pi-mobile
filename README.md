@@ -71,16 +71,37 @@ the composer and partial words show above it. Nothing is sent until you tap
 
 ## Pairing
 
-Run `/pair` in the pi session that owns the bridge. It draws a QR in a widget above the
-editor and in a PNG window, and mints a one-time code valid for two minutes:
+Run `/pair` in the pi session that owns the bridge. It writes a QR to
+`/tmp/pi-remote-pair.png`, opens that file in an image viewer, and mints a one-time code
+valid for two minutes:
 
 ```
 pi-remote://pair?v=1&u=<base64url of http://<laptop>.<tailnet>.ts.net:8787>&c=<code>
 ```
 
-Scan it with the phone camera. Android opens Pi Remote, the app posts the code to
-`/api/pair`, and the reply carries the device token, stored exactly as the manual flow
-stores it. Nothing extra is kept on the phone.
+Open `Settings > Pairing` in the app and tap **Scan the pairing QR**. The app runs its own
+scanner (ZXing, bundled, no Play services component), posts the code to `/api/pair`, and
+adopts the address and token that come back, so the phone never depends on the system camera
+resolving a custom scheme. A scanned or copied link can also be pasted into the field beside
+the button, and a device that still resolves `pi-remote://` can open the app directly.
+Nothing extra is kept on the phone.
+
+The scanner is the only reason the app asks for the camera. The permission is requested at
+runtime when you tap the button, and denying it leaves the paste field working;
+`android.hardware.camera` is declared `required="false"` so the app still installs without a
+camera. ZXing decodes on the device and no frame is stored or sent anywhere.
+
+The QR lives in the image window, not in the terminal. pi caps widget content at ten lines
+(`MAX_WIDGET_LINES` in `interactive-mode.js`) and appends `... (widget truncated)` past
+that, while a QR for this payload needs about 23 lines, so `/pair` puts only a caption and
+the file path in the widget. The viewer is chosen in the order `eog`, `gwenview`, `feh`,
+`xdg-open`: `xdg-open` alone resolves to a Chromium-based handler here, and Chromium refuses
+to run as root. If no window appears, open `/tmp/pi-remote-pair.png` by hand.
+
+`/pair` refuses if another pi session holds the bridge port, and says which pid does. Only a
+process that really bound the port claims ownership in `owner.json`, so a second pi session
+cannot evict the one that is serving; run `/remote claim` in the session you want the phone
+to talk to.
 
 The token is not in the QR. A QR is a screenshot waiting to happen, and a deep link lands in
 the camera history, so the code is what travels: single use, two minutes, minted per pairing.

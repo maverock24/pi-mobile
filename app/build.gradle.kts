@@ -76,4 +76,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // QR scanning for pairing. ZXing only: no Google Play services component, and the
+    // camera is used solely to decode the code /pair draws.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }

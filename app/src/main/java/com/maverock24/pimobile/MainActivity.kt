@@ -110,6 +110,7 @@ class MainActivity : ComponentActivity() {
                             vm.applyPairing(paired.baseUrl, paired.token)
                             vm.connect()
                             notice = "Paired as ${paired.device}"
+                            showSettings = false // pairing is setup work; go back to the chat
                         }
                         .onFailure { notice = "Pairing failed: ${it.message}" }
                 }
@@ -177,6 +178,7 @@ class MainActivity : ComponentActivity() {
                         sessionLabel = vm.sessionTitle,
                         appearance = vm.appearance,
                         onAppearanceChange = vm::updateAppearance,
+                        onPairLink = { pendingPairLink.value = it },
                         onSave = { url, token ->
                             vm.saveSettings(url, token)
                             showSettings = false
