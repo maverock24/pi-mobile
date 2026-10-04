@@ -1,0 +1,107 @@
+package com.maverock24.pimobile.net
+
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import org.json.JSONObject
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+/**
+ * Thin client for the pi-remote bridge. Every call reads the current endpoint and
+ * token from [config], so changing settings takes effect on the next request.
+ */
+class PiRemoteClient(private val config: () -> Pair<String, String>) {
+
+    private val json = "application/json; charset=utf-8".toMediaType()
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS) // the event stream never ends
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+
+    private fun builder(path: String): Request.Builder {
+        val (base, token) = config()
+        val url = base.trim().trimEnd('/') + path
+        return Request.Builder().url(url).header("Authorization", "Bearer $token")
+    }
+
+    private fun execute(request: Request): JSONObject {
+        client.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException(describeError(response.code, text))
+            }
+            return if (text.isBlank()) JSONObject() else JSONObject(text)
+        }
+    }
+
+    private fun describeError(code: Int, body: String): String = when (code) {
+        401 -> "401 unauthorized — check the token in Settings"
+        in 500..599 -> "server error $code: ${body.take(200)}"
+        else -> "HTTP $code: ${body.take(200)}"
+    }
+
+    fun health(): JSONObject = execute(builder("/api/health").get().build())
+
+    fun state(): JSONObject = execute(builder("/api/state").get().build())
+
+    fun history(limit: Int = 60): JSONObject = execute(builder("/api/history?limit=$limit").get().build())
+
+    fun prompt(text: String, deliverAs: String = "steer"): JSONObject {
+        val payload = JSONObject().put("text", text).put("deliverAs", deliverAs).toString()
+        return execute(builder("/api/prompt").post(payload.toRequestBody(json)).build())
+    }
+
+    fun abort(): JSONObject = execute(builder("/api/abort").post("{}".toRequestBody(json)).build())
+
+    /**
+     * Opens the SSE stream. [onEvent] is called for every `data:` frame on an
+     * OkHttp worker thread. Cancel the returned [Call] to stop streaming.
+     */
+    fun streamEvents(
+        onOpen: () -> Unit,
+        onEvent: (JSONObject) -> Unit,
+        onClosed: (Throwable?) -> Unit,
+    ): Call {
+        val call = client.newCall(builder("/api/events").get().build())
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                onClosed(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use { open ->
+                    if (!open.isSuccessful) {
+                        onClosed(IOException(describeError(open.code, open.body?.string().orEmpty())))
+                        return
+                    }
+                    onOpen()
+                    val source = open.body?.source()
+                    if (source == null) {
+                        onClosed(IOException("empty event stream"))
+                        return
+                    }
+                    try {
+                        while (!source.exhausted() && !call.isCanceled()) {
+                            val line = source.readUtf8Line() ?: break
+                            if (!line.startsWith("data: ")) continue
+                            val parsed = runCatching { JSONObject(line.removePrefix("data: ")) }.getOrNull()
+                            if (parsed != null) onEvent(parsed)
+                        }
+                        onClosed(null)
+                    } catch (e: Exception) {
+                        onClosed(e)
+                    }
+                }
+            }
+        })
+        return call
+    }
+}
