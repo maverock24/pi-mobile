@@ -64,6 +64,27 @@ you can dictate a long prompt in several breaths; finished phrases are appended 
 the composer and partial words show above it. Nothing is sent until you tap
 **Send**, so you can fix a misheard word first.
 
+## Pairing
+
+Run `/pair` in the pi session that owns the bridge. It draws a QR in a widget above the
+editor and in a PNG window, and mints a one-time code valid for two minutes:
+
+```
+pi-remote://pair?v=1&u=<base64url of http://<tailnet-ip>:8787>&c=<code>
+```
+
+Scan it with the phone camera. Android opens Pi Remote, the app posts the code to
+`/api/pair`, and the reply carries the device token, stored exactly as the manual flow
+stores it. Nothing extra is kept on the phone.
+
+The token is not in the QR. A QR is a screenshot waiting to happen, and a deep link lands in
+the camera history, so the code is what travels: single use, two minutes, minted per pairing.
+The endpoint is the only unauthenticated route on the bridge; its guards are under F12 in
+`docs/THREAT-MODEL.md`.
+
+`Settings > Connection` still takes a base URL and token by hand. That is the fallback when
+the camera will not open a custom scheme, and the only way on builds older than v0.0.27.
+
 ## Updates
 
 Every push to `main` builds a signed release APK in GitHub Actions and replaces the

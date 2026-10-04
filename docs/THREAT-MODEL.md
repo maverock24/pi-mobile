@@ -199,6 +199,29 @@ questions.
 Recommended: create the directory with the owning user in mind, or fall back to a per-user
 path (`$XDG_RUNTIME_DIR`).
 
+### F12 — MEDIUM: `/api/pair` is the one unauthenticated endpoint
+
+QR pairing needs somewhere a phone can spend a code before it holds a token, so `/api/pair`
+sits in front of the auth gate while every other route returns 401. The code is the
+credential, and it is guarded accordingly:
+
+- 16 random bytes (`crypto.randomBytes(16)`, base64url), minted per pairing, valid for two
+  minutes, spent the moment it verifies.
+- Constant-time comparison, so a wrong code leaks nothing by timing.
+- Five failures from one address then a minute of `429`; minting a new code clears the counters.
+- An audit line per attempt (`pair_code_issued`, `pair_failed`, `pair_blocked`,
+  `pair_succeeded`). The code itself is never written to the log.
+- Reachable only over the tailnet or loopback, which is all the bridge binds.
+
+Residual risk: over plain HTTP, anyone on the tailnet who can observe the phone-laptop
+traffic could replay a code inside its two-minute window. The fix for that is the HTTPS
+listener (F4), not this endpoint. Until then, minting a code only when it is wanted keeps the
+window small.
+
+Recommended: put the bridge behind the `tailscale serve` listener (F4). Then the code is
+protected in transit, and this endpoint can be rate limited per identity rather than per
+address.
+
 ## 5. What already holds up
 
 | Property | Evidence |
@@ -307,6 +330,7 @@ aapt2 dump permissions pi-remote-*.apk 2>/dev/null || unzip -p pi-remote-*.apk A
 | F7 prompt injection with root and internet | **Documented, open** | Structural: needs sandboxing or tool allowlists for untrusted repositories |
 | F8 token not user-auth bound | **Partly fixed** | Settings is now `FLAG_SECURE`, so the token cannot be captured in a screenshot or the recents thumbnail. A biometric gate still needs on-device testing before it ships |
 | F9 update manifest in the same channel as the APK | **Accepted, by choice** | The repository is public so the app can update without holding a credential, which also means the manifest and APK are publicly readable, as are the infrastructure details in this repository (tailnet addresses, the bridge port). The signature check is the real gate: the manifest sha256 plus a signing-certificate comparison against the installed app, and the APK url is allowlisted. A bridge-served variant behind the device token exists for a future private repository |
+| F12 unauthenticated pairing endpoint | **Mitigated, watched** | `/api/pair` is the only route in front of the auth gate, because a phone with no token needs somewhere to spend a code. Guards: single-use 16-byte code, two-minute expiry, constant-time compare, five attempts per address then a minute of lockout, one audit line per attempt, and it is reachable only on the tailnet. Verified anonymously: `/api/pair` answers while every other route still 401s. Residual: a tailnet observer could replay a code inside its window over plain HTTP, which F4 fixes, not this endpoint |
 | F11 root-owned question directory | **Fixed** | `~/.config/pi-remote` and `~/.local/share/pi-remote` are owned by the user (0700); root sessions still have access, so both can publish questions and answers |
 
 Also fixed while in there: the extension no longer fails to load when the config
