@@ -58,6 +58,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var appearance by mutableStateOf(store.appearance)
         private set
 
+    /** The latest thing you typed, shown at the top of the main view. */
+    val lastPrompt: String?
+        get() = messages.lastOrNull { it.role == "user" && it.text.isNotBlank() }?.text
+
     private var streamCall: Call? = null
     private var pollJob: Job? = null
 

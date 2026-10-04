@@ -143,6 +143,7 @@ class MainActivity : ComponentActivity() {
                         initialToken = vm.token,
                         statusLine = vm.statusLine,
                         versionLabel = "Pi Remote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                        sessionLabel = vm.sessionTitle,
                         appearance = vm.appearance,
                         onAppearanceChange = vm::updateAppearance,
                         onSave = { url, token ->

@@ -19,49 +19,56 @@ import androidx.compose.ui.unit.sp
  */
 object AnswerStyle {
 
-    val bodySize = 14.sp
+    // Raised on 2026-10-04: 14sp read as small on a phone held at arm's length.
+    val bodySize = 16.sp
 
     /**
      * 1.5 lines. The lab choice was 1.42 (tight), which reads as cramped once a
      * real answer has several paragraphs; 1.5 is the smallest value that still
      * keeps prose comfortable at 14sp.
      */
-    val bodyLineHeight = 21.sp
+    val bodyLineHeight = 24.sp
 
     /** 0.57em at 14sp, raised from the lab's 0.35em for the same reason. */
-    val paragraphGap = 8.dp
+    val paragraphGap = 10.dp
 
     /** Extra room above structural blocks so they do not run into prose. */
-    val blockGap = 10.dp
+    val blockGap = 12.dp
 
     /** Space above a heading, on top of the paragraph gap. */
-    val headingGap = 12.dp
+    val headingGap = 14.dp
 
     /** Space between list items. */
-    val listItemGap = 6.dp
+    val listItemGap = 8.dp
+
+    /** Minimum height for anything meant to be tapped. */
+    val buttonHeight = 56.dp
+
+    /** Bigger tap target for the options of a question widget. */
+    val optionHeight = 60.dp
 
     /** Indent step for one bullet level. */
-    val bulletIndent = 18.dp
+    val bulletIndent = 20.dp
 
     /** 1.18em at 14sp. */
-    val headingSize = 16.5.sp
+    val headingSize = 19.sp
 
-    val codeSize = 12.5.sp
-    val codeRadius = 10.dp
+    val codeSize = 14.sp
+    val codeRadius = 12.dp
     val codePadding = 10.dp
 
     /** 1.18em of the body size, used for inline code. */
     val inlineCodeScale = 0.92f
 
     /** Space between two answers in the stream. */
-    val answerGap = 22.dp
+    val answerGap = 26.dp
 
     /**
      * 54 characters at 14sp. Average glyph advance for UI sans is about 0.53em,
      * so 54 * 14 * 0.53 ≈ 400dp. Wider screens (landscape, tablets) get a
      * readable column instead of 120-character lines.
      */
-    val measure = 400.dp
+    val measure = 460.dp
 
     // Indigo accent, matching the lab's default.
     private val accentDark = Color(0xFF7AA2F7)

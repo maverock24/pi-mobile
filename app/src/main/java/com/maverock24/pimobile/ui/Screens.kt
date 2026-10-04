@@ -1,5 +1,6 @@
 package com.maverock24.pimobile.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -85,7 +87,12 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(vm.sessionTitle, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = vm.lastPrompt?.takeIf { it.isNotBlank() } ?: vm.sessionTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         when {
                             vm.pendingQuestion != null -> Text(
                                 text = "waiting for your answer",
@@ -213,17 +220,26 @@ private fun Composer(
             placeholder = { Text("Prompt pi…") },
         )
         Spacer(modifier = Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            FilledTonalButton(onClick = onToggleMic) {
-                Text(if (listening) "Mic on" else "Mic")
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        ) {
+            val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
+            val label = MaterialTheme.typography.bodyLarge
+            FilledTonalButton(onClick = onToggleMic, modifier = buttonModifier) {
+                Text(if (listening) "Mic on" else "Mic", style = label)
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(onClick = onSend, enabled = draft.isNotBlank()) { Text("Send") }
-            Spacer(modifier = Modifier.width(8.dp))
-            OutlinedButton(onClick = onClear, enabled = draft.isNotBlank()) { Text("Clear") }
-            Spacer(modifier = Modifier.width(8.dp))
+            Button(onClick = onSend, enabled = draft.isNotBlank(), modifier = buttonModifier) {
+                Text("Send", style = label)
+            }
+            OutlinedButton(onClick = onClear, enabled = draft.isNotBlank(), modifier = buttonModifier) {
+                Text("Clear", style = label)
+            }
             if (busy) {
-                OutlinedButton(onClick = onStop) { Text("Stop") }
+                OutlinedButton(onClick = onStop, modifier = buttonModifier) {
+                    Text("Stop", style = label)
+                }
             }
         }
     }
@@ -236,6 +252,7 @@ fun SettingsScreen(
     initialToken: String,
     statusLine: String,
     versionLabel: String,
+    sessionLabel: String,
     appearance: String,
     onAppearanceChange: (String) -> Unit,
     onSave: (String, String) -> Unit,
@@ -293,23 +310,33 @@ fun SettingsScreen(
                 listOf("dark" to "Dark", "light" to "Light", "system" to "System").forEach { (value, label) ->
                     OutlinedButton(
                         onClick = { onAppearanceChange(value) },
-                        modifier = Modifier.padding(end = 8.dp),
+                        modifier = Modifier.padding(end = 8.dp).heightIn(min = AnswerStyle.buttonHeight),
                     ) {
-                        Text(if (appearance == value) "• $label" else label)
+                        Text(
+                            text = if (appearance == value) "• $label" else label,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
                     }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { onSave(baseUrl, token) }) { Text("Save") }
+                val label = MaterialTheme.typography.bodyLarge
+                val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
+                Button(onClick = { onSave(baseUrl, token) }, modifier = size) { Text("Save", style = label) }
                 Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(onClick = onTest) { Text("Test") }
+                OutlinedButton(onClick = onTest, modifier = size) { Text("Test", style = label) }
                 Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(onClick = onCheckUpdates) { Text("Update") }
+                OutlinedButton(onClick = onCheckUpdates, modifier = size) { Text("Update", style = label) }
             }
             if (statusLine.isNotBlank()) {
                 Text(statusLine, style = MaterialTheme.typography.bodyMedium)
             }
             Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "session: $sessionLabel",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Text(
                 text = versionLabel,
                 style = MaterialTheme.typography.bodySmall,
@@ -374,7 +401,7 @@ private fun QuestionCard(
                     question.options.forEachIndexed { index, option ->
                         Button(
                             onClick = { onSelect(question.id, option.value) },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = AnswerStyle.optionHeight),
                             shape = RoundedCornerShape(10.dp),
                         ) {
                             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {

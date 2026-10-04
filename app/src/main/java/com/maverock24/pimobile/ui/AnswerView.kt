@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,9 +41,11 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -51,12 +54,42 @@ import androidx.compose.ui.unit.dp
  * Renders one answer: markdown blocks plus inline styling, with the tokens from
  * [AnswerStyle]. Tools and thinking are intentionally never rendered.
  */
+/** A link found in an answer, ready to be rendered as a button. */
+private data class AnswerLink(val url: String, val label: String?)
+
+private val linkRegex = Regex(
+    """\[([^\]\n]+)\]\((https?://[^)\s]+)\)|(https?://[^\s<>()\[\]{}"']+)""",
+)
+
+/** Every http(s) link in the answer, deduplicated, with any markdown label kept. */
+private fun extractLinks(text: String): List<AnswerLink> {
+    val found = LinkedHashMap<String, AnswerLink>()
+    for (match in linkRegex.findAll(text)) {
+        val raw = match.groupValues[2].ifBlank { match.groupValues[3] }
+        val url = raw.trimEnd('.', ',', ';', ')', ':')
+        if (!url.startsWith("http")) continue
+        val label = match.groupValues[1].ifBlank { null }
+        if (!found.containsKey(url)) found[url] = AnswerLink(url, label)
+    }
+    return found.values.toList()
+}
+
+private fun hostOf(url: String): String = url.substringAfter("://").substringBefore('/')
+
+/** Display form: no scheme, truncated in the middle so the end stays readable. */
+private fun trimUrl(url: String): String {
+    val withoutScheme = url.removePrefix("https://").removePrefix("http://")
+    return if (withoutScheme.length <= 64) withoutScheme
+    else withoutScheme.take(40) + "…" + withoutScheme.takeLast(18)
+}
+
 @Composable
 fun AnswerView(
     text: String,
     modifier: Modifier = Modifier,
 ) {
     val blocks = remember(text) { parseAnswerBlocks(text) }
+    val links = remember(text) { extractLinks(text) }
     val scheme = MaterialTheme.colorScheme
     val linkColor = scheme.primary
     val chipColor = AnswerStyle.chipBackground(scheme.background.luminance() < 0.5f)
@@ -165,6 +198,51 @@ fun AnswerView(
                     )
                 }
             }
+
+            // Links get their own buttons: tapping a URL in running text on a
+            // phone while walking is exactly the case that fails.
+            if (links.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.padding(top = AnswerStyle.blockGap),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = if (links.size == 1) "Link" else "Links",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = scheme.onSurfaceVariant,
+                    )
+                    links.forEach { link -> LinkButton(link) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LinkButton(link: AnswerLink) {
+    val uriHandler = LocalUriHandler.current
+    Button(
+        onClick = { runCatching { uriHandler.openUri(link.url) } },
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = AnswerStyle.buttonHeight),
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Text(
+                text = link.label ?: hostOf(link.url),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = trimUrl(link.url) + "  ↗",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
