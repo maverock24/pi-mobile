@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -107,6 +108,14 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(vm.messages, key = { it.id }) { message -> MessageBubble(message) }
+            }
+            vm.pendingQuestion?.let { pending ->
+                QuestionCard(
+                    pending = pending,
+                    onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
+                    onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
+                    onCancel = vm::cancelQuestion,
+                )
             }
             Composer(
                 draft = vm.draft,
@@ -293,6 +302,101 @@ fun SettingsScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(versionLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/**
+ * Answer a question widget from the phone. pi cannot continue until the widget
+ * is answered, so this sits directly above the composer where it is hard to miss.
+ */
+@Composable
+private fun QuestionCard(
+    pending: PendingQuestion,
+    onSelect: (String, String) -> Unit,
+    onTyped: (String, String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var typed by rememberSaveable { mutableStateOf("") }
+    val target = pending.firstUnanswered
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .heightIn(max = 320.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = if (pending.allAnswered) "sending answers…" else "pi is waiting for an answer",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = pending.title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            pending.questions.forEach { question ->
+                if (pending.multiple) {
+                    Text(
+                        text = "${question.label}: ${question.prompt}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                val answer = question.answer
+                if (answer != null) {
+                    Text(
+                        text = "✓ $answer",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    question.options.forEach { option ->
+                        OutlinedButton(
+                            onClick = { onSelect(question.id, option.value) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                                option.description?.let { description ->
+                                    Text(
+                                        text = description,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (target != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = typed,
+                        onValueChange = { typed = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        placeholder = { Text("Type an answer for ${target.label}") },
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            onTyped(target.id, typed)
+                            typed = ""
+                        },
+                        enabled = typed.isNotBlank(),
+                    ) { Text("Send") }
+                }
+            }
+            TextButton(onClick = onCancel) { Text("Cancel question") }
         }
     }
 }

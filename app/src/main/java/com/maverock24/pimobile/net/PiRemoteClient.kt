@@ -69,6 +69,28 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
         return execute(builder("/api/prompt").post(payload.toRequestBody(json)).build())
     }
 
+    /** The question widget pi has open, or a pending field set to null. */
+    suspend fun question(): JSONObject = execute(builder("/api/question").get().build())
+
+    /**
+     * Answer an open question. [value] is normally an option's value; set
+     * [custom] when it is free text, or [cancel] to dismiss the widget.
+     */
+    suspend fun answer(
+        questionId: String?,
+        value: String,
+        custom: Boolean = false,
+        cancel: Boolean = false,
+    ): JSONObject {
+        val payload = JSONObject().apply {
+            put("value", value)
+            put("custom", custom)
+            put("cancel", cancel)
+            if (!questionId.isNullOrBlank()) put("questionId", questionId)
+        }.toString()
+        return execute(builder("/api/answer").post(payload.toRequestBody(json)).build())
+    }
+
     suspend fun abort(): JSONObject = execute(builder("/api/abort").post("{}".toRequestBody(json)).build())
 
     /**

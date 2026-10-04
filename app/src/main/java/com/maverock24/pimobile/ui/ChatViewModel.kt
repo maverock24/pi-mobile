@@ -50,6 +50,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var lastError by mutableStateOf<String?>(null)
         private set
+    var pendingQuestion by mutableStateOf<PendingQuestion?>(null)
+        private set
 
     private var streamCall: Call? = null
     private var streamingId: String? = null
@@ -96,6 +98,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         streamCall = call
         reloadHistory()
         refreshState()
+        safeLaunch {
+            runCatching { client.question() }
+                .onSuccess { applyQuestion(it.optJSONObject("pending")) }
+        }
     }
 
     fun disconnect() {
@@ -113,6 +119,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val name = state.optString("sessionName").takeIf { it.isNotBlank() && it != "null" }
                     val file = state.optString("sessionFile").substringAfterLast('/')
                     sessionTitle = name ?: file.ifBlank { "pi session" }
+                    applyQuestion(state.optJSONObject("question"))
                     val model = state.optJSONObject("model")?.optString("id").orEmpty()
                     statusLine = listOf(if (connected) "connected" else statusLine, model)
                         .filter { it.isNotBlank() }
@@ -202,10 +209,33 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         lastError = null
     }
 
+    private fun applyQuestion(json: JSONObject?) {
+        pendingQuestion = parsePendingQuestion(json)
+    }
+
+    /** Tap on an option button. */
+    fun answerQuestion(questionId: String?, value: String, custom: Boolean = false) {
+        safeLaunch {
+            runCatching { client.answer(questionId, value, custom) }
+                .onFailure { lastError = "answer: ${Diagnostics.describe(it, store.baseUrl)}" }
+        }
+    }
+
+    /** Dismiss the widget; the tool records it as cancelled. */
+    fun cancelQuestion() {
+        val current = pendingQuestion ?: return
+        val questionId = current.firstUnanswered?.id ?: current.questions.first().id
+        safeLaunch {
+            runCatching { client.answer(questionId, "", cancel = true) }
+                .onFailure { lastError = "cancel: ${Diagnostics.describe(it, store.baseUrl)}" }
+        }
+    }
+
     private fun handleEvent(event: JSONObject) {
         val type = event.optString("type")
         val data = event.optJSONObject("data") ?: JSONObject()
         when (type) {
+            "question" -> applyQuestion(data.optJSONObject("pending"))
             "state" -> {
                 busy = !data.optBoolean("idle", true)
                 val file = data.optString("sessionFile").substringAfterLast('/')
