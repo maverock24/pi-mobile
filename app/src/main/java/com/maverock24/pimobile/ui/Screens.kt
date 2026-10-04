@@ -151,6 +151,7 @@ fun ChatScreen(
                     vm.send(vm.draft)
                     vm.clearDraft()
                 },
+                onClear = vm::clearDraft,
                 onStop = vm::abort,
             )
         }
@@ -183,6 +184,7 @@ private fun Composer(
     busy: Boolean,
     onToggleMic: () -> Unit,
     onSend: () -> Unit,
+    onClear: () -> Unit,
     onStop: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
@@ -209,6 +211,8 @@ private fun Composer(
             }
             Spacer(modifier = Modifier.width(8.dp))
             Button(onClick = onSend, enabled = draft.isNotBlank()) { Text("Send") }
+            Spacer(modifier = Modifier.width(8.dp))
+            OutlinedButton(onClick = onClear, enabled = draft.isNotBlank()) { Text("Clear") }
             Spacer(modifier = Modifier.width(8.dp))
             if (busy) {
                 OutlinedButton(onClick = onStop) { Text("Stop") }
