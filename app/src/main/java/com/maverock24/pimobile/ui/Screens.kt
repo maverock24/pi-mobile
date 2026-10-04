@@ -110,7 +110,7 @@ fun ChatScreen(
             }
             Composer(
                 draft = vm.draft,
-                onDraftChange = vm::setDraft,
+                onDraftChange = vm::updateDraft,
                 partialText = partialText,
                 listening = listening,
                 busy = vm.busy,

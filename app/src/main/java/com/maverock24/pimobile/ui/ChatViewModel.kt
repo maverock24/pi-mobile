@@ -126,7 +126,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setDraft(value: String) {
+    fun updateDraft(value: String) {
         draft = value
     }
 
