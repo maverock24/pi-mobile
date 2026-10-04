@@ -6,6 +6,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
@@ -35,13 +37,18 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
         return request.header("Authorization", "Bearer $token")
     }
 
-    private fun execute(request: Request): JSONObject {
+    /**
+     * Blocking OkHttp call. Always runs on [Dispatchers.IO]: a synchronous
+     * request from the UI thread trips Android's NetworkOnMainThreadException,
+     * which carries no message and is therefore hard to diagnose.
+     */
+    private suspend fun execute(request: Request): JSONObject = withContext(Dispatchers.IO) {
         client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw IOException(describeError(response.code, text))
             }
-            return if (text.isBlank()) JSONObject() else JSONObject(text)
+            if (text.isBlank()) JSONObject() else JSONObject(text)
         }
     }
 
@@ -51,18 +58,18 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
         else -> "HTTP $code: ${body.take(200)}"
     }
 
-    fun health(): JSONObject = execute(builder("/api/health").get().build())
+    suspend fun health(): JSONObject = execute(builder("/api/health").get().build())
 
-    fun state(): JSONObject = execute(builder("/api/state").get().build())
+    suspend fun state(): JSONObject = execute(builder("/api/state").get().build())
 
-    fun history(limit: Int = 60): JSONObject = execute(builder("/api/history?limit=$limit").get().build())
+    suspend fun history(limit: Int = 60): JSONObject = execute(builder("/api/history?limit=$limit").get().build())
 
-    fun prompt(text: String, deliverAs: String = "steer"): JSONObject {
+    suspend fun prompt(text: String, deliverAs: String = "steer"): JSONObject {
         val payload = JSONObject().put("text", text).put("deliverAs", deliverAs).toString()
         return execute(builder("/api/prompt").post(payload.toRequestBody(json)).build())
     }
 
-    fun abort(): JSONObject = execute(builder("/api/abort").post("{}".toRequestBody(json)).build())
+    suspend fun abort(): JSONObject = execute(builder("/api/abort").post("{}".toRequestBody(json)).build())
 
     /**
      * Opens the SSE stream. [onEvent] is called for every `data:` frame on an

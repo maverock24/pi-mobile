@@ -81,6 +81,8 @@ object Diagnostics {
                 "(your-laptop.your-tailnet.ts.net) instead of the raw IP."
         }
         return when (error) {
+            is android.os.NetworkOnMainThreadException ->
+                "internal bug — a blocking network call ran on the UI thread"
             is java.net.UnknownHostException ->
                 "host not found — MagicDNS may be off, or the URL has a typo"
             is java.net.SocketTimeoutException ->
