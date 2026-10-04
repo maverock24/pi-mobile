@@ -21,6 +21,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- QR pairing. The phone camera opens this link; no CAMERA permission
+                 and no scanning library are involved. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="pi-remote" android:host="pair" />
+            </intent-filter>
         </activity>
 
         <provider

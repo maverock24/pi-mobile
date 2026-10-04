@@ -220,6 +220,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         appearance = value
     }
 
+    /**
+     * QR pairing wrote a fresh device token on the laptop: adopt it and reconnect.
+     * Nothing is stored on the phone beyond this endpoint and token, which the app
+     * needs anyway.
+     */
+    fun applyPairing(baseUrl: String, token: String) {
+        store.baseUrl = baseUrl
+        store.token = token
+    }
+
     fun updateDraft(value: String) {
         draft = value
     }

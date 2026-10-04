@@ -1,6 +1,7 @@
 package com.maverock24.pimobile
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
@@ -19,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.maverock24.pimobile.net.Pairing
 import com.maverock24.pimobile.ui.ChatScreen
 import com.maverock24.pimobile.ui.ChatViewModel
 import com.maverock24.pimobile.ui.PiRemoteTheme
@@ -29,8 +31,15 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    /**
+     * A scanned pairing link arrives as an intent, usually before there is any
+     * composition to hand it to, so it is parked here until the UI picks it up.
+     */
+    private val pendingPairLink = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handlePairingIntent(intent)
         if (BuildConfig.DEBUG) {
             // Log (do not crash) any accidental blocking network call on the UI thread.
             android.os.StrictMode.setThreadPolicy(
@@ -81,6 +90,28 @@ class MainActivity : ComponentActivity() {
                     if (update != null) {
                         pendingUpdate = update
                     }
+                }
+
+                // QR pairing: the camera hands the app pi-remote://pair?…, we spend the
+                // one-time code and adopt the endpoint and token that come back. Nothing
+                // else is stored on the phone, and the token never travelled in the QR.
+                val pairLink by pendingPairLink
+                LaunchedEffect(pairLink) {
+                    val link = pairLink ?: return@LaunchedEffect
+                    pendingPairLink.value = null // a code is spent once, not per recomposition
+                    val invite = Pairing.parse(link)
+                    if (invite == null) {
+                        notice = "That link is not a pairing code"
+                        return@LaunchedEffect
+                    }
+                    notice = "Pairing…"
+                    runCatching { Pairing.exchange(invite, android.os.Build.MODEL ?: "phone") }
+                        .onSuccess { paired ->
+                            vm.applyPairing(paired.baseUrl, paired.token)
+                            vm.connect()
+                            notice = "Paired as ${paired.device}"
+                        }
+                        .onFailure { notice = "Pairing failed: ${it.message}" }
                 }
 
                 DisposableEffect(Unit) {
@@ -202,6 +233,21 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePairingIntent(intent)
+    }
+
+    /** Only a pi-remote://pair link counts as an invite; everything else is ignored. */
+    private fun handlePairingIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val link = intent.dataString ?: return
+        if (Pairing.parse(link) != null) {
+            pendingPairLink.value = link
         }
     }
 }
