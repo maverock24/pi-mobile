@@ -37,6 +37,16 @@ Pixel/phone ──Tailscale (WireGuard)──► laptop:192.0.2.1:8787
    header. `/remote` shows status; `/remote claim` takes the bridge over from
    another pane; `/remote release` gives it up.
 
+## What the app shows
+
+Answers, and nothing else. The transcript lists finished (and in-flight)
+assistant answers; prompts, tool calls, model names, context usage and cost stay
+out of the way. The only status on screen is "thinking…" while pi works.
+
+URLs in an answer are rendered as tappable links, because reading an answer on
+the phone usually ends with going to check the source. Bold and inline code are
+rendered too, and the whole answer is selectable for copying.
+
 ## Phone side
 
 Install the APK from the latest release, open Settings, and paste:

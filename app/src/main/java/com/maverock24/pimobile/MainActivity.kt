@@ -86,6 +86,29 @@ class MainActivity : ComponentActivity() {
                     onDispose { dictation.destroy() }
                 }
 
+                val checkForUpdates: () -> Unit = {
+                    scope.launch {
+                        val update = runCatching { UpdateChecker.check(BuildConfig.VERSION_CODE) }.getOrNull()
+                        if (update == null) {
+                            notice = "Already on the newest build"
+                        } else {
+                            pendingUpdate = update
+                            notice = "Downloading ${update.versionName}…"
+                            runCatching { UpdateChecker.download(context, update) }
+                                .onSuccess { file ->
+                                    if (UpdateChecker.needsInstallPermission(context)) {
+                                        UpdateChecker.requestInstallPermission(context)
+                                        notice = "Allow installs for Pi Remote, then tap the banner again"
+                                        pendingUpdate = null
+                                    } else {
+                                        notice = UpdateChecker.install(context, file) ?: "Installer launched"
+                                    }
+                                        }
+                                        .onFailure { notice = "Update failed: ${it.message}" }
+                                }
+                            }
+                        }
+
                 if (showSettings) {
                     SettingsScreen(
                         initialBaseUrl = vm.baseUrl,
@@ -97,6 +120,7 @@ class MainActivity : ComponentActivity() {
                             showSettings = false
                         },
                         onTest = vm::testConnection,
+                        onCheckUpdates = checkForUpdates,
                         onBack = { showSettings = false },
                     )
                 } else {
@@ -122,28 +146,6 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onOpenSettings = { showSettings = true },
-                        onCheckUpdates = {
-                            scope.launch {
-                                val update = runCatching { UpdateChecker.check(BuildConfig.VERSION_CODE) }.getOrNull()
-                                if (update == null) {
-                                    notice = "Already on the newest build"
-                                } else {
-                                    pendingUpdate = update
-                                    notice = "Downloading ${update.versionName}…"
-                                    runCatching { UpdateChecker.download(context, update) }
-                                        .onSuccess { file ->
-                                            if (UpdateChecker.needsInstallPermission(context)) {
-                                                UpdateChecker.requestInstallPermission(context)
-                                                notice = "Allow installs for Pi Remote, then tap the banner again"
-                                                pendingUpdate = null
-                                            } else {
-                                                notice = UpdateChecker.install(context, file) ?: "Installer launched"
-                                            }
-                                        }
-                                        .onFailure { notice = "Update failed: ${it.message}" }
-                                }
-                            }
-                        },
                         onDismissNotice = {
                             if (pendingUpdate != null) {
                                 val update = pendingUpdate
