@@ -77,7 +77,7 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(Unit) {
                     vm.connect()
-                    val update = runCatching { UpdateChecker.check(BuildConfig.VERSION_CODE) }.getOrNull()
+                    val update = runCatching { UpdateChecker.check(vm.baseUrl, vm.token, BuildConfig.VERSION_CODE) }.getOrNull()
                     if (update != null) {
                         pendingUpdate = update
                     }
@@ -116,13 +116,13 @@ class MainActivity : ComponentActivity() {
 
                 val checkForUpdates: () -> Unit = {
                     scope.launch {
-                        val update = runCatching { UpdateChecker.check(BuildConfig.VERSION_CODE) }.getOrNull()
+                        val update = runCatching { UpdateChecker.check(vm.baseUrl, vm.token, BuildConfig.VERSION_CODE) }.getOrNull()
                         if (update == null) {
                             notice = "Already on the newest build"
                         } else {
                             pendingUpdate = update
                             notice = "Downloading ${update.versionName}…"
-                            runCatching { UpdateChecker.download(context, update) }
+                            runCatching { UpdateChecker.download(context, vm.baseUrl, vm.token, update) }
                                 .onSuccess { file ->
                                     if (UpdateChecker.needsInstallPermission(context)) {
                                         UpdateChecker.requestInstallPermission(context)
@@ -183,7 +183,7 @@ class MainActivity : ComponentActivity() {
                                 pendingUpdate = null
                                 if (update != null) {
                                     scope.launch {
-                                        runCatching { UpdateChecker.download(context, update) }
+                                        runCatching { UpdateChecker.download(context, vm.baseUrl, vm.token, update) }
                                             .onSuccess { file ->
                                                 if (UpdateChecker.needsInstallPermission(context)) {
                                                     UpdateChecker.requestInstallPermission(context)
