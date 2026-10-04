@@ -4,6 +4,7 @@ import android.util.Base64
 import com.maverock24.pimobile.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -107,7 +108,7 @@ object Pairing {
             ?.trim()
             ?: return null
         if (!decoded.startsWith("http://", true) && !decoded.startsWith("https://", true)) return null
-        val parsed = runCatching { okhttp3.HttpUrl.parse(decoded) }.getOrNull() ?: return null
+        val parsed = runCatching { decoded.toHttpUrlOrNull() }.getOrNull() ?: return null
         return if (parsed.host.isNotBlank()) decoded.trimEnd('/') else null
     }
 }
