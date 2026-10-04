@@ -3,6 +3,7 @@ package com.maverock24.pimobile
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -84,6 +85,21 @@ class MainActivity : ComponentActivity() {
 
                 DisposableEffect(Unit) {
                     onDispose { dictation.destroy() }
+                }
+
+                // The settings screen shows the bridge token: keep it out of
+                // screenshots, screen recordings and the recents thumbnail.
+                DisposableEffect(showSettings) {
+                    val window = this@MainActivity.window
+                    if (showSettings) {
+                        window.setFlags(
+                            WindowManager.LayoutParams.FLAG_SECURE,
+                            WindowManager.LayoutParams.FLAG_SECURE,
+                        )
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                    onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
                 }
 
                 val checkForUpdates: () -> Unit = {
