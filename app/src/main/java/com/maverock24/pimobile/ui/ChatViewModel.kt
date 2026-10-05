@@ -153,11 +153,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val isConfigured: Boolean get() = store.isConfigured
 
     fun saveSettings(baseUrl: String, token: String) {
+        val attachedElsewhere = baseUrl != store.baseUrl || token != store.token
         store.baseUrl = baseUrl
         store.token = token
-        messages.clear()
-        attachedSessionId = null
-        otherSession = null
+        if (attachedElsewhere) {
+            // A different bridge is a different attachment, so the transcript and
+            // the pin go with it. Saving the same values again must not clear
+            // either: attaching is the only other place that drops the transcript.
+            messages.clear()
+            attachedSessionId = null
+            otherSession = null
+        }
         connect()
     }
 
@@ -181,6 +187,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         } else {
                             Diagnostics.describe(error, store.baseUrl)
                         }
+                        // Find out whose session the bridge serves now. The poll
+                        // would take three seconds, and this is the moment another
+                        // session may have taken the bridge over.
+                        refreshState()
                     }
                 },
             )
@@ -263,6 +273,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // reading until you choose to move.
             otherSession = SessionNotice(reported, title)
             busy = false
+            // Stop following it. connect() opens the stream before this check can
+            // run, and its frames would otherwise be applied to the session that
+            // is still on screen.
+            streamCall?.cancel()
+            streamCall = null
+            connected = false
             return
         }
         otherSession = null
@@ -302,6 +318,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         parsed.add(message)
                     }
+                    val from = payload.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
+                    val attached = attachedSessionId
+                    if (from != null && attached != null && from != attached) {
+                        // The bridge changed hands during this round trip, so this
+                        // transcript belongs to the other session.
+                        otherSession = SessionNotice(
+                            from,
+                            payload.optString("sessionFile").substringAfterLast('/')
+                                .ifBlank { "another pi session" },
+                        )
+                        return@onSuccess
+                    }
                     messages.clear()
                     messages.addAll(parsed)
                 }
@@ -339,6 +367,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun applyPairing(baseUrl: String, token: String) {
         store.baseUrl = baseUrl
         store.token = token
+        // A fresh pairing is a fresh attachment: nothing from the old one may
+        // survive a history fetch that fails.
+        messages.clear()
         attachedSessionId = null
         otherSession = null
     }
@@ -358,7 +389,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun send(text: String) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || foreignSessionActive()) return
+        if (trimmed.isEmpty() || requestsBlocked()) return
         messages.add(ChatMessage(id = "local-${UUID.randomUUID()}", role = "user", text = trimmed))
         busy = true
         safeLaunch {
@@ -373,7 +404,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun abort() {
-        if (foreignSessionActive()) return
+        if (requestsBlocked()) return
         safeLaunch { runCatching { client.abort() }.onFailure { lastError = it.message } }
     }
 
@@ -393,10 +424,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Nothing is sent while the bridge serves a session other than the one this
-     * app attached to. The notice on screen is what tells the user how to move.
+     * Why the composer is off, or null when a prompt can be sent.
+     *
+     * The live stream is the proof of identity: a takeover makes the serving
+     * process close its server, which drops this stream, so while the stream is
+     * up the session checked when it opened is still the one on the other end. A
+     * dead stream therefore counts as not ours until it is reopened, and the poll
+     * keeps the state readable in the meantime.
      */
-    private fun foreignSessionActive(): Boolean = otherSession != null
+    val composerBlock: String?
+        get() = when {
+            otherSession != null -> "Another pi session is serving the bridge"
+            !connected -> "Not connected"
+            else -> null
+        }
+
+    /** True when this app has no verified session to act on. */
+    private fun requestsBlocked(): Boolean = composerBlock != null
 
     /**
      * Move to the session the bridge is actually serving. The transcript is
@@ -416,7 +460,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Tap on an option button. */
     fun answerQuestion(questionId: String?, value: String, custom: Boolean = false) {
-        if (foreignSessionActive()) return
+        if (requestsBlocked()) return
         safeLaunch {
             runCatching { client.answer(questionId, value, custom) }
                 .onSuccess { outcome = RequestOutcome(++outcomeSeq, ok = true) }
@@ -430,7 +474,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Dismiss the widget; the tool records it as cancelled. */
     fun cancelQuestion() {
         val current = pendingQuestion ?: return
-        if (foreignSessionActive()) return
+        if (requestsBlocked()) return
         val questionId = current.firstUnanswered?.id ?: current.questions.first().id
         safeLaunch {
             runCatching { client.answer(questionId, "", cancel = true) }
@@ -441,6 +485,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun handleEvent(event: JSONObject) {
         val type = event.optString("type")
         val data = event.optJSONObject("data") ?: JSONObject()
+        // Frames queued before a takeover was noticed still arrive here, and none
+        // of them belong to the session on screen.
+        if (otherSession != null) return
         when (type) {
             "question" -> applyQuestion(data.optJSONObject("pending"))
             "state" -> applyState(data)

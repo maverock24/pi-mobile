@@ -211,7 +211,7 @@ fun ChatScreen(
                 partialText = partialText,
                 listening = listening,
                 busy = vm.busy,
-                blocked = vm.otherSession != null,
+                blockReason = vm.composerBlock,
                 onToggleMic = onToggleMic,
                 onSend = {
                     vm.send(vm.draft)
@@ -355,7 +355,7 @@ private fun Composer(
     partialText: String,
     listening: Boolean,
     busy: Boolean,
-    blocked: Boolean,
+    blockReason: String?,
     onToggleMic: () -> Unit,
     onSend: () -> Unit,
     onClear: () -> Unit,
@@ -376,7 +376,7 @@ private fun Composer(
             modifier = Modifier.fillMaxWidth(),
             minLines = 1,
             maxLines = 6,
-            placeholder = { Text(if (blocked) "Another pi session is serving the bridge" else "Prompt pi…") },
+            placeholder = { Text(blockReason ?: "Prompt pi…") },
         )
         Spacer(modifier = Modifier.height(8.dp))
         Row(
@@ -386,7 +386,7 @@ private fun Composer(
         ) {
             val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
             val label = MaterialTheme.typography.bodyLarge
-            val canSend = draft.isNotBlank() && !blocked
+            val canSend = draft.isNotBlank() && blockReason == null
             FilledTonalButton(onClick = onToggleMic, modifier = buttonModifier.tactile(haptics = true)) {
                 Text(if (listening) "Mic on" else "Mic", style = label)
             }
