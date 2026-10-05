@@ -45,6 +45,15 @@ object AnswerStyle {
     val buttonHeight = 56.dp
 
     /**
+     * How far the face of a solid control sits above its base. The base is drawn
+     * inside the control's own bounds, so the depth comes out of the face rather
+     * than out of the row: a control asked for [buttonHeight] keeps that height.
+     * One left to size itself has nothing to give up and grows by this much, so
+     * every control that draws a key asks for [buttonHeight].
+     */
+    val keyDepth = 5.dp
+
+    /**
      * Leading accent bar. It marks a quoted passage inside an answer and the
      * prompt of a turn in the transcript, so the two read the same way.
      */

@@ -26,6 +26,28 @@ import java.util.UUID
 private const val NO_SESSION = "not connected"
 
 /**
+ * The transcript role for a question widget the person answered. It is not a
+ * prompt: the question came from pi and the choice came from the person, so it
+ * belongs with the answers of the turn that was interrupted.
+ */
+internal const val QUESTION_ROLE = "question"
+
+/** The two tools whose result is a choice the person made, and not process. */
+private const val QUESTION_TOOL = "question"
+private const val QUESTIONNAIRE_TOOL = "questionnaire"
+
+/**
+ * The sentence the question tools write, used only when the history came without
+ * the tool name: `User selected: 2. Label`, `User wrote: ...`,
+ * `User cancelled the selection`, or a questionnaire's `Label: user selected: ...`.
+ */
+private val questionResultShape = Regex("""(?i)^(?:\S[^:\n]{0,60}: )?user (?:selected|wrote|cancelled)\b""")
+
+/** A string field, or null when it is missing, null or blank. */
+private fun JSONObject.string(key: String): String? =
+    if (!has(key) || isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
+
+/**
  * Names a folder by its tail. The bridge reports an absolute path, and the last
  * two segments are what tell one project from another on a phone-width line.
  */
@@ -56,6 +78,12 @@ data class ChatMessage(
     val streaming: Boolean = false,
     val toolName: String? = null,
     val isError: Boolean = false,
+    /**
+     * What the person chose for a [QUESTION_ROLE] entry: an option's label, the
+     * text they typed themselves, or null when the question was dismissed
+     * without an answer.
+     */
+    val answer: String? = null,
 )
 
 /**
@@ -73,7 +101,9 @@ data class ChatTurn(
  * prompt that caused it, but the order does: every answer that follows a prompt
  * belongs to it. Answers that arrive before any prompt, which happens when the
  * history is fetched mid-run, become a turn of their own with a null prompt.
- * Tool narration never reaches [messages], so nothing sits between the two.
+ * Tool narration never reaches [messages]. The one tool result that does, a
+ * question widget the person answered ([QUESTION_ROLE]), is part of the answer
+ * to the prompt it interrupted, so it sits with the answers and in order.
  */
 fun turnsOf(messages: List<ChatMessage>): List<ChatTurn> {
     val turns = ArrayList<ChatTurn>()
@@ -89,6 +119,9 @@ fun turnsOf(messages: List<ChatMessage>): List<ChatTurn> {
                 prompt = message
             }
             "assistant" -> if (message.text.isNotBlank()) answers.add(message)
+            // Kept even when the question text is missing: the choice is the
+            // part that says what happened.
+            QUESTION_ROLE -> answers.add(message)
         }
     }
     if (prompt != null || answers.isNotEmpty()) {
@@ -380,11 +413,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val parsed = ArrayList<ChatMessage>()
                     for (index in 0 until array.length()) {
                         val entry = array.optJSONObject(index) ?: continue
-                        val message = toMessage(entry) ?: continue
-                        if (message.role == "assistant" && message.toolName != null) {
-                            continue // narration on the way to a tool call
+                        for (message in toMessage(entry)) {
+                            if (message.role == "assistant" && message.toolName != null) {
+                                continue // narration on the way to a tool call
+                            }
+                            parsed.add(message)
                         }
-                        parsed.add(message)
                     }
                     val from = payload.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
                     val attached = attachedSessionId
@@ -529,16 +563,36 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun applyQuestion(json: JSONObject?) {
+        val previous = pendingQuestion
         pendingQuestion = parsePendingQuestion(json)
+        // The widget closed, so pi has recorded the answer as a tool result by
+        // now. Pull the transcript a moment later and let that record take the
+        // place of the optimistic entry: the record is the half that survives a
+        // reconnect, and fetching it here is what keeps the two from disagreeing.
+        if (previous != null && pendingQuestion == null) {
+            viewModelScope.launch {
+                delay(500)
+                reloadHistory()
+            }
+        }
     }
 
     /** Tap on an option button. */
     fun answerQuestion(questionId: String?, value: String, custom: Boolean = false) {
         if (requestsBlocked()) return
+        // The tool result that records this answer arrives with the next history
+        // fetch, which can be a poll or a reconnect away. Put it on the
+        // transcript now, so answering reads as the one action it was.
+        val trace = pendingQuestion?.let { questionEntry(it, questionId, value, custom) }
+        if (trace != null) messages.add(trace)
         safeLaunch {
             runCatching { client.answer(questionId, value, custom) }
                 .onSuccess { outcome = RequestOutcome(++outcomeSeq, ok = true) }
                 .onFailure {
+                    // Nothing was recorded on the laptop, so the answer must not
+                    // stay on screen claiming that it was, and a retry of the
+                    // same option must not look like a second answer.
+                    if (trace != null) messages.remove(trace)
                     lastError = "answer: ${Diagnostics.describe(it, store.baseUrl)}"
                     outcome = RequestOutcome(++outcomeSeq, ok = false)
                 }
@@ -550,9 +604,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val current = pendingQuestion ?: return
         if (requestsBlocked()) return
         val questionId = current.firstUnanswered?.id ?: current.questions.first().id
+        // A dismissal is a choice as well, and the tool result the bridge
+        // records says so. Leaving no trace here would put the question on
+        // screen only after a reload, and the turn would read as if pi had
+        // never asked it.
+        val trace = questionEntry(current, questionId, value = null, custom = false)
+        messages.add(trace)
         safeLaunch {
             runCatching { client.answer(questionId, "", cancel = true) }
-                .onFailure { lastError = "cancel: ${Diagnostics.describe(it, store.baseUrl)}" }
+                .onFailure {
+                    messages.remove(trace)
+                    lastError = "cancel: ${Diagnostics.describe(it, store.baseUrl)}"
+                }
         }
     }
 
@@ -636,21 +699,168 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         return false
     }
 
-    private fun toMessage(entry: JSONObject): ChatMessage? {
-        val message = entry.optJSONObject("message") ?: return null
-        val role = message.optString("role").ifBlank { return null }
+    private fun toMessage(entry: JSONObject): List<ChatMessage> {
+        val message = entry.optJSONObject("message") ?: return emptyList()
+        val role = message.optString("role").ifBlank { return emptyList() }
         val text = textOf(message, "content")
-        if (text.isBlank() && role != "toolResult") return null
-        val marker = when {
-            role == "toolResult" -> message.optString("toolName").takeIf { it.isNotBlank() }
-            role == "assistant" && hasToolCalls(message) -> "toolCall"
-            else -> null
+        // A tool result is process, and process stays off the transcript. The
+        // question tools are the exception: what they return is what the person
+        // chose, which is an answer and not narration. A questionnaire is the
+        // one entry that becomes several, one per question it asked.
+        if (role == "toolResult") return questionTraces(entry, message, text)
+        if (text.isBlank()) return emptyList()
+        return listOf(
+            ChatMessage(
+                id = entry.optString("id", UUID.randomUUID().toString()),
+                role = role,
+                text = text,
+                toolName = if (role == "assistant" && hasToolCalls(message)) "toolCall" else null,
+            )
+        )
+    }
+
+    /**
+     * The questions and the choices behind a tool result, or nothing for every
+     * other tool.
+     *
+     * The history carries the tool name on the result message, the way a session
+     * file does (`message.toolName`, which the bridge keeps on the way out), so
+     * the name is what decides. A payload that lost the name is decided by the
+     * shape of what is left instead: a questionnaire's details carry its
+     * questions, a question's carry one, and neither being there leaves only the
+     * sentence the tool wrote, which identifies it on its own.
+     *
+     * An errored tool chose nothing and is not a choice. `question` answers "UI
+     * not available" with `answer: null` and no error flag, so the sentence is
+     * the only thing that separates a dismissal from a failure.
+     */
+    private fun questionTraces(entry: JSONObject, message: JSONObject, text: String): List<ChatMessage> {
+        if (message.optBoolean("isError")) return emptyList() // a tool that failed chose nothing
+        val details = message.optJSONObject("details")
+        val name = message.optString("toolName")
+        val tool = when {
+            name == QUESTION_TOOL || name == QUESTIONNAIRE_TOOL -> name
+            details?.has("questions") == true -> QUESTIONNAIRE_TOOL
+            details?.has("question") == true -> QUESTION_TOOL
+            name.isBlank() && questionResultShape.containsMatchIn(text.trimStart()) -> QUESTION_TOOL
+            else -> return emptyList()
+        }
+        val id = entry.optString("id", UUID.randomUUID().toString())
+        if (tool == QUESTIONNAIRE_TOOL) {
+            return details?.let { questionnaireTraces(id, it) }.orEmpty()
+        }
+        if (details == null) {
+            // Only the sentence came through. Keep it, rather than invent the
+            // question it answered: this is a payload from before the details
+            // were carried, and the choice is still worth showing.
+            val sentence = text.trim()
+            if (sentence.isBlank()) return emptyList()
+            return listOf(ChatMessage(id = id, role = QUESTION_ROLE, text = "", answer = sentence, toolName = tool))
+        }
+        val question = details.string("question").orEmpty()
+        // Null when nothing was chosen, which is what a dismissal records. A
+        // failure records the same null and says so in the sentence instead.
+        val answer = details.string("answer")
+        if (answer == null && !text.contains("cancel", ignoreCase = true)) return emptyList()
+        if (question.isBlank()) return emptyList()
+        return listOf(ChatMessage(id = id, role = QUESTION_ROLE, text = question, answer = answer, toolName = tool))
+    }
+
+    /**
+     * A questionnaire's questions as separate entries, one per question the
+     * person answered, which is the shape the app puts on the transcript while
+     * the widget is still open. The question's label prefixes it when there was
+     * more than one, so a long pair of lists still reads straight down. A
+     * questionnaire nobody answered was dismissed, and says so once.
+     */
+    private fun questionnaireTraces(id: String, details: JSONObject): List<ChatMessage> {
+        val questions = details.optJSONArray("questions") ?: JSONArray()
+        val answers = details.optJSONArray("answers") ?: JSONArray()
+        val labels = HashMap<String, String>()
+        // Insertion ordered, so the entries read in the order the questions were
+        // asked rather than in whatever order a map happens to hand back.
+        val asked = LinkedHashMap<String, String>()
+        for (index in 0 until questions.length()) {
+            val question = questions.optJSONObject(index) ?: continue
+            val questionId = question.string("id").orEmpty()
+            val label = question.string("label") ?: questionId
+            labels[questionId] = label
+            asked[questionId] = question.string("prompt") ?: label
+        }
+        val chosen = HashMap<String, String>()
+        for (index in 0 until answers.length()) {
+            val answer = answers.optJSONObject(index) ?: continue
+            val value = answer.string("label") ?: answer.string("value") ?: continue
+            chosen[answer.string("id").orEmpty()] = value
+        }
+        val several = asked.size > 1
+        val traces = ArrayList<ChatMessage>()
+        for ((questionId, prompt) in asked) {
+            val value = chosen[questionId] ?: continue
+            val prefix = if (several && !labels[questionId].isNullOrBlank()) "${labels[questionId]}: " else ""
+            traces.add(
+                ChatMessage(
+                    id = "$id-$questionId",
+                    role = QUESTION_ROLE,
+                    text = "$prefix$prompt",
+                    answer = "$prefix$value",
+                    toolName = QUESTIONNAIRE_TOOL,
+                )
+            )
+        }
+        if (traces.isEmpty()) {
+            val dismissed = asked.values.joinToString("\n")
+            if (dismissed.isNotBlank()) {
+                traces.add(
+                    ChatMessage(
+                        id = id,
+                        role = QUESTION_ROLE,
+                        text = dismissed,
+                        answer = null,
+                        toolName = QUESTIONNAIRE_TOOL,
+                    )
+                )
+            }
+        }
+        return traces
+    }
+
+    /**
+     * What the person just did to the widget, in the shape the history gives the
+     * same answer: the question as it was asked, and the choice as it was made.
+     * A reload of the history replaces the whole transcript, so this entry and
+     * the one derived from the tool result can never be on screen together.
+     */
+    private fun questionEntry(
+        pending: PendingQuestion,
+        questionId: String?,
+        value: String?,
+        custom: Boolean,
+    ): ChatMessage {
+        val several = pending.questions.size > 1
+        val question = pending.questions.firstOrNull { it.id == questionId } ?: pending.firstUnanswered
+        val label = question?.label.orEmpty()
+        val text = when {
+            question == null -> pending.title
+            several -> "$label: ${question.prompt}"
+            else -> question.prompt.ifBlank { pending.title }
+        }
+        val picked = when {
+            value == null -> null // dismissed without an answer
+            custom -> value // typed rather than chosen, so there is no label to find
+            else -> question?.options?.firstOrNull { it.value == value }?.label ?: value
+        }
+        val answer = when {
+            picked == null -> null
+            several && label.isNotBlank() -> "$label: $picked"
+            else -> picked
         }
         return ChatMessage(
-            id = entry.optString("id", UUID.randomUUID().toString()),
-            role = if (role == "toolResult") "tool" else role,
+            id = "question-${UUID.randomUUID()}",
+            role = QUESTION_ROLE,
             text = text,
-            toolName = marker,
+            answer = answer,
+            toolName = pending.tool,
         )
     }
 

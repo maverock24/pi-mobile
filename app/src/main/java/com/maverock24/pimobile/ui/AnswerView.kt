@@ -221,13 +221,16 @@ fun AnswerView(
 @Composable
 private fun LinkButton(link: AnswerLink) {
     val uriHandler = LocalUriHandler.current
+    // The same shape goes to the face and to the press: the extruded edge under a
+    // solid control is cut from the control's own outline.
+    val shape = RoundedCornerShape(12.dp)
     Button(
         onClick = { runCatching { uriHandler.openUri(link.url) } },
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = AnswerStyle.buttonHeight)
-            .tactile(),
-        shape = RoundedCornerShape(12.dp),
+            .tactile(depth = AnswerStyle.keyDepth, shape = shape),
+        shape = shape,
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
             Text(

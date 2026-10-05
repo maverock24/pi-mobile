@@ -4,6 +4,11 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -50,6 +55,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +77,45 @@ fun PiRemoteTheme(mode: String = "dark", content: @Composable () -> Unit) {
         else -> isSystemInDarkTheme()
     }
     MaterialTheme(colorScheme = if (dark) AnswerStyle.darkScheme else AnswerStyle.lightScheme, content = content)
+}
+
+/**
+ * The bar's working indicator: an accent line sweeping along its top edge, shown
+ * only while pi is busy. It is drawn over the bar rather than laid out above or
+ * beside it, so the bar keeps its height and nothing under it moves. The sweep
+ * runs on the same 1300ms rhythm and the same two colours as the working
+ * shimmer, so the two read as one signal.
+ */
+@Composable
+private fun Modifier.workingEdge(visible: Boolean): Modifier {
+    if (!visible) return this
+    val transition = rememberInfiniteTransition(label = "workingEdge")
+    val progress = transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing)),
+        label = "workingEdgeProgress",
+    )
+    val accent = MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    return this.drawWithContent {
+        drawContent()
+        val thickness = 2.dp.toPx()
+        // A dim line so the bar has an edge at all, with the accent travelling
+        // along it: a bar of the same colour as the transcript needs both.
+        drawRect(color = track, size = Size(size.width, thickness))
+        val travel = size.width * 0.4f
+        val start = progress.value * (size.width + travel) - travel
+        drawRect(
+            brush = Brush.horizontalGradient(
+                colors = listOf(Color.Transparent, accent, Color.Transparent),
+                startX = start,
+                endX = start + travel,
+            ),
+            topLeft = Offset.Zero,
+            size = Size(size.width, thickness),
+        )
+    }
 }
 
 /**
@@ -122,6 +171,9 @@ fun ChatScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                // The working accent line rides on the bar's own top edge, so it
+                // costs the bar no height and shifts nothing below it.
+                modifier = Modifier.workingEdge(vm.busy),
                 title = {
                     Column {
                         Text(
@@ -302,12 +354,60 @@ private fun TurnView(
                 verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
             ) {
                 turn.answers.forEach { answer ->
-                    AnswerView(
-                        text = answer.text,
-                        modifier = Modifier.widthIn(max = AnswerStyle.measure),
-                    )
+                    if (answer.role == QUESTION_ROLE) {
+                        AnsweredQuestion(
+                            question = answer.text,
+                            answer = answer.answer,
+                            modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                        )
+                    } else {
+                        AnswerView(
+                            text = answer.text,
+                            modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+/**
+ * A question widget the person answered, kept where it happened and drawn the
+ * way the widget itself was, in the same surface and border as [QuestionCard].
+ * The transcript then shows both halves of the exchange: what pi asked and what
+ * came back. A question dismissed without an answer says so rather than naming a
+ * choice that was never made, which is also how the tool records it.
+ */
+@Composable
+private fun AnsweredQuestion(question: String, answer: String?, modifier: Modifier = Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (question.isNotBlank()) {
+                Text(
+                    text = question,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+            Text(
+                text = answer?.lines()?.joinToString("\n") { "✓ $it" } ?: "cancelled, no answer",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = if (answer == null) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+            )
         }
     }
 }
@@ -369,7 +469,8 @@ private fun ForeignSessionBar(notice: SessionNotice, onAttach: () -> Unit) {
             )
             Button(
                 onClick = onAttach,
-                modifier = Modifier.heightIn(min = AnswerStyle.buttonHeight).tactile(haptics = true),
+                modifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
+                    .tactile(haptics = true, depth = AnswerStyle.keyDepth),
             ) {
                 Text("Attach to this session", style = MaterialTheme.typography.bodyLarge)
             }
@@ -416,25 +517,31 @@ private fun Composer(
             val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
             val label = MaterialTheme.typography.bodyLarge
             val canSend = draft.isNotBlank() && blockReason == null
-            FilledTonalButton(onClick = onToggleMic, modifier = buttonModifier.tactile(haptics = true)) {
+            FilledTonalButton(
+                onClick = onToggleMic,
+                modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+            ) {
                 Text(if (listening) "Mic on" else "Mic", style = label)
             }
             Button(
                 onClick = onSend,
                 enabled = canSend,
-                modifier = buttonModifier.tactile(haptics = true, enabled = canSend),
+                modifier = buttonModifier.tactile(haptics = true, enabled = canSend, depth = AnswerStyle.keyDepth),
             ) {
                 Text("Send", style = label)
             }
             OutlinedButton(
                 onClick = onClear,
                 enabled = draft.isNotBlank(),
-                modifier = buttonModifier.tactile(enabled = draft.isNotBlank()),
+                modifier = buttonModifier.tactile(enabled = draft.isNotBlank(), depth = AnswerStyle.keyDepth),
             ) {
                 Text("Clear", style = label)
             }
             if (busy) {
-                OutlinedButton(onClick = onStop, modifier = buttonModifier.tactile(haptics = true)) {
+                OutlinedButton(
+                    onClick = onStop,
+                    modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                ) {
                     Text("Stop", style = label)
                 }
             }
@@ -514,7 +621,7 @@ fun SettingsScreen(
                         cameraPermission.launch(Manifest.permission.CAMERA)
                     }
                 },
-                modifier = pairButton.tactile(haptics = true),
+                modifier = pairButton.tactile(haptics = true, depth = AnswerStyle.keyDepth),
             ) {
                 Text("Scan the pairing QR", style = pairLabel)
             }
@@ -538,7 +645,7 @@ fun SettingsScreen(
                         pastedLink = ""
                     },
                     enabled = pastedLink.isNotBlank(),
-                    modifier = pairButton.tactile(haptics = true, enabled = pastedLink.isNotBlank()),
+                    modifier = pairButton.tactile(haptics = true, enabled = pastedLink.isNotBlank(), depth = AnswerStyle.keyDepth),
                 ) {
                     Text("Pair with this link", style = pairLabel)
                 }
@@ -577,7 +684,9 @@ fun SettingsScreen(
                 listOf("dark" to "Dark", "light" to "Light", "system" to "System").forEach { (value, label) ->
                     OutlinedButton(
                         onClick = { onAppearanceChange(value) },
-                        modifier = Modifier.padding(end = 8.dp).heightIn(min = AnswerStyle.buttonHeight).tactile(),
+                        modifier = Modifier.padding(end = 8.dp)
+                            .heightIn(min = AnswerStyle.buttonHeight)
+                            .tactile(depth = AnswerStyle.keyDepth),
                     ) {
                         Text(
                             text = if (appearance == value) "• $label" else label,
@@ -589,11 +698,20 @@ fun SettingsScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val label = MaterialTheme.typography.bodyLarge
                 val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
-                Button(onClick = { onSave(baseUrl, token) }, modifier = size.tactile(haptics = true)) { Text("Save", style = label) }
+                Button(
+                    onClick = { onSave(baseUrl, token) },
+                    modifier = size.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                ) { Text("Save", style = label) }
                 Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(onClick = onTest, modifier = size.tactile()) { Text("Test", style = label) }
+                OutlinedButton(
+                    onClick = onTest,
+                    modifier = size.tactile(depth = AnswerStyle.keyDepth),
+                ) { Text("Test", style = label) }
                 Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(onClick = onCheckUpdates, modifier = size.tactile(haptics = true)) { Text("Update", style = label) }
+                OutlinedButton(
+                    onClick = onCheckUpdates,
+                    modifier = size.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                ) { Text("Update", style = label) }
             }
             if (statusLine.isNotBlank()) {
                 Text(statusLine, style = MaterialTheme.typography.bodyMedium)
@@ -678,14 +796,22 @@ private fun QuestionCard(
                     )
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // The option's own shape goes to the tactile modifier as
+                        // well: the depth it draws is cut from the same outline
+                        // as the face, so the two edges line up.
+                        val optionShape = RoundedCornerShape(12.dp)
                         question.options.forEachIndexed { index, option ->
                             Button(
                                 onClick = { onSelect(question.id, option.value) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = AnswerStyle.buttonHeight)
-                                    .tactile(haptics = true),
-                                shape = RoundedCornerShape(12.dp),
+                                    .tactile(
+                                        haptics = true,
+                                        depth = AnswerStyle.keyDepth,
+                                        shape = optionShape,
+                                    ),
+                                shape = optionShape,
                             ) {
                                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                                     Text(
@@ -721,7 +847,13 @@ private fun QuestionCard(
                                         typed = ""
                                     },
                                     enabled = typed.isNotBlank(),
-                                    modifier = Modifier.tactile(haptics = true, enabled = typed.isNotBlank()),
+                                    modifier = Modifier
+                                        .heightIn(min = AnswerStyle.buttonHeight)
+                                        .tactile(
+                                            haptics = true,
+                                            enabled = typed.isNotBlank(),
+                                            depth = AnswerStyle.keyDepth,
+                                        ),
                                 ) { Text("Send") }
                             }
                         }
