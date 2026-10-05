@@ -31,6 +31,45 @@ data class ChatMessage(
     val isError: Boolean = false,
 )
 
+/**
+ * One prompt and the answers it produced. The chat lists prompts and opens the
+ * answer behind the one you tap, so a turn keeps the two together.
+ */
+data class ChatTurn(
+    val id: String,
+    val prompt: String?,
+    val answers: List<ChatMessage>,
+)
+
+/**
+ * Groups the transcript by prompt. An assistant message carries no link to the
+ * prompt that caused it, but the order does: every answer that follows a prompt
+ * belongs to it. Answers that arrive before any prompt, which happens when the
+ * history is fetched mid-run, become a turn of their own with a null prompt.
+ * Tool narration never reaches [messages], so nothing sits between the two.
+ */
+fun turnsOf(messages: List<ChatMessage>): List<ChatTurn> {
+    val turns = ArrayList<ChatTurn>()
+    var prompt: ChatMessage? = null
+    val answers = ArrayList<ChatMessage>()
+    for (message in messages) {
+        when (message.role) {
+            "user" -> {
+                if (prompt != null || answers.isNotEmpty()) {
+                    turns.add(ChatTurn(prompt?.id ?: "lead-${turns.size}", prompt?.text, ArrayList(answers)))
+                    answers.clear()
+                }
+                prompt = message
+            }
+            "assistant" -> if (message.text.isNotBlank()) answers.add(message)
+        }
+    }
+    if (prompt != null || answers.isNotEmpty()) {
+        turns.add(ChatTurn(prompt?.id ?: "lead-${turns.size}", prompt?.text, ArrayList(answers)))
+    }
+    return turns
+}
+
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = SettingsStore(app)
@@ -61,6 +100,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** The latest thing you typed, shown at the top of the main view. */
     val lastPrompt: String?
         get() = messages.lastOrNull { it.role == "user" && it.text.isNotBlank() }?.text
+
+    /** The transcript grouped into prompts, which is what the chat screen lists. */
+    val turns: List<ChatTurn>
+        get() = turnsOf(messages)
 
     private var streamCall: Call? = null
     private var pollJob: Job? = null

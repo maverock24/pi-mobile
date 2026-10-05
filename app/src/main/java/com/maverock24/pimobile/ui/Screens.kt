@@ -4,6 +4,9 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,11 +87,24 @@ fun ChatScreen(
     onDismissNotice: () -> Unit,
 ) {
     val listState = rememberLazyListState()
-    val results = vm.messages.filter { it.role == "assistant" && it.text.isNotBlank() }
+    val turns = vm.turns
+    val pending = vm.pendingQuestion
 
-    LaunchedEffect(results.size, results.lastOrNull()?.text?.length) {
-        if (results.isNotEmpty()) {
-            listState.animateScrollToItem(results.lastIndex)
+    // Accordion: exactly one answer is open. Until you pick a prompt that is the
+    // newest turn, and a new prompt or a fresh answer puts the choice back
+    // there, so the answer you are waiting for is never the one left folded.
+    var explicitTurn by rememberSaveable { mutableStateOf<String?>(null) }
+    var followNewest by rememberSaveable { mutableStateOf(true) }
+    val newestTurn = turns.lastOrNull()?.id
+    val expandedTurn = if (followNewest) newestTurn else explicitTurn
+
+    LaunchedEffect(newestTurn, turns.lastOrNull()?.answers?.size) { followNewest = true }
+
+    LaunchedEffect(pending?.id, turns.size, turns.lastOrNull()?.answers?.size) {
+        when {
+            // pi is blocked until the widget is answered, so it stays on screen.
+            pending != null -> listState.animateScrollToItem(0)
+            turns.isNotEmpty() -> listState.animateScrollToItem(turns.lastIndex)
         }
     }
 
@@ -130,18 +147,7 @@ fun ChatScreen(
                 NoticeBar(text = error, onDismiss = vm::dismissError, isError = true)
             }
 
-            // Above the answers on purpose: an open widget blocks pi, so the way
-            // to answer it has to be the first thing on screen.
-            vm.pendingQuestion?.let { pending ->
-                QuestionCard(
-                    pending = pending,
-                    onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
-                    onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
-                    onCancel = vm::cancelQuestion,
-                )
-            }
-
-            if (results.isEmpty()) {
+            if (turns.isEmpty() && pending == null) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
                         text = if (vm.busy) "thinking…" else "no results yet",
@@ -150,15 +156,33 @@ fun ChatScreen(
                     )
                 }
             } else {
+                // One scrolling surface for the question widget and the
+                // transcript. pi is blocked until the widget is answered, so
+                // the card is the first item, and its options keep their full
+                // height instead of living inside a scroll box of their own.
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
                 ) {
-                    items(results, key = { it.id }) { message ->
-                        AnswerView(
-                            text = message.text,
-                            modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                    if (pending != null) {
+                        item(key = "pending-question") {
+                            QuestionCard(
+                                pending = pending,
+                                onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
+                                onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
+                                onCancel = vm::cancelQuestion,
+                            )
+                        }
+                    }
+                    items(turns, key = { it.id }) { turn ->
+                        TurnView(
+                            turn = turn,
+                            expanded = turn.id == expandedTurn,
+                            onToggle = {
+                                followNewest = false
+                                explicitTurn = if (expandedTurn == turn.id) null else turn.id
+                            },
                         )
                     }
                 }
@@ -178,6 +202,76 @@ fun ChatScreen(
                 onClear = vm::clearDraft,
                 onStop = vm::abort,
             )
+        }
+    }
+}
+
+/**
+ * One prompt and the answer it produced. The prompt is always there in full,
+ * so scrolling back through a session reads as a list of what you asked for;
+ * tapping it opens the answer, and tapping it again folds the answer away.
+ * Nothing else of the run is shown, which is why an older answer is reachable
+ * from its prompt alone.
+ */
+@Composable
+private fun TurnView(
+    turn: ChatTurn,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val prompt = turn.prompt
+    val openable = turn.answers.isNotEmpty()
+
+    Column(verticalArrangement = Arrangement.spacedBy(AnswerStyle.paragraphGap)) {
+        if (prompt != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(enabled = openable, onClick = onToggle)
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 2.dp, end = AnswerStyle.accentBarGap)
+                        .width(AnswerStyle.accentBar)
+                        .heightIn(min = 18.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(scheme.primary),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = prompt,
+                        fontSize = AnswerStyle.bodySize,
+                        lineHeight = AnswerStyle.bodyLineHeight,
+                        fontWeight = FontWeight.Medium,
+                        color = scheme.onBackground,
+                    )
+                    if (openable) {
+                        Text(
+                            text = if (expanded) "Hide answer" else "Show answer",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = scheme.primary,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+        if (expanded) {
+            Column(
+                modifier = Modifier.padding(start = AnswerStyle.accentBar + AnswerStyle.accentBarGap),
+                verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
+            ) {
+                turn.answers.forEach { answer ->
+                    AnswerView(
+                        text = answer.text,
+                        modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                    )
+                }
+            }
         }
     }
 }
@@ -435,7 +529,9 @@ private fun pairingScanOptions(): ScanOptions = ScanOptions()
 
 /**
  * Answer a question widget from the phone. pi cannot continue until the widget
- * is answered, so this sits directly above the composer.
+ * is answered, so this is the first thing on screen. It is laid out at full
+ * height, every question and every option in one column: the transcript is the
+ * only scroller, so no option hides behind a scroll box of its own.
  */
 @Composable
 private fun QuestionCard(
@@ -445,23 +541,25 @@ private fun QuestionCard(
     onCancel: () -> Unit,
 ) {
     var typed by rememberSaveable { mutableStateOf("") }
-    val target = pending.firstUnanswered
+    val targetId = pending.firstUnanswered?.id
+    val several = pending.questions.size > 1
+    val answered = pending.questions.count { it.answer != null }
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier
-                .heightIn(max = 320.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = if (pending.allAnswered) "sending answers…" else "pi is waiting for an answer",
+                text = when {
+                    pending.allAnswered -> "sending answers…"
+                    several -> "$answered of ${pending.questions.size} answered"
+                    else -> "pi is waiting for an answer"
+                },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -471,7 +569,7 @@ private fun QuestionCard(
                 fontWeight = FontWeight.SemiBold,
             )
             pending.questions.forEach { question ->
-                if (pending.multiple) {
+                if (several) {
                     Text(
                         text = "${question.label}: ${question.prompt}",
                         style = MaterialTheme.typography.bodyMedium,
@@ -485,47 +583,53 @@ private fun QuestionCard(
                         color = MaterialTheme.colorScheme.primary,
                     )
                 } else {
-                    question.options.forEachIndexed { index, option ->
-                        Button(
-                            onClick = { onSelect(question.id, option.value) },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = AnswerStyle.optionHeight),
-                            shape = RoundedCornerShape(10.dp),
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                                Text(
-                                    text = "${index + 1}. ${option.label}",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.Medium,
-                                )
-                                option.description?.let { description ->
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        question.options.forEachIndexed { index, option ->
+                            Button(
+                                onClick = { onSelect(question.id, option.value) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = AnswerStyle.buttonHeight),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                                     Text(
-                                        text = description,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+                                        text = "${index + 1}. ${option.label}",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.SemiBold,
                                     )
+                                    option.description?.let { description ->
+                                        Text(
+                                            text = description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+                                        )
+                                    }
                                 }
                             }
                         }
+                        // The free-text field belongs to the question it answers,
+                        // which is the first one still open.
+                        if (question.id == targetId) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = typed,
+                                    onValueChange = { typed = it },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    placeholder = { Text("Or type your own answer") },
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        onTyped(question.id, typed)
+                                        typed = ""
+                                    },
+                                    enabled = typed.isNotBlank(),
+                                ) { Text("Send") }
+                            }
+                        }
                     }
-                }
-            }
-            if (target != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = typed,
-                        onValueChange = { typed = it },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        placeholder = { Text("Type an answer for ${target.label}") },
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            onTyped(target.id, typed)
-                            typed = ""
-                        },
-                        enabled = typed.isNotBlank(),
-                    ) { Text("Send") }
                 }
             }
             TextButton(onClick = onCancel) { Text("Cancel question") }

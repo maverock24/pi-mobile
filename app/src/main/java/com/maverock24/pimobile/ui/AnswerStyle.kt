@@ -44,8 +44,14 @@ object AnswerStyle {
     /** Minimum height for anything meant to be tapped. */
     val buttonHeight = 56.dp
 
-    /** Bigger tap target for the options of a question widget. */
-    val optionHeight = 60.dp
+    /**
+     * Leading accent bar. It marks a quoted passage inside an answer and the
+     * prompt of a turn in the transcript, so the two read the same way.
+     */
+    val accentBar = 3.dp
+
+    /** Space between that bar and the text it marks. */
+    val accentBarGap = 10.dp
 
     /** Indent step for one bullet level. */
     val bulletIndent = 20.dp

@@ -120,8 +120,8 @@ fun AnswerView(
                     is AnswerBlock.Quote -> Row(verticalAlignment = Alignment.Top) {
                         Box(
                             modifier = Modifier
-                                .padding(top = 2.dp, bottom = 2.dp, end = 10.dp)
-                                .width(3.dp)
+                                .padding(top = 2.dp, bottom = 2.dp, end = AnswerStyle.accentBarGap)
+                                .width(AnswerStyle.accentBar)
                                 .heightIn(min = 18.dp)
                                 .clip(RoundedCornerShape(2.dp))
                                 .background(scheme.primary),
