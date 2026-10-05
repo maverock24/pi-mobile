@@ -1,11 +1,5 @@
 package com.maverock24.pimobile.ui
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -29,8 +23,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -329,19 +327,39 @@ private fun TableBlock(block: AnswerBlock.Table) {
     }
 }
 
+/** How long one sweep of a working indicator takes, in both places that show one. */
+internal const val SWEEP_PERIOD_MS = 1300
+
+/**
+ * A value that rises from 0 to 1 over [periodMillis] and starts again, for as
+ * long as this is composed.
+ *
+ * It is advanced by the frame clock directly rather than by an animation spec.
+ * The frames this screen already gets for its press animations are enough to
+ * move the value, so the sweep cannot be left standing by an animation the
+ * runtime decides not to run.
+ */
+@Composable
+internal fun rememberSweep(periodMillis: Int): State<Float> {
+    val progress = remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(periodMillis) {
+        val period = periodMillis * 1_000_000L
+        var start = 0L
+        withFrameNanos { start = it }
+        while (true) {
+            withFrameNanos { now -> progress.floatValue = ((now - start) % period) / period.toFloat() }
+        }
+    }
+    return progress
+}
+
 /**
  * The only working indicator: an animated bar. The chosen design has no status
  * text, so this carries the "pi is busy" signal on its own.
  */
 @Composable
 fun WorkingShimmer(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val progress by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing)),
-        label = "shimmerProgress",
-    )
+    val progress by rememberSweep(SWEEP_PERIOD_MS)
     val scheme = MaterialTheme.colorScheme
     val travel = 120f
     val start = progress * travel - travel

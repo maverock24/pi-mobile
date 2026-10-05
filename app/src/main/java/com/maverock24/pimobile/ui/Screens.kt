@@ -4,11 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -89,13 +84,7 @@ fun PiRemoteTheme(mode: String = "dark", content: @Composable () -> Unit) {
 @Composable
 private fun Modifier.workingEdge(visible: Boolean): Modifier {
     if (!visible) return this
-    val transition = rememberInfiniteTransition(label = "workingEdge")
-    val progress = transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing)),
-        label = "workingEdgeProgress",
-    )
+    val progress = rememberSweep(SWEEP_PERIOD_MS)
     val accent = MaterialTheme.colorScheme.primary
     val track = MaterialTheme.colorScheme.surfaceVariant
     return this.drawWithContent {
