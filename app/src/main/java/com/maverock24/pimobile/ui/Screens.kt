@@ -51,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -108,6 +109,16 @@ fun ChatScreen(
         }
     }
 
+    // The outcome of a request the user started: confirm when the bridge took
+    // it, reject when it failed. Only these two paths and never a background
+    // poll, so a reject always means something the user just did.
+    val outcome = vm.outcome
+    val view = LocalView.current
+    LaunchedEffect(outcome) {
+        val event = outcome ?: return@LaunchedEffect
+        if (event.ok) Haptics.confirm(view) else Haptics.reject(view)
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -135,7 +146,7 @@ fun ChatScreen(
                         }
                     }
                 },
-                actions = { TextButton(onClick = onOpenSettings) { Text("Settings") } },
+                actions = { TextButton(onClick = onOpenSettings, modifier = Modifier.tactile()) { Text("Settings") } },
             )
         },
     ) { padding ->
@@ -230,7 +241,8 @@ private fun TurnView(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(6.dp))
                     .clickable(enabled = openable, onClick = onToggle)
-                    .padding(vertical = 2.dp),
+                    .padding(vertical = 2.dp)
+                    .tactile(enabled = openable),
                 verticalAlignment = Alignment.Top,
             ) {
                 Box(
@@ -288,7 +300,7 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = fa
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(text = text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = onDismiss) { Text("OK") }
+            TextButton(onClick = onDismiss, modifier = Modifier.tactile()) { Text("OK") }
         }
     }
 }
@@ -330,17 +342,25 @@ private fun Composer(
         ) {
             val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
             val label = MaterialTheme.typography.bodyLarge
-            FilledTonalButton(onClick = onToggleMic, modifier = buttonModifier) {
+            FilledTonalButton(onClick = onToggleMic, modifier = buttonModifier.tactile(haptics = true)) {
                 Text(if (listening) "Mic on" else "Mic", style = label)
             }
-            Button(onClick = onSend, enabled = draft.isNotBlank(), modifier = buttonModifier) {
+            Button(
+                onClick = onSend,
+                enabled = draft.isNotBlank(),
+                modifier = buttonModifier.tactile(haptics = true, enabled = draft.isNotBlank()),
+            ) {
                 Text("Send", style = label)
             }
-            OutlinedButton(onClick = onClear, enabled = draft.isNotBlank(), modifier = buttonModifier) {
+            OutlinedButton(
+                onClick = onClear,
+                enabled = draft.isNotBlank(),
+                modifier = buttonModifier.tactile(enabled = draft.isNotBlank()),
+            ) {
                 Text("Clear", style = label)
             }
             if (busy) {
-                OutlinedButton(onClick = onStop, modifier = buttonModifier) {
+                OutlinedButton(onClick = onStop, modifier = buttonModifier.tactile(haptics = true)) {
                     Text("Stop", style = label)
                 }
             }
@@ -395,7 +415,7 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
-                actions = { TextButton(onClick = onBack) { Text("Back") } },
+                actions = { TextButton(onClick = onBack, modifier = Modifier.tactile()) { Text("Back") } },
             )
         },
     ) { padding ->
@@ -420,7 +440,7 @@ fun SettingsScreen(
                         cameraPermission.launch(Manifest.permission.CAMERA)
                     }
                 },
-                modifier = pairButton,
+                modifier = pairButton.tactile(haptics = true),
             ) {
                 Text("Scan the pairing QR", style = pairLabel)
             }
@@ -444,7 +464,7 @@ fun SettingsScreen(
                         pastedLink = ""
                     },
                     enabled = pastedLink.isNotBlank(),
-                    modifier = pairButton,
+                    modifier = pairButton.tactile(haptics = true, enabled = pastedLink.isNotBlank()),
                 ) {
                     Text("Pair with this link", style = pairLabel)
                 }
@@ -483,7 +503,7 @@ fun SettingsScreen(
                 listOf("dark" to "Dark", "light" to "Light", "system" to "System").forEach { (value, label) ->
                     OutlinedButton(
                         onClick = { onAppearanceChange(value) },
-                        modifier = Modifier.padding(end = 8.dp).heightIn(min = AnswerStyle.buttonHeight),
+                        modifier = Modifier.padding(end = 8.dp).heightIn(min = AnswerStyle.buttonHeight).tactile(),
                     ) {
                         Text(
                             text = if (appearance == value) "• $label" else label,
@@ -495,11 +515,11 @@ fun SettingsScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val label = MaterialTheme.typography.bodyLarge
                 val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
-                Button(onClick = { onSave(baseUrl, token) }, modifier = size) { Text("Save", style = label) }
+                Button(onClick = { onSave(baseUrl, token) }, modifier = size.tactile(haptics = true)) { Text("Save", style = label) }
                 Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(onClick = onTest, modifier = size) { Text("Test", style = label) }
+                OutlinedButton(onClick = onTest, modifier = size.tactile()) { Text("Test", style = label) }
                 Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(onClick = onCheckUpdates, modifier = size) { Text("Update", style = label) }
+                OutlinedButton(onClick = onCheckUpdates, modifier = size.tactile(haptics = true)) { Text("Update", style = label) }
             }
             if (statusLine.isNotBlank()) {
                 Text(statusLine, style = MaterialTheme.typography.bodyMedium)
@@ -589,7 +609,8 @@ private fun QuestionCard(
                                 onClick = { onSelect(question.id, option.value) },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(min = AnswerStyle.buttonHeight),
+                                    .heightIn(min = AnswerStyle.buttonHeight)
+                                    .tactile(haptics = true),
                                 shape = RoundedCornerShape(12.dp),
                             ) {
                                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
@@ -626,13 +647,16 @@ private fun QuestionCard(
                                         typed = ""
                                     },
                                     enabled = typed.isNotBlank(),
+                                    modifier = Modifier.tactile(haptics = true, enabled = typed.isNotBlank()),
                                 ) { Text("Send") }
                             }
                         }
                     }
                 }
             }
-            TextButton(onClick = onCancel) { Text("Cancel question") }
+            TextButton(onClick = onCancel, modifier = Modifier.tactile(haptics = true)) {
+                Text("Cancel question")
+            }
         }
     }
 }

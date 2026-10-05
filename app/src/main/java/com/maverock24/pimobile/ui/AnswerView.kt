@@ -225,7 +225,8 @@ private fun LinkButton(link: AnswerLink) {
         onClick = { runCatching { uriHandler.openUri(link.url) } },
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = AnswerStyle.buttonHeight),
+            .heightIn(min = AnswerStyle.buttonHeight)
+            .tactile(),
         shape = RoundedCornerShape(12.dp),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {

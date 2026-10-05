@@ -70,6 +70,13 @@ fun turnsOf(messages: List<ChatMessage>): List<ChatTurn> {
     return turns
 }
 
+/**
+ * The result of a request the user started, which the chat screen plays back as a
+ * confirm or reject tick. [id] changes per event, so the same outcome twice in a
+ * row still fires the feedback.
+ */
+data class RequestOutcome(val id: Long, val ok: Boolean)
+
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = SettingsStore(app)
@@ -96,6 +103,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var appearance by mutableStateOf(store.appearance)
         private set
+
+    /** Set when a request the user started succeeds or fails. */
+    var outcome by mutableStateOf<RequestOutcome?>(null)
+        private set
+
+    private var outcomeSeq = 0L
 
     /** The latest thing you typed, shown at the top of the main view. */
     val lastPrompt: String?
@@ -293,9 +306,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         busy = true
         safeLaunch {
             runCatching { client.prompt(trimmed) }
+                .onSuccess { outcome = RequestOutcome(++outcomeSeq, ok = true) }
                 .onFailure {
                     busy = false
                     lastError = "prompt: ${Diagnostics.describe(it, store.baseUrl)}"
+                    outcome = RequestOutcome(++outcomeSeq, ok = false)
                 }
         }
     }
@@ -327,7 +342,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun answerQuestion(questionId: String?, value: String, custom: Boolean = false) {
         safeLaunch {
             runCatching { client.answer(questionId, value, custom) }
-                .onFailure { lastError = "answer: ${Diagnostics.describe(it, store.baseUrl)}" }
+                .onSuccess { outcome = RequestOutcome(++outcomeSeq, ok = true) }
+                .onFailure {
+                    lastError = "answer: ${Diagnostics.describe(it, store.baseUrl)}"
+                    outcome = RequestOutcome(++outcomeSeq, ok = false)
+                }
         }
     }
 
