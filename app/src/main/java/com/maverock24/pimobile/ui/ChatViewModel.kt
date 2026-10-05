@@ -493,6 +493,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     messages.clear()
                     messages.addAll(parsed)
+                    // The line naming the session the app moved to has been read
+                    // by the time its transcript is here, so it goes. A notice
+                    // that never leaves is noise rather than information.
+                    sessionNotice = null
                 }
                 .onFailure { lastError = "history: ${Diagnostics.describe(it, store.baseUrl)}" }
         }

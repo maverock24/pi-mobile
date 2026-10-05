@@ -1,6 +1,7 @@
 # Session management
 
-Status: proposed. Decisions in
+Status: implemented. Section 1 describes what was broken before it landed, and
+sections 2 to 8 are what runs now. Decisions in
 [adr/0001-port-bind-is-the-authority.md](adr/0001-port-bind-is-the-authority.md)
 and [adr/0002-bridge-source-in-this-repo.md](adr/0002-bridge-source-in-this-repo.md).
 Terms are defined in [../GLOSSARY.md](../GLOSSARY.md).
@@ -151,20 +152,26 @@ from a second pane does not fail with "run /pair there".
 
 ## 8. App changes
 
-- `SettingsStore` gains the pinned session id and name (`data/SettingsStore.kt:16-48`).
+Landed. The app follows the bridge rather than holding a screen and asking.
+
+- `SettingsStore` persists the pinned session id and name, so a restart keeps
+  the pin instead of adopting whatever is serving.
 - On connect, and on every `state` frame, the app adopts whatever the bridge
-  serves: it sets the pin, clears the transcript, loads that session's history
-  from `/api/history`, and shows one line naming the session it moved to. This
-  replaces the foreign-session bar.
-- Remove `ForeignSessionBar` (`ui/Screens.kt:339-375`) and the `otherSession`
-  gating in `ui/ChatViewModel.kt:373,509-517,564`. The composer is never blocked
-  because of a session change; a stale send is caught by the 409.
-- On 409, keep the draft, re-read state, and report it in one line: which session
-  the bridge moved to while the user was typing.
-- Reconnect the SSE stream with a short backoff (250 ms, 500 ms, 1 s, then the
-  server's `retry: 3000`) so a handover appears immediate. The three second poll
-  stays as the safety net.
-- Mutating calls send the pinned session id (`net/PiRemoteClient.kt:70-99`).
+  serves: it writes the pin, clears the transcript and the pending question,
+  loads that session's history from `/api/history`, and shows one line naming
+  the session it moved to. That line goes when the transcript arrives.
+- The foreign-session bar is gone. `data/SessionNotice`, `ui/Screens.kt`'s
+  `ForeignSessionBar` and `ui/ChatViewModel.kt`'s `otherSession` gating were
+  removed with it.
+- The composer is never blocked because of a session change; a stale send is
+  caught by the 409, which puts the prompt back in the composer rather than
+  letting it vanish with the transcript that is about to go.
+- On 409 the app keeps the work, re-reads state, and reports in one line which
+  session the bridge moved to.
+- The SSE stream reconnects with 250 ms, 500 ms, 1 s, then 3 s, so a handover
+  appears at once. The three second poll stays as the safety net.
+- `prompt`, `answer` and `abort` send the pinned session id
+  (`net/PiRemoteClient.kt`), which is what arms the bridge's 409 in section 7.
 
 ## 9. Failure semantics
 
@@ -181,7 +188,9 @@ from a second pane does not fail with "run /pair there".
 
 ## 10. Tests
 
-The extension has no tests. The rules above are decisions about two records and
+Neither half has tests. `app/src` holds only `main`, so the app's history
+parsing and session adoption are uncovered too. The extension's rules above are
+decisions about two records and
 one bind, so the parts worth unit testing are small: lease freshness, whether a
 lease may be refreshed by this pid, takeover record validity, and the state
 transitions. That needs a runner decision (`node --test` with a TypeScript loader
@@ -211,5 +220,3 @@ Manual checks, with two panes and `PI_REMOTE_ALLOW_NON_TUI=1` for the harness:
   anything here.
 - Is `flock` on the lease worth adding to kill the 30 s stale window and the
   pid-recycling case, or is bind plus the pid check enough?
-- `docs/PRODUCTION-READINESS.md:21` calls session ownership production-grade.
-  That line is false until this lands.
