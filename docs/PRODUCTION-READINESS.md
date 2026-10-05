@@ -17,7 +17,7 @@ agent clients on phones actually ship — [Happy Coder](https://github.com/slopu
 | Transport | Tailscale only, sshd bound to the tailnet address, key-only auth, `mosh` for roaming |
 | Bridge auth | 32-byte bearer token, 0600, timing-safe comparison, axios-free node builtins |
 | Token at rest | Encrypted with a keystore key (`data/TokenCrypto.kt`) |
-| Session ownership | Heartbeat plus claim/release so exactly one pi session serves the port |
+| Session ownership | Address-keyed lease plus a takeover record per address, one owner per bind. The earlier heartbeat-plus-claim scheme could lose a claim silently; see `docs/SESSION-MANAGEMENT.md` |
 | Question widgets | Answered from the phone, verified end to end |
 | Answer rendering | Markdown block parser, design tokens, tappable links |
 | Release pipeline | Push to main builds a signed APK into a rolling GitHub release with a sha256 manifest |
