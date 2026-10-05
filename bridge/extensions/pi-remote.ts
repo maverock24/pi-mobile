@@ -1506,7 +1506,11 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("message_update", async (event, ctx) => {
 		context = ctx;
-		emit("message_update", { message: event.message, assistantMessageEvent: event.assistantMessageEvent });
+		// The app grows its answer from the delta alone and takes the full text from
+		// message_start and message_end, so the message itself is left out here.
+		// Sending it on every update made each frame as large as the answer so far,
+		// and the phone fell behind the run while it drained.
+		emit("message_update", { assistantMessageEvent: event.assistantMessageEvent });
 	});
 	pi.on("message_end", async (event, ctx) => {
 		context = ctx;

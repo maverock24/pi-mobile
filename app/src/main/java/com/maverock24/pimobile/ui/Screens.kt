@@ -128,6 +128,7 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val turns = vm.turns
     val pending = vm.pendingQuestion
+    val liveAnswer = vm.liveAnswer
 
     // Accordion: exactly one answer is open. Until you pick a prompt that is the
     // newest turn, and a new prompt or a fresh answer puts the choice back
@@ -258,6 +259,7 @@ fun ChatScreen(
                         TurnView(
                             turn = turn,
                             expanded = turn.id == expandedTurn,
+                            liveText = if (turn.id == newestTurn) liveAnswer else null,
                             onToggle = {
                                 followNewest = false
                                 explicitTurn = if (expandedTurn == turn.id) null else turn.id
@@ -297,6 +299,7 @@ fun ChatScreen(
 private fun TurnView(
     turn: ChatTurn,
     expanded: Boolean,
+    liveText: String?,
     onToggle: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -359,6 +362,15 @@ private fun TurnView(
                             modifier = Modifier.widthIn(max = AnswerStyle.measure),
                         )
                     }
+                }
+                // The answer of the run that is still going. It is drawn like a
+                // finished answer and replaced by the committed one when the run
+                // settles, which clears it in the same step that adds the answer.
+                if (!liveText.isNullOrBlank()) {
+                    AnswerView(
+                        text = liveText,
+                        modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                    )
                 }
             }
         }

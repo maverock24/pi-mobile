@@ -154,6 +154,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var busy by mutableStateOf(false)
         private set
+
+    /**
+     * The answer as it streams, or null when no run is producing one. The screen
+     * shows it as the last answer of the newest turn, so the words appear while
+     * the run is still going instead of waiting for it to settle. It is cleared
+     * when the run commits, because the committed answer takes its place.
+     */
+    var liveAnswer by mutableStateOf<String?>(null)
+        private set
+
     var sessionTitle by mutableStateOf(store.sessionName.takeIf { it.isNotBlank() } ?: NO_SESSION)
         private set
 
@@ -445,6 +455,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         store.sessionName = name.orEmpty()
         messages.clear()
         pendingQuestion = null
+        // An answer that was streaming belongs to the session being left, and the
+        // transcript it would be drawn over is gone with it.
+        liveAnswer = null
         if (moved) {
             val label = sessionLabel(cwd, name).ifBlank { "a new session" }
             sessionNotice = "The bridge moved to $label; this screen follows it"
@@ -721,6 +734,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     "assistant" -> {
                         activeAssistant = StringBuilder(textOf(message, "content"))
                         activeHasToolCalls = hasToolCalls(message)
+                        liveAnswer = activeAssistant?.toString()
                     }
                     "user" -> runCandidates.clear() // a new prompt starts a new answer
                 }
@@ -729,6 +743,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val delta = data.optJSONObject("assistantMessageEvent")?.optString("delta").orEmpty()
                 if (delta.isNotEmpty()) {
                     activeAssistant?.append(delta)
+                    liveAnswer = activeAssistant?.toString()
                 }
             }
             "message_end" -> {
@@ -739,6 +754,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     runCandidates.add(text to (activeHasToolCalls || hasToolCalls(message)))
                     activeAssistant = null
                     activeHasToolCalls = false
+                    liveAnswer = text
                 }
             }
             "tool_execution_start", "tool_execution_end" -> {
@@ -753,6 +769,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val answer = runCandidates.lastOrNull { !it.second && it.first.isNotBlank() }?.first?.trim()
         runCandidates.clear()
         activeAssistant = null
+        // The run has settled, so the streamed text gives way to the committed
+        // answer below. Clearing it here is what keeps the two from both showing.
+        liveAnswer = null
         if (answer.isNullOrBlank()) {
             return
         }
