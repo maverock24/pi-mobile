@@ -22,6 +22,22 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+/** What the session label says before anything is attached. */
+private const val NO_SESSION = "not connected"
+
+/**
+ * Names a folder by its tail. The bridge reports an absolute path, and the last
+ * two segments are what tell one project from another on a phone-width line.
+ */
+internal fun shortPath(path: String): String {
+    val parts = path.trim().trimEnd('/').split('/').filter { it.isNotBlank() }
+    return when {
+        parts.isEmpty() -> path.trim()
+        parts.size <= 2 -> parts.joinToString("/")
+        else -> "…/" + parts.takeLast(2).joinToString("/")
+    }
+}
+
 data class ChatMessage(
     val id: String,
     val role: String,
@@ -99,7 +115,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var busy by mutableStateOf(false)
         private set
-    var sessionTitle by mutableStateOf("not connected")
+    var sessionTitle by mutableStateOf(NO_SESSION)
+        private set
+
+    /** The folder the attached session runs in, as the bridge reports it. */
+    var sessionCwd by mutableStateOf<String?>(null)
+        private set
+
+    /** The name the attached session carries on the laptop, when it has one. */
+    var sessionName by mutableStateOf<String?>(null)
         private set
     var statusLine by mutableStateOf("")
         private set
@@ -126,6 +150,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Set while the bridge serves someone else; cleared by moving to it. */
     var otherSession by mutableStateOf<SessionNotice?>(null)
         private set
+
+    /**
+     * Which pi session this screen is showing: the folder the session runs in
+     * plus the name it carries. The session file name is a timestamp and a uuid,
+     * so it identifies nothing to a human and never appears here.
+     */
+    val attachedLabel: String
+        get() = listOfNotNull(
+            sessionCwd?.let(::shortPath)?.takeIf { it.isNotBlank() },
+            sessionName?.takeIf { it.isNotBlank() },
+        ).joinToString(" · ")
 
     /** The latest thing you typed, shown at the top of the main view. */
     val lastPrompt: String?
@@ -161,10 +196,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // the pin go with it. Saving the same values again must not clear
             // either: attaching is the only other place that drops the transcript.
             messages.clear()
-            attachedSessionId = null
-            otherSession = null
+            forgetSession()
         }
         connect()
+    }
+
+    /**
+     * Drop what named the old attachment. A new bridge or a new pairing reports
+     * its own session, and until it does the screen must not keep claiming the
+     * one it was talking to before.
+     */
+    private fun forgetSession() {
+        attachedSessionId = null
+        otherSession = null
+        sessionTitle = NO_SESSION
+        sessionName = null
+        sessionCwd = null
     }
 
     fun connect() {
@@ -253,12 +300,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun applyState(state: JSONObject) {
         val reported = state.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
-        val title = state.optString("sessionName").takeIf { it.isNotBlank() && it != "null" }
+        val name = state.optString("sessionName").takeIf { it.isNotBlank() && it != "null" }
+        val title = name
             ?: state.optString("sessionFile").substringAfterLast('/').ifBlank { "pi session" }
+        val cwd = state.optString("cwd").takeIf { it.isNotBlank() && it != "null" }
         if (reported == null) {
             // A bridge that cannot identify itself: take what it can still say,
             // and leave the pin alone.
             sessionTitle = title
+            sessionName = name
+            sessionCwd = cwd
             busy = !state.optBoolean("idle", true)
             applyQuestion(state.optJSONObject("question"))
             return
@@ -283,6 +334,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         otherSession = null
         sessionTitle = title
+        sessionName = name
+        sessionCwd = cwd
         busy = !state.optBoolean("idle", true)
         applyQuestion(state.optJSONObject("question"))
     }
@@ -370,8 +423,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // A fresh pairing is a fresh attachment: nothing from the old one may
         // survive a history fetch that fails.
         messages.clear()
-        attachedSessionId = null
-        otherSession = null
+        forgetSession()
     }
 
     fun updateDraft(value: String) {

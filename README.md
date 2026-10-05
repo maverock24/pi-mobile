@@ -43,6 +43,11 @@ Answers, and nothing else. The transcript lists finished (and in-flight)
 assistant answers; prompts, tool calls, model names, context usage and cost stay
 out of the way. The only status on screen is "thinking…" while pi works.
 
+One line under the title bar names the session this phone is attached to: the
+folder it runs in and the name it carries, as the bridge reports them. The title
+bar itself carries the latest prompt once there is one, so without that line a
+phone pointed at the wrong pane looks exactly like the right one.
+
 URLs in an answer are rendered as tappable links, because reading an answer on
 the phone usually ends with going to check the source. Bold and inline code are
 rendered too, and the whole answer is selectable for copying.

@@ -175,7 +175,7 @@ class MainActivity : ComponentActivity() {
                         initialToken = vm.token,
                         statusLine = vm.statusLine,
                         versionLabel = "Pi Remote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                        sessionLabel = vm.sessionTitle,
+                        sessionLabel = vm.attachedLabel.ifBlank { vm.sessionTitle },
                         appearance = vm.appearance,
                         onAppearanceChange = vm::updateAppearance,
                         onPairLink = { pendingPairLink.value = it },

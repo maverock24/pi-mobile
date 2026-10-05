@@ -151,6 +151,23 @@ fun ChatScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // Which session this screen is showing. Once there is a prompt the
+            // title bar carries that instead, so the identity of the session
+            // gets a line of its own here, above the transcript, and it stays put
+            // while the answers scroll. It describes the session on screen even
+            // when another one has taken the bridge over, which the bar below
+            // then names.
+            val attachedTo = vm.attachedLabel
+            if (attachedTo.isNotBlank()) {
+                Text(
+                    text = attachedTo,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
             if (notice != null) {
                 NoticeBar(text = notice, onDismiss = onDismissNotice)
             }
