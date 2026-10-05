@@ -206,9 +206,8 @@ fun ChatScreen(
             // Which session this screen is showing. Once there is a prompt the
             // title bar carries that instead, so the identity of the session
             // gets a line of its own here, above the transcript, and it stays put
-            // while the answers scroll. It describes the session on screen even
-            // when another one has taken the bridge over, which the bar below
-            // then names.
+            // while the answers scroll. When the bridge changes hands the screen
+            // follows it, and the line below says which session it moved to.
             val attachedTo = vm.attachedLabel
             if (attachedTo.isNotBlank()) {
                 Text(
@@ -227,10 +226,15 @@ fun ChatScreen(
                 NoticeBar(text = error, onDismiss = vm::dismissError, isError = true)
             }
 
-            // A foreign session is a stop rather than a notice you dismiss:
-            // nothing is sent to it and nothing of it is shown until you move.
-            vm.otherSession?.let { other ->
-                ForeignSessionBar(notice = other, onAttach = vm::attachToReportedSession)
+            // A handover is named here, in one line, rather than a bar with an
+            // attach button: the move has already happened, and this says so.
+            vm.sessionNotice?.let { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                )
             }
 
             if (turns.isEmpty() && pending == null) {
@@ -425,55 +429,6 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = fa
         ) {
             Text(text = text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = onDismiss, modifier = Modifier.tactile()) { Text("OK") }
-        }
-    }
-}
-
-/**
- * Another pi session took the bridge over. Sending is off while this is on
- * screen, and the transcript stays the session you attached to until you move.
- * The other session is named the way the line above the transcript names yours,
- * so moving is a choice between two sessions you can tell apart.
- */
-@Composable
-private fun ForeignSessionBar(notice: SessionNotice, onAttach: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-        shape = RoundedCornerShape(8.dp),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            // Named exactly as the line above the transcript names the attached
-            // session, so moving is a choice between two sessions you can tell
-            // apart. This notice used to be built from the history payload, which
-            // carries no folder, so it named the other session with a timestamp
-            // and a uuid.
-            val other = sessionLabel(notice.cwd, notice.name)
-            Text(
-                text = if (other.isBlank()) {
-                    "Another pi session took the bridge over"
-                } else {
-                    "Another pi session took the bridge over: $other"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = "The transcript above is the session you attached to. Sending is off until you move to it.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Button(
-                onClick = onAttach,
-                modifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
-                    .tactile(haptics = true, depth = AnswerStyle.keyDepth),
-            ) {
-                Text("Attach to this session", style = MaterialTheme.typography.bodyLarge)
-            }
         }
     }
 }

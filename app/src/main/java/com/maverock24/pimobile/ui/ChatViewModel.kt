@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.maverock24.pimobile.data.SettingsStore
+import com.maverock24.pimobile.net.BridgeException
 import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
 import kotlinx.coroutines.CancellationException
@@ -137,14 +138,6 @@ fun turnsOf(messages: List<ChatMessage>): List<ChatTurn> {
  */
 data class RequestOutcome(val id: Long, val ok: Boolean)
 
-/**
- * A session other than the one this app attached to is serving the bridge.
- * [name] is what that session calls itself and [cwd] is the folder it runs in.
- * Either can be missing: a bridge that changed hands may have been read before
- * it could say much.
- */
-data class SessionNotice(val sessionId: String, val name: String?, val cwd: String?)
-
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = SettingsStore(app)
@@ -161,7 +154,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var busy by mutableStateOf(false)
         private set
-    var sessionTitle by mutableStateOf(NO_SESSION)
+    var sessionTitle by mutableStateOf(store.sessionName.takeIf { it.isNotBlank() } ?: NO_SESSION)
         private set
 
     /** The folder the attached session runs in, as the bridge reports it. */
@@ -169,7 +162,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /** The name the attached session carries on the laptop, when it has one. */
-    var sessionName by mutableStateOf<String?>(null)
+    var sessionName by mutableStateOf(store.sessionName.takeIf { it.isNotBlank() })
         private set
     var statusLine by mutableStateOf("")
         private set
@@ -187,14 +180,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var outcomeSeq = 0L
 
     /**
-     * The session this app attached to. Requests act on that one and nothing is
-     * taken from another, so two sessions never share this screen.
+     * The session this app is pinned to. Requests carry it, so the bridge
+     * refuses one that arrives after the bridge changed hands, and a restart
+     * reads it back from [SettingsStore] instead of adopting whatever serves.
      */
-    var attachedSessionId by mutableStateOf<String?>(null)
+    var attachedSessionId by mutableStateOf(store.sessionId.takeIf { it.isNotBlank() })
         private set
 
-    /** Set while the bridge serves someone else; cleared by moving to it. */
-    var otherSession by mutableStateOf<SessionNotice?>(null)
+    /**
+     * One plain line naming the session the screen just moved to and why, or
+     * null. It replaces the bar that used to stop the composer and ask before a
+     * move. The move is automatic now, and this is only the record of it.
+     */
+    var sessionNotice by mutableStateOf<String?>(null)
         private set
 
     /**
@@ -215,6 +213,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private var streamCall: Call? = null
     private var pollJob: Job? = null
+    private var reconnectJob: Job? = null
+
+    /**
+     * Bumped every time the stream is opened or dropped. A frame or a close
+     * carries the generation it was opened with, so a callback from a stream
+     * that has been replaced cannot act on the one that replaced it.
+     */
+    private var streamGeneration = 0
+
+    /** How many reconnects have run without a stream opening; drives the wait. */
+    private var reconnectAttempt = 0
 
     /**
      * Answers are committed only when the run settles, and only if the message
@@ -251,10 +260,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun forgetSession() {
         attachedSessionId = null
-        otherSession = null
+        store.sessionId = ""
+        store.sessionName = ""
         sessionTitle = NO_SESSION
         sessionName = null
         sessionCwd = null
+        sessionNotice = null
     }
 
     fun connect() {
@@ -264,12 +275,27 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         statusLine = "connecting to ${store.baseUrl}"
+        val generation = ++streamGeneration
         val call = runCatching {
             client.streamEvents(
-                onOpen = { main.post { connected = true; statusLine = "connected" } },
-                onEvent = { event -> main.post { handleEvent(event) } },
+                onOpen = {
+                    main.post {
+                        if (generation != streamGeneration) return@post
+                        connected = true
+                        statusLine = "connected"
+                        reconnectAttempt = 0
+                    }
+                },
+                onEvent = { event ->
+                    main.post {
+                        if (generation == streamGeneration) handleEvent(event)
+                    }
+                },
                 onClosed = { error ->
                     main.post {
+                        // A close from a stream that has already been replaced is
+                        // the deliberate cancel of disconnect(), not a drop.
+                        if (generation != streamGeneration) return@post
                         connected = false
                         busy = false
                         statusLine = if (error == null) {
@@ -277,10 +303,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         } else {
                             Diagnostics.describe(error, store.baseUrl)
                         }
-                        // Find out whose session the bridge serves now. The poll
-                        // would take three seconds, and this is the moment another
-                        // session may have taken the bridge over.
+                        // Find out whose session the bridge serves now, then
+                        // reopen the stream. A handover closes the old server, so
+                        // the poll alone would take three seconds to show it.
                         refreshState()
+                        scheduleReconnect()
                     }
                 },
             )
@@ -292,18 +319,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         streamCall = call
         startPolling()
         safeLaunch {
-            // Identify the session before pulling any of its content. Loading
-            // history first is what used to put a second session's transcript on
-            // a screen that was still showing the first one.
+            // Identify the session before pulling any of its content. applyState
+            // adopts whoever serves and loads that session's own history, so a
+            // restart or a handover never mixes two transcripts.
             val state = runCatching { client.state() }.getOrNull()
-            if (state != null) {
-                applyState(state)
+            val moved = state != null && applyState(state)
+            if (!moved) {
+                reloadHistory()
             }
-            if (otherSession != null) {
-                statusLine = "another pi session is serving this bridge"
-                return@safeLaunch
-            }
-            reloadHistory()
             refreshState()
             runCatching { client.question() }
                 .onSuccess { applyQuestion(it.optJSONObject("pending")) }
@@ -311,12 +334,39 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnect() {
+        // Bumping the generation first means the cancel below is not read as a
+        // dropped stream, so no reconnect is scheduled for it.
+        streamGeneration++
         streamCall?.cancel()
         streamCall = null
         pollJob?.cancel()
         pollJob = null
+        reconnectJob?.cancel()
+        reconnectJob = null
         connected = false
         busy = false
+    }
+
+    /**
+     * Reopen the event stream after it dropped. The waits are short first, so a
+     * handover reappears at once, and grow so a phone with no route does not
+     * spin. The three second poll in [startPolling] stays the safety net.
+     */
+    private fun scheduleReconnect() {
+        if (!store.isConfigured) return
+        reconnectAttempt += 1
+        val wait = when {
+            reconnectAttempt <= 1 -> 250L
+            reconnectAttempt == 2 -> 500L
+            reconnectAttempt == 3 -> 1000L
+            else -> 3000L
+        }
+        reconnectJob?.cancel()
+        reconnectJob = viewModelScope.launch {
+            delay(wait)
+            reconnectJob = null // connect() clears it, so do it here and avoid cancelling this job
+            if (!connected) connect()
+        }
     }
 
     /**
@@ -341,7 +391,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (!connected) connect() else refreshState()
     }
 
-    private fun applyState(state: JSONObject) {
+    /**
+     * Take the bridge's description of the session it serves. When the id is not
+     * the pin, the screen moves: the pin is written down, the transcript is
+     * dropped, that session's history is loaded and one line says so. Returns
+     * true when it moved, which tells a caller its own history fetch is now
+     * redundant.
+     */
+    private fun applyState(state: JSONObject): Boolean {
         val reported = state.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
         val name = state.optString("sessionName").takeIf { it.isNotBlank() && it != "null" }
         val cwd = state.optString("cwd").takeIf { it.isNotBlank() && it != "null" }
@@ -360,32 +417,39 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
             busy = !state.optBoolean("idle", true)
             applyQuestion(state.optJSONObject("question"))
-            return
+            return false
         }
         val attached = attachedSessionId
-        if (attached == null) {
-            attachedSessionId = reported
-        } else if (attached != reported) {
-            // Another pi session owns the bridge now. Take nothing from it: not
-            // its title, not its busy state, not its question widget, and send
-            // nothing to it. What is on screen stays the session you were
-            // reading until you choose to move.
-            otherSession = SessionNotice(reported, name, cwd)
-            busy = false
-            // Stop following it. connect() opens the stream before this check can
-            // run, and its frames would otherwise be applied to the session that
-            // is still on screen.
-            streamCall?.cancel()
-            streamCall = null
-            connected = false
-            return
+        if (attached != reported) {
+            adoptSession(reported, name, cwd)
         }
-        otherSession = null
         sessionTitle = title
         sessionName = name
         sessionCwd = cwd
         busy = !state.optBoolean("idle", true)
         applyQuestion(state.optJSONObject("question"))
+        return attached != reported
+    }
+
+    /**
+     * Move to the session the bridge serves now. This is the only place the
+     * transcript is dropped, so what is listed is always one session, and the
+     * pin is written down so a restart keeps it. A first connect names nothing:
+     * there was no session on screen to move away from, and the line above the
+     * transcript already names the one it landed on.
+     */
+    private fun adoptSession(sessionId: String, name: String?, cwd: String?) {
+        val moved = attachedSessionId != null
+        attachedSessionId = sessionId
+        store.sessionId = sessionId
+        store.sessionName = name.orEmpty()
+        messages.clear()
+        pendingQuestion = null
+        if (moved) {
+            val label = sessionLabel(cwd, name).ifBlank { "a new session" }
+            sessionNotice = "The bridge moved to $label; this screen follows it"
+        }
+        reloadHistory()
     }
 
     fun refreshState() {
@@ -403,9 +467,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun reloadHistory() {
-        if (otherSession != null) {
-            return // another session is serving: its history is not ours to show
-        }
         safeLaunch {
             runCatching { client.history(80) }
                 .onSuccess { payload ->
@@ -424,19 +485,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val attached = attachedSessionId
                     if (from != null && attached != null && from != attached) {
                         // The bridge changed hands during this round trip, so this
-                        // transcript belongs to the other session. Ask the bridge
-                        // who it serves now instead of reading the answer off the
-                        // file name: the state payload carries the folder and the
-                        // name, and those are what identify a session to a person.
-                        val current = runCatching { client.state() }.getOrNull()
-                        if (current != null) {
-                            applyState(current)
-                        } else {
-                            // The bridge did not answer. Keep whatever the poll
-                            // already found, and at worst show the bar without a
-                            // name rather than one built from a uuid.
-                            otherSession = otherSession ?: SessionNotice(from, null, null)
-                        }
+                        // transcript belongs to the other session. Re-read the
+                        // state and let applyState adopt whoever serves now; this
+                        // fetch is dropped rather than shown under the old pin.
+                        refreshState()
                         return@onSuccess
                     }
                     messages.clear()
@@ -498,14 +550,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || requestsBlocked()) return
-        messages.add(ChatMessage(id = "local-${UUID.randomUUID()}", role = "user", text = trimmed))
+        val localId = "local-${UUID.randomUUID()}"
+        messages.add(ChatMessage(id = localId, role = "user", text = trimmed))
         busy = true
         safeLaunch {
-            runCatching { client.prompt(trimmed) }
+            runCatching { client.prompt(trimmed, sessionId = attachedSessionId) }
                 .onSuccess { outcome = RequestOutcome(++outcomeSeq, ok = true) }
-                .onFailure {
+                .onFailure { error ->
                     busy = false
-                    lastError = "prompt: ${Diagnostics.describe(it, store.baseUrl)}"
+                    if (wrongSession(error)) {
+                        // The bridge moved while this was in flight and acted on
+                        // nothing. Put the prompt back in the composer rather than
+                        // let it vanish with the transcript that is about to go.
+                        messages.removeAll { it.id == localId }
+                        if (draft.isBlank()) draft = trimmed
+                        handleWrongSession()
+                    } else {
+                        lastError = "prompt: ${Diagnostics.describe(error, store.baseUrl)}"
+                    }
                     outcome = RequestOutcome(++outcomeSeq, ok = false)
                 }
         }
@@ -513,7 +575,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun abort() {
         if (requestsBlocked()) return
-        safeLaunch { runCatching { client.abort() }.onFailure { lastError = it.message } }
+        safeLaunch {
+            runCatching { client.abort(sessionId = attachedSessionId) }
+                .onFailure { error ->
+                    if (wrongSession(error)) {
+                        handleWrongSession()
+                    } else {
+                        lastError = error.message
+                    }
+                }
+        }
     }
 
     fun testConnection() {
@@ -534,33 +605,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Why the composer is off, or null when a prompt can be sent.
      *
-     * The live stream is the proof of identity: a takeover makes the serving
-     * process close its server, which drops this stream, so while the stream is
-     * up the session checked when it opened is still the one on the other end. A
-     * dead stream therefore counts as not ours until it is reopened, and the poll
-     * keeps the state readable in the meantime.
+     * Only a dead stream blocks it now. A session change does not: the bridge
+     * refuses a call that names another session, so the composer stays open and a
+     * prompt that races a handover comes back with the draft kept.
      */
     val composerBlock: String?
-        get() = when {
-            otherSession != null -> "Another pi session is serving the bridge"
-            !connected -> "Not connected"
-            else -> null
-        }
+        get() = if (connected) null else "Not connected"
 
     /** True when this app has no verified session to act on. */
     private fun requestsBlocked(): Boolean = composerBlock != null
 
     /**
-     * Move to the session the bridge is actually serving. The transcript is
-     * dropped here and only here, so what is listed is always one session.
+     * The bridge refused a mutating call because it now serves another session.
+     * Nothing was recorded on the laptop, so the app asks who it serves and lets
+     * applyState move there and say so in one line.
      */
-    fun attachToReportedSession() {
-        val notice = otherSession ?: return
-        attachedSessionId = notice.sessionId
-        otherSession = null
-        messages.clear()
-        connect()
+    private fun handleWrongSession() {
+        busy = false
+        refreshState()
     }
+
+    /** True when the bridge refused a call because it had changed hands. */
+    private fun wrongSession(error: Throwable): Boolean =
+        error is BridgeException && error.code == 409
 
     private fun applyQuestion(json: JSONObject?) {
         val previous = pendingQuestion
@@ -586,14 +653,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val trace = pendingQuestion?.let { questionEntry(it, questionId, value, custom) }
         if (trace != null) messages.add(trace)
         safeLaunch {
-            runCatching { client.answer(questionId, value, custom) }
+            runCatching { client.answer(questionId, value, custom, sessionId = attachedSessionId) }
                 .onSuccess { outcome = RequestOutcome(++outcomeSeq, ok = true) }
-                .onFailure {
+                .onFailure { error ->
                     // Nothing was recorded on the laptop, so the answer must not
                     // stay on screen claiming that it was, and a retry of the
                     // same option must not look like a second answer.
                     if (trace != null) messages.remove(trace)
-                    lastError = "answer: ${Diagnostics.describe(it, store.baseUrl)}"
+                    if (wrongSession(error)) {
+                        handleWrongSession()
+                    } else {
+                        lastError = "answer: ${Diagnostics.describe(error, store.baseUrl)}"
+                    }
                     outcome = RequestOutcome(++outcomeSeq, ok = false)
                 }
         }
@@ -611,10 +682,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val trace = questionEntry(current, questionId, value = null, custom = false)
         messages.add(trace)
         safeLaunch {
-            runCatching { client.answer(questionId, "", cancel = true) }
-                .onFailure {
+            runCatching { client.answer(questionId, "", cancel = true, sessionId = attachedSessionId) }
+                .onFailure { error ->
                     messages.remove(trace)
-                    lastError = "cancel: ${Diagnostics.describe(it, store.baseUrl)}"
+                    if (wrongSession(error)) {
+                        handleWrongSession()
+                    } else {
+                        lastError = "cancel: ${Diagnostics.describe(error, store.baseUrl)}"
+                    }
                 }
         }
     }
@@ -622,9 +697,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun handleEvent(event: JSONObject) {
         val type = event.optString("type")
         val data = event.optJSONObject("data") ?: JSONObject()
-        // Frames queued before a takeover was noticed still arrive here, and none
-        // of them belong to the session on screen.
-        if (otherSession != null) return
         when (type) {
             "question" -> applyQuestion(data.optJSONObject("pending"))
             "state" -> applyState(data)

@@ -15,6 +15,13 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
+ * A response the bridge refused. [code] is the HTTP status, so a caller can
+ * tell the 409 of a session that changed hands from any other failure and keep
+ * the user's work instead of discarding it.
+ */
+class BridgeException(val code: Int, message: String) : IOException(message)
+
+/**
  * Thin client for the pi-remote bridge. Every call reads the current endpoint and
  * token from [config], so changing settings takes effect on the next request.
  */
@@ -49,7 +56,7 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
         client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException(describeError(response.code, text))
+                throw BridgeException(response.code, describeError(response.code, text))
             }
             if (text.isBlank()) JSONObject() else JSONObject(text)
         }
@@ -67,8 +74,17 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
 
     suspend fun history(limit: Int = 60): JSONObject = execute(builder("/api/history?limit=$limit").get().build())
 
-    suspend fun prompt(text: String, deliverAs: String = "steer"): JSONObject {
-        val payload = JSONObject().put("text", text).put("deliverAs", deliverAs).toString()
+    suspend fun prompt(text: String, deliverAs: String = "steer", sessionId: String? = null): JSONObject {
+        val payload = JSONObject().apply {
+            put("text", text)
+            put("deliverAs", deliverAs)
+            // The pin, when there is one. The bridge refuses a call that names
+            // another session, so a prompt typed as the bridge changes hands is
+            // not delivered to the wrong one. Omitting it, which happens before
+            // the first state frame, keeps the bridge's tolerance for an app
+            // that does not send the field yet.
+            if (!sessionId.isNullOrBlank()) put("sessionId", sessionId)
+        }.toString()
         return execute(builder("/api/prompt").post(payload.toRequestBody(json)).build())
     }
 
@@ -84,17 +100,24 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
         value: String,
         custom: Boolean = false,
         cancel: Boolean = false,
+        sessionId: String? = null,
     ): JSONObject {
         val payload = JSONObject().apply {
             put("value", value)
             put("custom", custom)
             put("cancel", cancel)
             if (!questionId.isNullOrBlank()) put("questionId", questionId)
+            if (!sessionId.isNullOrBlank()) put("sessionId", sessionId)
         }.toString()
         return execute(builder("/api/answer").post(payload.toRequestBody(json)).build())
     }
 
-    suspend fun abort(): JSONObject = execute(builder("/api/abort").post("{}".toRequestBody(json)).build())
+    suspend fun abort(sessionId: String? = null): JSONObject {
+        val payload = JSONObject().apply {
+            if (!sessionId.isNullOrBlank()) put("sessionId", sessionId)
+        }.toString()
+        return execute(builder("/api/abort").post(payload.toRequestBody(json)).build())
+    }
 
     /**
      * Opens the SSE stream. [onEvent] is called for every `data:` frame on an

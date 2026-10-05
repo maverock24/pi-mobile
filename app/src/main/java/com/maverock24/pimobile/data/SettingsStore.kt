@@ -44,6 +44,21 @@ class SettingsStore(context: Context) {
         get() = prefs.getString("appearance", "dark") ?: "dark"
         set(value) = prefs.edit().putString("appearance", value).apply()
 
+    /**
+     * The pi session this phone attached to. It is written down so a restart
+     * does not silently adopt whatever session happens to be serving: the app
+     * moves only when the bridge reports a different id, and then it says so.
+     * Empty until the first state frame names a session.
+     */
+    var sessionId: String
+        get() = prefs.getString("sessionId", "").orEmpty()
+        set(value) = prefs.edit().putString("sessionId", value).apply()
+
+    /** The name of the pinned session, so its label survives a restart. */
+    var sessionName: String
+        get() = prefs.getString("sessionName", "").orEmpty()
+        set(value) = prefs.edit().putString("sessionName", value).apply()
+
     val isConfigured: Boolean
         get() = token.isNotBlank()
 }
