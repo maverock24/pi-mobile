@@ -7,6 +7,12 @@
  * the tools and the bridge are separate extensions, and a shared file protocol
  * cannot drift the way shared in-process state can.
  *
+ * Both names carry the process id. A widget and the bridge that serves it are
+ * the same pi process, and every other pi session on the machine is a different
+ * one. Without that, the two files are machine-wide: a bridge reports whichever
+ * session asked last as its own question, and the answer is written for a widget
+ * the phone is not attached to.
+ *
  * Directory: $PI_REMOTE_DIR or ~/.local/share/pi-remote
  *
  * Deliberately dependency-free so every question tool can import it.
@@ -64,11 +70,11 @@ export function remoteDir(): string {
 }
 
 function pendingPath(): string {
-	return path.join(remoteDir(), "question-pending.json");
+	return path.join(remoteDir(), `question-pending-${process.pid}.json`);
 }
 
 function answerPath(): string {
-	return path.join(remoteDir(), "question-answer.json");
+	return path.join(remoteDir(), `question-answer-${process.pid}.json`);
 }
 
 function ensureDir(): void {
