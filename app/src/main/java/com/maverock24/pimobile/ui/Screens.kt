@@ -332,6 +332,8 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = fa
 /**
  * Another pi session took the bridge over. Sending is off while this is on
  * screen, and the transcript stays the session you attached to until you move.
+ * The other session is named the way the line above the transcript names yours,
+ * so moving is a choice between two sessions you can tell apart.
  */
 @Composable
 private fun ForeignSessionBar(notice: SessionNotice, onAttach: () -> Unit) {
@@ -345,8 +347,18 @@ private fun ForeignSessionBar(notice: SessionNotice, onAttach: () -> Unit) {
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            // Named exactly as the line above the transcript names the attached
+            // session, so moving is a choice between two sessions you can tell
+            // apart. This notice used to be built from the history payload, which
+            // carries no folder, so it named the other session with a timestamp
+            // and a uuid.
+            val other = sessionLabel(notice.cwd, notice.name)
             Text(
-                text = "Another pi session took the bridge over: ${notice.title}",
+                text = if (other.isBlank()) {
+                    "Another pi session took the bridge over"
+                } else {
+                    "Another pi session took the bridge over: $other"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
             )

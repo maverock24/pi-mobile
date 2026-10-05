@@ -30,13 +30,24 @@ private const val NO_SESSION = "not connected"
  * two segments are what tell one project from another on a phone-width line.
  */
 internal fun shortPath(path: String): String {
-    val parts = path.trim().trimEnd('/').split('/').filter { it.isNotBlank() }
+    val trimmed = path.trim().trimEnd('/')
+    val parts = trimmed.split('/').filter { it.isNotBlank() }
     return when {
-        parts.isEmpty() -> path.trim()
-        parts.size <= 2 -> parts.joinToString("/")
+        parts.size <= 2 -> trimmed
         else -> "…/" + parts.takeLast(2).joinToString("/")
     }
 }
+
+/**
+ * Names a session on screen: the folder it runs in first, then the name it
+ * carries. Either can be missing, so the result can come back empty and each
+ * caller says what it means by that.
+ */
+internal fun sessionLabel(cwd: String?, name: String?): String =
+    listOfNotNull(
+        cwd?.let(::shortPath)?.takeIf { it.isNotBlank() },
+        name?.takeIf { it.isNotBlank() },
+    ).joinToString(" · ")
 
 data class ChatMessage(
     val id: String,
@@ -95,9 +106,11 @@ data class RequestOutcome(val id: Long, val ok: Boolean)
 
 /**
  * A session other than the one this app attached to is serving the bridge.
- * [title] is what that session calls itself, for the notice that offers to move.
+ * [name] is what that session calls itself and [cwd] is the folder it runs in.
+ * Either can be missing: a bridge that changed hands may have been read before
+ * it could say much.
  */
-data class SessionNotice(val sessionId: String, val title: String)
+data class SessionNotice(val sessionId: String, val name: String?, val cwd: String?)
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -157,10 +170,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * so it identifies nothing to a human and never appears here.
      */
     val attachedLabel: String
-        get() = listOfNotNull(
-            sessionCwd?.let(::shortPath)?.takeIf { it.isNotBlank() },
-            sessionName?.takeIf { it.isNotBlank() },
-        ).joinToString(" · ")
+        get() = sessionLabel(sessionCwd, sessionName)
 
     /** The latest thing you typed, shown at the top of the main view. */
     val lastPrompt: String?
@@ -301,15 +311,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun applyState(state: JSONObject) {
         val reported = state.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
         val name = state.optString("sessionName").takeIf { it.isNotBlank() && it != "null" }
-        val title = name
-            ?: state.optString("sessionFile").substringAfterLast('/').ifBlank { "pi session" }
         val cwd = state.optString("cwd").takeIf { it.isNotBlank() && it != "null" }
+        // The session file name is a timestamp and a uuid, so it names nothing to
+        // a person. The name says which session this is when it carries one, and
+        // the folder is what is left when it does not.
+        val title = name ?: cwd?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "pi session"
         if (reported == null) {
             // A bridge that cannot identify itself: take what it can still say,
-            // and leave the pin alone.
-            sessionTitle = title
-            sessionName = name
-            sessionCwd = cwd
+            // and leave the pin alone. None of it may name the screen while a
+            // session is attached, since this may be the other one talking.
+            if (attachedSessionId == null) {
+                sessionTitle = title
+                sessionName = name
+                sessionCwd = cwd
+            }
             busy = !state.optBoolean("idle", true)
             applyQuestion(state.optJSONObject("question"))
             return
@@ -322,7 +337,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // its title, not its busy state, not its question widget, and send
             // nothing to it. What is on screen stays the session you were
             // reading until you choose to move.
-            otherSession = SessionNotice(reported, title)
+            otherSession = SessionNotice(reported, name, cwd)
             busy = false
             // Stop following it. connect() opens the stream before this check can
             // run, and its frames would otherwise be applied to the session that
@@ -375,12 +390,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val attached = attachedSessionId
                     if (from != null && attached != null && from != attached) {
                         // The bridge changed hands during this round trip, so this
-                        // transcript belongs to the other session.
-                        otherSession = SessionNotice(
-                            from,
-                            payload.optString("sessionFile").substringAfterLast('/')
-                                .ifBlank { "another pi session" },
-                        )
+                        // transcript belongs to the other session. Ask the bridge
+                        // who it serves now instead of reading the answer off the
+                        // file name: the state payload carries the folder and the
+                        // name, and those are what identify a session to a person.
+                        val current = runCatching { client.state() }.getOrNull()
+                        if (current != null) {
+                            applyState(current)
+                        } else {
+                            // The bridge did not answer. Keep whatever the poll
+                            // already found, and at worst show the bar without a
+                            // name rather than one built from a uuid.
+                            otherSession = otherSession ?: SessionNotice(from, null, null)
+                        }
                         return@onSuccess
                     }
                     messages.clear()
