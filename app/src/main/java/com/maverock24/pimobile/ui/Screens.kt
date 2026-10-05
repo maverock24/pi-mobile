@@ -158,6 +158,12 @@ fun ChatScreen(
                 NoticeBar(text = error, onDismiss = vm::dismissError, isError = true)
             }
 
+            // A foreign session is a stop rather than a notice you dismiss:
+            // nothing is sent to it and nothing of it is shown until you move.
+            vm.otherSession?.let { other ->
+                ForeignSessionBar(notice = other, onAttach = vm::attachToReportedSession)
+            }
+
             if (turns.isEmpty() && pending == null) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
@@ -205,6 +211,7 @@ fun ChatScreen(
                 partialText = partialText,
                 listening = listening,
                 busy = vm.busy,
+                blocked = vm.otherSession != null,
                 onToggleMic = onToggleMic,
                 onSend = {
                     vm.send(vm.draft)
@@ -305,6 +312,42 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = fa
     }
 }
 
+/**
+ * Another pi session took the bridge over. Sending is off while this is on
+ * screen, and the transcript stays the session you attached to until you move.
+ */
+@Composable
+private fun ForeignSessionBar(notice: SessionNotice, onAttach: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = "Another pi session took the bridge over: ${notice.title}",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "The transcript above is the session you attached to. Sending is off until you move to it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = onAttach,
+                modifier = Modifier.heightIn(min = AnswerStyle.buttonHeight).tactile(haptics = true),
+            ) {
+                Text("Attach to this session", style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+    }
+}
+
 @Composable
 private fun Composer(
     draft: String,
@@ -312,6 +355,7 @@ private fun Composer(
     partialText: String,
     listening: Boolean,
     busy: Boolean,
+    blocked: Boolean,
     onToggleMic: () -> Unit,
     onSend: () -> Unit,
     onClear: () -> Unit,
@@ -332,7 +376,7 @@ private fun Composer(
             modifier = Modifier.fillMaxWidth(),
             minLines = 1,
             maxLines = 6,
-            placeholder = { Text("Prompt pi…") },
+            placeholder = { Text(if (blocked) "Another pi session is serving the bridge" else "Prompt pi…") },
         )
         Spacer(modifier = Modifier.height(8.dp))
         Row(
@@ -342,13 +386,14 @@ private fun Composer(
         ) {
             val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
             val label = MaterialTheme.typography.bodyLarge
+            val canSend = draft.isNotBlank() && !blocked
             FilledTonalButton(onClick = onToggleMic, modifier = buttonModifier.tactile(haptics = true)) {
                 Text(if (listening) "Mic on" else "Mic", style = label)
             }
             Button(
                 onClick = onSend,
-                enabled = draft.isNotBlank(),
-                modifier = buttonModifier.tactile(haptics = true, enabled = draft.isNotBlank()),
+                enabled = canSend,
+                modifier = buttonModifier.tactile(haptics = true, enabled = canSend),
             ) {
                 Text("Send", style = label)
             }

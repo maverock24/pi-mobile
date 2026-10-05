@@ -77,6 +77,12 @@ fun turnsOf(messages: List<ChatMessage>): List<ChatTurn> {
  */
 data class RequestOutcome(val id: Long, val ok: Boolean)
 
+/**
+ * A session other than the one this app attached to is serving the bridge.
+ * [title] is what that session calls itself, for the notice that offers to move.
+ */
+data class SessionNotice(val sessionId: String, val title: String)
+
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = SettingsStore(app)
@@ -110,6 +116,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private var outcomeSeq = 0L
 
+    /**
+     * The session this app attached to. Requests act on that one and nothing is
+     * taken from another, so two sessions never share this screen.
+     */
+    var attachedSessionId by mutableStateOf<String?>(null)
+        private set
+
+    /** Set while the bridge serves someone else; cleared by moving to it. */
+    var otherSession by mutableStateOf<SessionNotice?>(null)
+        private set
+
     /** The latest thing you typed, shown at the top of the main view. */
     val lastPrompt: String?
         get() = messages.lastOrNull { it.role == "user" && it.text.isNotBlank() }?.text
@@ -139,6 +156,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         store.baseUrl = baseUrl
         store.token = token
         messages.clear()
+        attachedSessionId = null
+        otherSession = null
         connect()
     }
 
@@ -171,10 +190,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         streamCall = call
-        reloadHistory()
-        refreshState()
         startPolling()
         safeLaunch {
+            // Identify the session before pulling any of its content. Loading
+            // history first is what used to put a second session's transcript on
+            // a screen that was still showing the first one.
+            val state = runCatching { client.state() }.getOrNull()
+            if (state != null) {
+                applyState(state)
+            }
+            if (otherSession != null) {
+                statusLine = "another pi session is serving this bridge"
+                return@safeLaunch
+            }
+            reloadHistory()
+            refreshState()
             runCatching { client.question() }
                 .onSuccess { applyQuestion(it.optJSONObject("pending")) }
         }
@@ -212,10 +242,32 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun applyState(state: JSONObject) {
+        val reported = state.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
+        val title = state.optString("sessionName").takeIf { it.isNotBlank() && it != "null" }
+            ?: state.optString("sessionFile").substringAfterLast('/').ifBlank { "pi session" }
+        if (reported == null) {
+            // A bridge that cannot identify itself: take what it can still say,
+            // and leave the pin alone.
+            sessionTitle = title
+            busy = !state.optBoolean("idle", true)
+            applyQuestion(state.optJSONObject("question"))
+            return
+        }
+        val attached = attachedSessionId
+        if (attached == null) {
+            attachedSessionId = reported
+        } else if (attached != reported) {
+            // Another pi session owns the bridge now. Take nothing from it: not
+            // its title, not its busy state, not its question widget, and send
+            // nothing to it. What is on screen stays the session you were
+            // reading until you choose to move.
+            otherSession = SessionNotice(reported, title)
+            busy = false
+            return
+        }
+        otherSession = null
+        sessionTitle = title
         busy = !state.optBoolean("idle", true)
-        val name = state.optString("sessionName").takeIf { it.isNotBlank() && it != "null" }
-        val file = state.optString("sessionFile").substringAfterLast('/')
-        sessionTitle = name ?: file.ifBlank { "pi session" }
         applyQuestion(state.optJSONObject("question"))
     }
 
@@ -234,6 +286,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun reloadHistory() {
+        if (otherSession != null) {
+            return // another session is serving: its history is not ours to show
+        }
         safeLaunch {
             runCatching { client.history(80) }
                 .onSuccess { payload ->
@@ -284,6 +339,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun applyPairing(baseUrl: String, token: String) {
         store.baseUrl = baseUrl
         store.token = token
+        attachedSessionId = null
+        otherSession = null
     }
 
     fun updateDraft(value: String) {
@@ -301,7 +358,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun send(text: String) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty() || foreignSessionActive()) return
         messages.add(ChatMessage(id = "local-${UUID.randomUUID()}", role = "user", text = trimmed))
         busy = true
         safeLaunch {
@@ -316,6 +373,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun abort() {
+        if (foreignSessionActive()) return
         safeLaunch { runCatching { client.abort() }.onFailure { lastError = it.message } }
     }
 
@@ -334,12 +392,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         lastError = null
     }
 
+    /**
+     * Nothing is sent while the bridge serves a session other than the one this
+     * app attached to. The notice on screen is what tells the user how to move.
+     */
+    private fun foreignSessionActive(): Boolean = otherSession != null
+
+    /**
+     * Move to the session the bridge is actually serving. The transcript is
+     * dropped here and only here, so what is listed is always one session.
+     */
+    fun attachToReportedSession() {
+        val notice = otherSession ?: return
+        attachedSessionId = notice.sessionId
+        otherSession = null
+        messages.clear()
+        connect()
+    }
+
     private fun applyQuestion(json: JSONObject?) {
         pendingQuestion = parsePendingQuestion(json)
     }
 
     /** Tap on an option button. */
     fun answerQuestion(questionId: String?, value: String, custom: Boolean = false) {
+        if (foreignSessionActive()) return
         safeLaunch {
             runCatching { client.answer(questionId, value, custom) }
                 .onSuccess { outcome = RequestOutcome(++outcomeSeq, ok = true) }
@@ -353,6 +430,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Dismiss the widget; the tool records it as cancelled. */
     fun cancelQuestion() {
         val current = pendingQuestion ?: return
+        if (foreignSessionActive()) return
         val questionId = current.firstUnanswered?.id ?: current.questions.first().id
         safeLaunch {
             runCatching { client.answer(questionId, "", cancel = true) }
@@ -365,11 +443,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val data = event.optJSONObject("data") ?: JSONObject()
         when (type) {
             "question" -> applyQuestion(data.optJSONObject("pending"))
-            "state" -> {
-                busy = !data.optBoolean("idle", true)
-                val file = data.optString("sessionFile").substringAfterLast('/')
-                if (file.isNotBlank()) sessionTitle = data.optString("sessionName").takeIf { it.isNotBlank() && it != "null" } ?: file
-            }
+            "state" -> applyState(data)
             "prompt_accepted", "agent_start", "turn_start" -> busy = true
             "agent_settled" -> {
                 busy = false
