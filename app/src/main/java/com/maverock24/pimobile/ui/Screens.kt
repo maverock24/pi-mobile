@@ -141,11 +141,11 @@ fun ChatScreen(
     LaunchedEffect(newestTurn, turns.lastOrNull()?.answers?.size) { followNewest = true }
 
     LaunchedEffect(pending?.id, turns.size, turns.lastOrNull()?.answers?.size) {
-        when {
-            // pi is blocked until the widget is answered, so it stays on screen.
-            pending != null -> listState.animateScrollToItem(turns.size)
-            turns.isNotEmpty() -> listState.animateScrollToItem(turns.lastIndex)
-        }
+        // The end of the list, so the newest entry is on screen. Scrolling the
+        // last item to the top of the viewport is not the same thing: a long
+        // answer would show its first lines, and the question widget below it
+        // would come to rest above the bottom edge instead of at it.
+        listState.animateScrollToItem(turns.size + if (pending != null) 1 else 0)
     }
 
     // The outcome of a request the user started: confirm when the bridge took
@@ -268,6 +268,10 @@ fun ChatScreen(
                             )
                         }
                     }
+                    // The end of the list, so a scroll to the last item comes to
+                    // rest at the bottom edge with the newest entry above it,
+                    // rather than putting that entry at the top of the screen.
+                    item(key = "bottom") { Spacer(modifier = Modifier.height(1.dp)) }
                 }
             }
 
