@@ -260,6 +260,7 @@ fun ChatScreen(
                             turn = turn,
                             expanded = turn.id == expandedTurn,
                             liveText = if (turn.id == newestTurn) liveAnswer else null,
+                            working = turn.id == newestTurn && vm.busy,
                             onToggle = {
                                 followNewest = false
                                 explicitTurn = if (expandedTurn == turn.id) null else turn.id
@@ -300,6 +301,7 @@ private fun TurnView(
     turn: ChatTurn,
     expanded: Boolean,
     liveText: String?,
+    working: Boolean,
     onToggle: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -371,6 +373,11 @@ private fun TurnView(
                         text = liveText,
                         modifier = Modifier.widthIn(max = AnswerStyle.measure),
                     )
+                } else if (working) {
+                    // Nothing has streamed yet, so the run has nothing to show but
+                    // itself: this is the step between the prompt above and the
+                    // answer that will replace it.
+                    WorkingShimmer()
                 }
             }
         }
