@@ -736,7 +736,26 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         activeHasToolCalls = hasToolCalls(message)
                         liveAnswer = activeAssistant?.toString()
                     }
-                    "user" -> runCandidates.clear() // a new prompt starts a new answer
+                    "user" -> {
+                        // A new prompt starts a new answer, and the prompt itself
+                        // goes on the transcript. It may have been typed at the
+                        // laptop rather than here, and history alone would not show
+                        // it until the next reconnect. The app echoes its own
+                        // prompts, so an identical one already on screen is this
+                        // same turn arriving back.
+                        runCandidates.clear()
+                        val prompt = textOf(message, "content").trim()
+                        val echoed = messages.lastOrNull { it.role == "user" }?.text?.trim()
+                        if (prompt.isNotBlank() && prompt != echoed) {
+                            messages.add(
+                                ChatMessage(
+                                    id = "prompt-${UUID.randomUUID()}",
+                                    role = "user",
+                                    text = prompt,
+                                )
+                            )
+                        }
+                    }
                 }
             }
             "message_update" -> {
