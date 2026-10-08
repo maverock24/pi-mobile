@@ -143,7 +143,7 @@ fun ChatScreen(
     LaunchedEffect(pending?.id, turns.size, turns.lastOrNull()?.answers?.size) {
         when {
             // pi is blocked until the widget is answered, so it stays on screen.
-            pending != null -> listState.animateScrollToItem(0)
+            pending != null -> listState.animateScrollToItem(turns.size)
             turns.isNotEmpty() -> listState.animateScrollToItem(turns.lastIndex)
         }
     }
@@ -236,25 +236,16 @@ fun ChatScreen(
                     )
                 }
             } else {
-                // One scrolling surface for the question widget and the
-                // transcript. pi is blocked until the widget is answered, so
-                // the card is the first item, and its options keep their full
-                // height instead of living inside a scroll box of their own.
+                // One scrolling surface for the transcript and the question
+                // widget. The widget is the newest thing there is and pi cannot
+                // go on without it, so it is the last item, below the turn that
+                // is waiting on it, and its options keep their full height
+                // instead of living inside a scroll box of their own.
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
                 ) {
-                    if (pending != null) {
-                        item(key = "pending-question") {
-                            QuestionCard(
-                                pending = pending,
-                                onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
-                                onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
-                                onCancel = vm::cancelQuestion,
-                            )
-                        }
-                    }
                     items(turns, key = { it.id }) { turn ->
                         TurnView(
                             turn = turn,
@@ -266,6 +257,16 @@ fun ChatScreen(
                                 explicitTurn = if (expandedTurn == turn.id) null else turn.id
                             },
                         )
+                    }
+                    if (pending != null) {
+                        item(key = "pending-question") {
+                            QuestionCard(
+                                pending = pending,
+                                onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
+                                onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
+                                onCancel = vm::cancelQuestion,
+                            )
+                        }
                     }
                 }
             }
