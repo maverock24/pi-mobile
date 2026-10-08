@@ -374,10 +374,11 @@ private fun TurnView(
                         text = liveText,
                         modifier = Modifier.widthIn(max = AnswerStyle.measure),
                     )
-                } else if (working) {
-                    // Nothing has streamed yet, so the run has nothing to show but
-                    // itself: this is the step between the prompt above and the
-                    // answer that will replace it.
+                } else if (working && turn.answers.isEmpty()) {
+                    // Nothing has streamed yet and nothing has been committed, so
+                    // the run has nothing to show but itself: this is the step
+                    // between the prompt above and the answer that replaces it.
+                    // It never sits beside an answer that has already arrived.
                     WorkingShimmer()
                 }
             }
