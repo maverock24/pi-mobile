@@ -26,6 +26,9 @@ import java.util.UUID
 /** What the session label says before anything is attached. */
 private const val NO_SESSION = "not connected"
 
+/** How many transcript entries to ask the bridge for. */
+private const val HISTORY_LIMIT = 80
+
 /**
  * The transcript role for a question widget the person answered. It is not a
  * prompt: the question came from pi and the choice came from the person, so it
@@ -481,37 +484,51 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun reloadHistory() {
         safeLaunch {
-            runCatching { client.history(80) }
-                .onSuccess { payload ->
-                    val array = payload.optJSONArray("messages") ?: JSONArray()
-                    val parsed = ArrayList<ChatMessage>()
-                    for (index in 0 until array.length()) {
-                        val entry = array.optJSONObject(index) ?: continue
-                        for (message in toMessage(entry)) {
-                            if (message.role == "assistant" && message.toolName != null) {
-                                continue // narration on the way to a tool call
-                            }
-                            parsed.add(message)
-                        }
-                    }
-                    val from = payload.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
-                    val attached = attachedSessionId
-                    if (from != null && attached != null && from != attached) {
-                        // The bridge changed hands during this round trip, so this
-                        // transcript belongs to the other session. Re-read the
-                        // state and let applyState adopt whoever serves now; this
-                        // fetch is dropped rather than shown under the old pin.
-                        refreshState()
-                        return@onSuccess
-                    }
-                    messages.clear()
-                    messages.addAll(parsed)
-                    // The line naming the session the app moved to has been read
-                    // by the time its transcript is here, so it goes. A notice
-                    // that never leaves is noise rather than information.
-                    sessionNotice = null
+            var limit = HISTORY_LIMIT
+            while (true) {
+                val payload = runCatching { client.history(limit) }.getOrElse { error ->
+                    lastError = "history: ${Diagnostics.describe(error, store.baseUrl)}"
+                    return@safeLaunch
                 }
-                .onFailure { lastError = "history: ${Diagnostics.describe(it, store.baseUrl)}" }
+                val array = payload.optJSONArray("messages") ?: JSONArray()
+                // A bridge that cannot carry the whole window keeps the head of it
+                // and marks the rest, which leaves the newest entries, the prompt
+                // among them, out of the payload. Ask for what it did carry rather
+                // than draw a history that stops in the past.
+                val marked = array.length() > 0 && array.opt(array.length() - 1) !is JSONObject
+                val carried = if (marked) array.length() - 1 else array.length()
+                if (marked && carried in 1 until limit) {
+                    limit = carried
+                    continue
+                }
+                val parsed = ArrayList<ChatMessage>()
+                for (index in 0 until carried) {
+                    val entry = array.optJSONObject(index) ?: continue
+                    for (message in toMessage(entry)) {
+                        if (message.role == "assistant" && message.toolName != null) {
+                            continue // narration on the way to a tool call
+                        }
+                        parsed.add(message)
+                    }
+                }
+                val from = payload.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
+                val attached = attachedSessionId
+                if (from != null && attached != null && from != attached) {
+                    // The bridge changed hands during this round trip, so this
+                    // transcript belongs to the other session. Re-read the state
+                    // and let applyState adopt whoever serves now; this fetch is
+                    // dropped rather than shown under the old pin.
+                    refreshState()
+                    return@safeLaunch
+                }
+                messages.clear()
+                messages.addAll(parsed)
+                // The line naming the session the app moved to has been read by the
+                // time its transcript is here, so it goes. A notice that never
+                // leaves is noise rather than information.
+                sessionNotice = null
+                return@safeLaunch
+            }
         }
     }
 

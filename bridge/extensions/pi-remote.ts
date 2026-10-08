@@ -550,7 +550,12 @@ export default function (pi: ExtensionAPI) {
 			sessionFile: sessionFile(),
 			sessionId: sessionManager.getSessionId() ?? null,
 			total: branch.length,
-			messages: shrink(entries),
+			// Each entry is trimmed, the list itself is not. shrink() keeps the head
+			// of an over-long array and marks the rest, which on this list drops the
+			// newest entries, the prompt and the answer in progress among them, and
+			// leaves a phone showing history that stops in the past. The limit above
+			// is what bounds this list.
+			messages: entries.map((entry) => shrink(entry)),
 		};
 	}
 
