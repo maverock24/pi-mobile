@@ -14,10 +14,12 @@ import com.maverock24.pimobile.net.BridgeException
 import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,8 +28,12 @@ import java.util.UUID
 /** What the session label says before anything is attached. */
 private const val NO_SESSION = "not connected"
 
-/** How many transcript entries to ask the bridge for. */
-private const val HISTORY_LIMIT = 80
+/**
+ * How many transcript entries to ask the bridge for. It is the most the bridge
+ * will serve, because one turn of a busy session runs to dozens of entries: a
+ * window of forty held about one answer.
+ */
+private const val HISTORY_LIMIT = 500
 
 /**
  * The transcript role for a question widget the person answered. It is not a
@@ -501,15 +507,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     limit = carried
                     continue
                 }
-                val parsed = ArrayList<ChatMessage>()
-                for (index in 0 until carried) {
-                    val entry = array.optJSONObject(index) ?: continue
-                    for (message in toMessage(entry)) {
-                        if (message.role == "assistant" && message.toolName != null) {
-                            continue // narration on the way to a tool call
+                val parsed = withContext(Dispatchers.Default) {
+                    val list = ArrayList<ChatMessage>()
+                    for (index in 0 until carried) {
+                        val entry = array.optJSONObject(index)
+                        if (entry != null) {
+                            for (message in toMessage(entry)) {
+                                if (message.role != "assistant" || message.toolName == null) {
+                                    list.add(message)
+                                }
+                            }
                         }
-                        parsed.add(message)
                     }
+                    list
                 }
                 val from = payload.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
                 val attached = attachedSessionId
