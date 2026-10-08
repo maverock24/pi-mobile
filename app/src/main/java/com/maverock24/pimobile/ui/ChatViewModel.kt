@@ -776,10 +776,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             "message_update" -> {
-                val delta = data.optJSONObject("assistantMessageEvent")?.optString("delta").orEmpty()
-                if (delta.isNotEmpty()) {
-                    activeAssistant?.append(delta)
-                    liveAnswer = activeAssistant?.toString()
+                // Thinking and tool-call arguments stream through this same event
+                // and carry a delta of their own, so the type is what separates
+                // the answer from the working out that produced it.
+                val update = data.optJSONObject("assistantMessageEvent")
+                if (update?.optString("type") == "text_delta") {
+                    val delta = update.optString("delta")
+                    if (delta.isNotEmpty()) {
+                        activeAssistant?.append(delta)
+                        liveAnswer = activeAssistant?.toString()
+                    }
                 }
             }
             "message_end" -> {
@@ -995,7 +1001,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    /** Flattens text, thinking and tool-call content blocks into display text. */
+    /**
+     * The words a message carries, and nothing else. Thinking and tool calls are
+     * part of how an answer was reached rather than part of it, so a transcript
+     * built from this shows the answer on its own. An image is named, because a
+     * prompt that carried one would otherwise read as empty.
+     */
     private fun textOf(message: JSONObject?, key: String): String {
         val content = message?.opt(key) ?: return ""
         if (content is String) return content
@@ -1005,19 +1016,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val block = content.optJSONObject(index) ?: continue
             when (block.optString("type")) {
                 "text" -> parts.add(block.optString("text"))
-                "thinking" -> parts.add("(thinking)")
-                "toolCall" -> parts.add("↳ ${block.optString("name")}${summarizeArgs(block.opt("arguments"))}")
                 "image" -> parts.add("[image]")
             }
         }
         return parts.filter { it.isNotBlank() }.joinToString("\n")
-    }
-
-    private fun summarizeArgs(args: Any?): String {
-        val text = args?.toString().orEmpty()
-        if (text.isBlank() || text == "null") return ""
-        val compact = text.replace(Regex("\\s+"), " ")
-        return if (compact.length > 140) " ${compact.take(140)}…" else " $compact"
     }
 
     override fun onCleared() {
