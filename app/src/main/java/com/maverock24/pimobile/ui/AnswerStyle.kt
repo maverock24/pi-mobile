@@ -62,6 +62,22 @@ object AnswerStyle {
     /** Space between that bar and the text it marks. */
     val accentBarGap = 10.dp
 
+    /**
+     * The prompt that opened a turn. It is a step larger and heavier than the
+     * answer body and sits on its own surface with a border, so a prompt reads as
+     * the heading of the answer under it and a column of prompts is separable at a
+     * glance instead of blending into the prose.
+     */
+    val promptSize = 17.sp
+    val promptLineHeight = 26.sp
+    val promptRadius = 10.dp
+
+    /** Room inside that surface. */
+    val promptPadding = 12.dp
+
+    /** Space above it, on top of the list's own gap, so a prompt starts a block. */
+    val promptGap = 8.dp
+
     /** Indent step for one bullet level. */
     val bulletIndent = 20.dp
 

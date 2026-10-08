@@ -4,26 +4,30 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,7 +36,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -51,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -274,6 +282,10 @@ fun ChatScreen(
                                     turn = turn,
                                     liveText = if (turn.id == newestTurn) liveAnswer else null,
                                     working = turn.id == newestTurn && vm.busy,
+                                    // Fades in and out as the accordion opens and
+                                    // closes, so folding an answer reads as a change
+                                    // rather than as a jump.
+                                    modifier = Modifier.animateItem(),
                                 )
                             }
                         }
@@ -315,51 +327,67 @@ fun ChatScreen(
 }
 
 /**
- * One prompt, as the list's sticky header: it stays at the top of the screen
- * while the answer under it is scrolled, so an answer can be folded away without
- * scrolling back up to the prompt that opened it. Tapping it toggles that answer.
- * It paints the screen colour behind itself because the answer passes underneath.
+ * One prompt, as the list's sticky header: a card that stays at the top of the
+ * screen while the answer under it is scrolled, so an answer can be folded away
+ * without scrolling back up to the prompt that opened it. Tapping the card
+ * toggles that answer, and the chevron turns to say which way it went.
+ *
+ * It is deliberately unlike an answer: larger, heavier, on its own surface with
+ * a border and its own indent, so a column of prompts reads as a list of what was
+ * asked rather than blending into the prose. It paints the screen colour behind
+ * itself because the answer passes underneath.
  */
 @Composable
 private fun TurnPrompt(turn: ChatTurn, expanded: Boolean, onToggle: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val prompt = turn.prompt ?: return
     val openable = turn.answers.isNotEmpty()
+    val chevron by animateFloatAsState(if (expanded) 180f else 0f, label = "promptChevron")
+    val shape = RoundedCornerShape(AnswerStyle.promptRadius)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .padding(top = AnswerStyle.promptGap)
             .background(scheme.background)
-            .clip(RoundedCornerShape(6.dp))
+            .clip(shape)
+            .background(scheme.surfaceVariant)
+            .border(1.dp, scheme.outline, shape)
             .clickable(enabled = openable, onClick = onToggle)
-            .padding(vertical = 2.dp)
-            .tactile(enabled = openable),
-        verticalAlignment = Alignment.Top,
+            .tactile(enabled = openable)
+            .padding(
+                start = AnswerStyle.promptPadding,
+                end = AnswerStyle.promptPadding,
+                top = AnswerStyle.promptPadding - 2.dp,
+                bottom = AnswerStyle.promptPadding - 2.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .padding(top = 2.dp, end = AnswerStyle.accentBarGap)
                 .width(AnswerStyle.accentBar)
-                .heightIn(min = 18.dp)
+                .fillMaxHeight()
                 .clip(RoundedCornerShape(2.dp))
                 .background(scheme.primary),
         )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = prompt,
-                fontSize = AnswerStyle.bodySize,
-                lineHeight = AnswerStyle.bodyLineHeight,
-                fontWeight = FontWeight.Medium,
-                color = scheme.onBackground,
+        Spacer(modifier = Modifier.width(AnswerStyle.accentBarGap))
+        Text(
+            text = prompt,
+            fontSize = AnswerStyle.promptSize,
+            lineHeight = AnswerStyle.promptLineHeight,
+            fontWeight = FontWeight.SemiBold,
+            color = scheme.onBackground,
+            modifier = Modifier.weight(1f),
+        )
+        if (openable) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "Hide answer" else "Show answer",
+                tint = scheme.primary,
+                modifier = Modifier.size(22.dp).rotate(chevron),
             )
-            if (openable) {
-                Text(
-                    text = if (expanded) "Hide answer" else "Show answer",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = scheme.primary,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
         }
     }
 }
@@ -370,9 +398,9 @@ private fun TurnPrompt(turn: ChatTurn, expanded: Boolean, onToggle: () -> Unit) 
  * from its prompt alone.
  */
 @Composable
-private fun TurnBody(turn: ChatTurn, liveText: String?, working: Boolean) {
+private fun TurnBody(turn: ChatTurn, liveText: String?, working: Boolean, modifier: Modifier = Modifier) {
     Column(
-        modifier = Modifier.padding(start = AnswerStyle.accentBar + AnswerStyle.accentBarGap),
+        modifier = modifier.padding(start = AnswerStyle.accentBar + AnswerStyle.accentBarGap),
         verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
     ) {
         turn.answers.forEach { answer ->
