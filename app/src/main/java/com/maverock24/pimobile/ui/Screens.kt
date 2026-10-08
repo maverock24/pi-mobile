@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -114,7 +115,7 @@ private fun Modifier.workingEdge(visible: Boolean): Modifier {
  * in-flight) assistant answers and nothing else: no prompts, no tool calls, no
  * model or cost bookkeeping. The only status shown is that pi is thinking.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(
     vm: ChatViewModel,
@@ -140,12 +141,19 @@ fun ChatScreen(
 
     LaunchedEffect(newestTurn, turns.lastOrNull()?.answers?.size) { followNewest = true }
 
+    // How many items the transcript makes: a prompt for every turn, a body for
+    // the one the accordion has open, a card when a question is waiting, and the
+    // end marker. The scroll below aims at the last of those.
+    val bottomItem = turns.size +
+        (if (turns.any { it.id == expandedTurn }) 1 else 0) +
+        (if (pending != null) 1 else 0)
+
     LaunchedEffect(pending?.id, turns.size, turns.lastOrNull()?.answers?.size) {
-        // The end of the list, so the newest entry is on screen. Scrolling the
-        // last item to the top of the viewport is not the same thing: a long
-        // answer would show its first lines, and the question widget below it
-        // would come to rest above the bottom edge instead of at it.
-        listState.animateScrollToItem(turns.size + if (pending != null) 1 else 0)
+        // The end of the list, so the newest entry is on screen. Scrolling an
+        // item to the top of the viewport is not the same thing: a long answer
+        // would show its first lines, and the question widget below it would come
+        // to rest above the bottom edge rather than at it.
+        listState.animateScrollToItem(bottomItem)
     }
 
     // The outcome of a request the user started: confirm when the bridge took
@@ -246,17 +254,29 @@ fun ChatScreen(
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
                 ) {
-                    items(turns, key = { it.id }) { turn ->
-                        TurnView(
-                            turn = turn,
-                            expanded = turn.id == expandedTurn,
-                            liveText = if (turn.id == newestTurn) liveAnswer else null,
-                            working = turn.id == newestTurn && vm.busy,
-                            onToggle = {
-                                followNewest = false
-                                explicitTurn = if (expandedTurn == turn.id) null else turn.id
-                            },
-                        )
+                    turns.forEach { turn ->
+                        // The prompt is a sticky header, so it stays at the top of
+                        // the screen while its answer is scrolled, and the answer
+                        // can be folded away without going back up to find it.
+                        stickyHeader(key = "prompt-${turn.id}") {
+                            TurnPrompt(
+                                turn = turn,
+                                expanded = turn.id == expandedTurn,
+                                onToggle = {
+                                    followNewest = false
+                                    explicitTurn = if (expandedTurn == turn.id) null else turn.id
+                                },
+                            )
+                        }
+                        if (turn.id == expandedTurn) {
+                            item(key = "body-${turn.id}") {
+                                TurnBody(
+                                    turn = turn,
+                                    liveText = if (turn.id == newestTurn) liveAnswer else null,
+                                    working = turn.id == newestTurn && vm.busy,
+                                )
+                            }
+                        }
                     }
                     if (pending != null) {
                         item(key = "pending-question") {
@@ -295,97 +315,94 @@ fun ChatScreen(
 }
 
 /**
- * One prompt and the answer it produced. The prompt is always there in full,
- * so scrolling back through a session reads as a list of what you asked for;
- * tapping it opens the answer, and tapping it again folds the answer away.
+ * One prompt, as the list's sticky header: it stays at the top of the screen
+ * while the answer under it is scrolled, so an answer can be folded away without
+ * scrolling back up to the prompt that opened it. Tapping it toggles that answer.
+ * It paints the screen colour behind itself because the answer passes underneath.
+ */
+@Composable
+private fun TurnPrompt(turn: ChatTurn, expanded: Boolean, onToggle: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val prompt = turn.prompt ?: return
+    val openable = turn.answers.isNotEmpty()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(scheme.background)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(enabled = openable, onClick = onToggle)
+            .padding(vertical = 2.dp)
+            .tactile(enabled = openable),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 2.dp, end = AnswerStyle.accentBarGap)
+                .width(AnswerStyle.accentBar)
+                .heightIn(min = 18.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(scheme.primary),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = prompt,
+                fontSize = AnswerStyle.bodySize,
+                lineHeight = AnswerStyle.bodyLineHeight,
+                fontWeight = FontWeight.Medium,
+                color = scheme.onBackground,
+            )
+            if (openable) {
+                Text(
+                    text = if (expanded) "Hide answer" else "Show answer",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = scheme.primary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The answer of one prompt, drawn only for the turn the accordion has open.
  * Nothing else of the run is shown, which is why an older answer is reachable
  * from its prompt alone.
  */
 @Composable
-private fun TurnView(
-    turn: ChatTurn,
-    expanded: Boolean,
-    liveText: String?,
-    working: Boolean,
-    onToggle: () -> Unit,
-) {
-    val scheme = MaterialTheme.colorScheme
-    val prompt = turn.prompt
-    val openable = turn.answers.isNotEmpty()
-
-    Column(verticalArrangement = Arrangement.spacedBy(AnswerStyle.paragraphGap)) {
-        if (prompt != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable(enabled = openable, onClick = onToggle)
-                    .padding(vertical = 2.dp)
-                    .tactile(enabled = openable),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .padding(top = 2.dp, end = AnswerStyle.accentBarGap)
-                        .width(AnswerStyle.accentBar)
-                        .heightIn(min = 18.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(scheme.primary),
+private fun TurnBody(turn: ChatTurn, liveText: String?, working: Boolean) {
+    Column(
+        modifier = Modifier.padding(start = AnswerStyle.accentBar + AnswerStyle.accentBarGap),
+        verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
+    ) {
+        turn.answers.forEach { answer ->
+            if (answer.role == QUESTION_ROLE) {
+                AnsweredQuestion(
+                    question = answer.text,
+                    answer = answer.answer,
+                    modifier = Modifier.widthIn(max = AnswerStyle.measure),
                 )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = prompt,
-                        fontSize = AnswerStyle.bodySize,
-                        lineHeight = AnswerStyle.bodyLineHeight,
-                        fontWeight = FontWeight.Medium,
-                        color = scheme.onBackground,
-                    )
-                    if (openable) {
-                        Text(
-                            text = if (expanded) "Hide answer" else "Show answer",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = scheme.primary,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
-                }
+            } else {
+                AnswerView(
+                    text = answer.text,
+                    modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                )
             }
         }
-        if (expanded) {
-            Column(
-                modifier = Modifier.padding(start = AnswerStyle.accentBar + AnswerStyle.accentBarGap),
-                verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
-            ) {
-                turn.answers.forEach { answer ->
-                    if (answer.role == QUESTION_ROLE) {
-                        AnsweredQuestion(
-                            question = answer.text,
-                            answer = answer.answer,
-                            modifier = Modifier.widthIn(max = AnswerStyle.measure),
-                        )
-                    } else {
-                        AnswerView(
-                            text = answer.text,
-                            modifier = Modifier.widthIn(max = AnswerStyle.measure),
-                        )
-                    }
-                }
-                // The answer of the run that is still going. It is drawn like a
-                // finished answer and replaced by the committed one when the run
-                // settles, which clears it in the same step that adds the answer.
-                if (!liveText.isNullOrBlank()) {
-                    AnswerView(
-                        text = liveText,
-                        modifier = Modifier.widthIn(max = AnswerStyle.measure),
-                    )
-                } else if (working && turn.answers.isEmpty()) {
-                    // Nothing has streamed yet and nothing has been committed, so
-                    // the run has nothing to show but itself: this is the step
-                    // between the prompt above and the answer that replaces it.
-                    // It never sits beside an answer that has already arrived.
-                    WorkingShimmer()
-                }
-            }
+        // The answer of the run that is still going. It is drawn like a finished
+        // answer and replaced by the committed one when the run settles, which
+        // clears it in the same step that adds the answer.
+        if (!liveText.isNullOrBlank()) {
+            AnswerView(
+                text = liveText,
+                modifier = Modifier.widthIn(max = AnswerStyle.measure),
+            )
+        } else if (working && turn.answers.isEmpty()) {
+            // Nothing has streamed yet and nothing has been committed, so the run
+            // has nothing to show but itself: this is the step between the prompt
+            // above and the answer that replaces it. It never sits beside an
+            // answer that has already arrived.
+            WorkingShimmer()
         }
     }
 }
