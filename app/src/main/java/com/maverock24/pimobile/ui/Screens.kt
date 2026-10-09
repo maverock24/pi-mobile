@@ -1,6 +1,7 @@
 package com.maverock24.pimobile.ui
 
 import android.Manifest
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -72,6 +73,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -265,6 +267,27 @@ fun ChatScreen(
             actionNotice = null
         }
     }
+    // Compose does not hand the app the text a selection picked, so the only way
+    // to move selected text into the composer is the clipboard. The user selects
+    // with the normal handles and taps Copy in the system toolbar; that copy is
+    // the signal. The listener is registered only while the toggle is on and is
+    // torn down when it goes off or the screen leaves composition, so nothing is
+    // captured while the feature is off and nothing leaks.
+    val captureClipboard = vm.clipboardCapture
+    val context = LocalContext.current
+    DisposableEffect(captureClipboard) {
+        if (!captureClipboard) return@DisposableEffect onDispose {}
+        val manager = context.getSystemService(ClipboardManager::class.java)
+        val listener = ClipboardManager.OnPrimaryClipChangedListener {
+            val picked = readClipText(manager)
+            if (!picked.isNullOrBlank()) {
+                vm.captureToDraft(picked)
+                actionNotice = "Copied text added to prompt"
+            }
+        }
+        manager?.addPrimaryClipChangedListener(listener)
+        onDispose { manager?.removePrimaryClipChangedListener(listener) }
+    }
     // A keystroke is not a request: the typing settles before the bridge is
     // asked, and a newer keystroke cancels the request the older one would send.
     // The button runs the same search at once when it is pressed.
@@ -425,14 +448,12 @@ fun ChatScreen(
                 TurnDeck(
                     vm = vm,
                     onAnswerConfirmed = { actionNotice = it },
-                    onExcerpt = vm::updateExcerpt,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else {
                 Transcript(
                     vm = vm,
                     onAnswerConfirmed = { actionNotice = it },
-                    onExcerpt = vm::updateExcerpt,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }
@@ -446,20 +467,6 @@ fun ChatScreen(
                 mode = vm.viewMode,
                 onChange = vm::updateViewMode,
             )
-
-            // What a selection in an answer picked, offered right above the
-            // composer: it names the exact text that will go out and sends it in
-            // one tap. It sits in the layout rather than over it, so it never
-            // covers the composer or a waiting question, and it disappears the
-            // moment the selection is gone.
-            vm.selectedExcerpt?.let { excerpt ->
-                SelectionBar(
-                    excerpt = excerpt,
-                    canSend = vm.composerBlock == null,
-                    onSend = vm::sendExcerpt,
-                    onClear = { vm.updateExcerpt(null) },
-                )
-            }
 
             Composer(
                 text = if (searchOpen) query else vm.draft,
@@ -498,6 +505,8 @@ fun ChatScreen(
                     }
                 },
                 onStop = vm::abort,
+                captureEnabled = vm.clipboardCapture,
+                onToggleCapture = { vm.updateClipboardCapture(!vm.clipboardCapture) },
             )
         }
     }
@@ -513,7 +522,6 @@ fun ChatScreen(
 private fun Transcript(
     vm: ChatViewModel,
     onAnswerConfirmed: (String) -> Unit,
-    onExcerpt: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -592,7 +600,6 @@ private fun Transcript(
                         liveText = if (turn.id == newestTurn) liveAnswer else null,
                         working = turn.id == newestTurn && vm.busy,
                         onConfirm = onAnswerConfirmed,
-                        onExcerpt = onExcerpt,
                         // Fades in and out as the accordion opens and closes, so
                         // folding an answer reads as a change rather than as a
                         // jump.
@@ -628,7 +635,6 @@ private fun Transcript(
 private fun TurnDeck(
     vm: ChatViewModel,
     onAnswerConfirmed: (String) -> Unit,
-    onExcerpt: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val turns = vm.turns
@@ -724,7 +730,6 @@ private fun TurnDeck(
                 liveText = if (turn.id == newestTurn) liveAnswer else null,
                 working = turn.id == newestTurn && vm.busy,
                 onConfirm = onAnswerConfirmed,
-                onExcerpt = onExcerpt,
                 onToggle = { openTurn = if (openTurn == turn.id) null else turn.id },
             )
         }
@@ -744,7 +749,6 @@ private fun DeckCard(
     liveText: String?,
     working: Boolean,
     onConfirm: (String) -> Unit,
-    onExcerpt: (String?) -> Unit,
     onToggle: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -818,7 +822,6 @@ private fun DeckCard(
                         liveText = liveText,
                         working = working,
                         onConfirm = onConfirm,
-                        onExcerpt = onExcerpt,
                         modifier = Modifier.padding(
                             start = AnswerStyle.promptPadding,
                             end = AnswerStyle.promptPadding,
@@ -866,60 +869,6 @@ private fun ViewModeSwitch(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
-            }
-        }
-    }
-}
-
-/**
- * The bar that offers a selected excerpt as a prompt. It names the exact text
- * that will be sent and sends it in one tap, and it exists only while there is
- * a selection. The excerpt is ellipsised to two lines so a long pick cannot
- * push the composer off the screen, but the whole excerpt is what goes out.
- */
-@Composable
-private fun SelectionBar(
-    excerpt: String,
-    canSend: Boolean,
-    onSend: () -> Unit,
-    onClear: () -> Unit,
-) {
-    val onContainer = MaterialTheme.colorScheme.onSecondaryContainer
-    Surface(
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = onContainer,
-        shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Text(
-                text = "Send selected text",
-                style = MaterialTheme.typography.labelMedium,
-                color = onContainer,
-            )
-            Text(
-                text = excerpt,
-                style = MaterialTheme.typography.bodySmall,
-                color = onContainer,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-            Row(
-                modifier = Modifier.padding(top = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    onClick = onSend,
-                    enabled = canSend,
-                    modifier = Modifier
-                        .heightIn(min = AnswerStyle.buttonHeight)
-                        .tactile(haptics = true, enabled = canSend, depth = AnswerStyle.keyDepth),
-                ) {
-                    Text("Send", style = MaterialTheme.typography.bodyLarge)
-                }
-                TextButton(onClick = onClear, modifier = Modifier.tactile()) { Text("Dismiss") }
             }
         }
     }
@@ -1449,7 +1398,6 @@ private fun TurnBody(
     liveText: String?,
     working: Boolean,
     onConfirm: (String) -> Unit,
-    onExcerpt: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1470,7 +1418,6 @@ private fun TurnBody(
                     AnswerView(
                         text = answer.text,
                         modifier = Modifier.widthIn(max = AnswerStyle.measure),
-                        onSelectionChange = onExcerpt,
                     )
                     AnswerActions(
                         text = answer.text,
@@ -1492,7 +1439,6 @@ private fun TurnBody(
                 AnswerView(
                     text = liveText,
                     modifier = Modifier.widthIn(max = AnswerStyle.measure),
-                    onSelectionChange = onExcerpt,
                 )
                 AnswerActions(
                     text = liveText,
@@ -1589,6 +1535,19 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = fa
     }
 }
 
+/**
+ * The primary clip as plain text, or null. The clip may be absent, may hold a
+ * non-text item, or may hold styled text, so the first item's text is taken and
+ * stringified and a clip without text is dropped. primaryClip is only readable
+ * while the app is in front, which is exactly when the user sees the Copy action
+ * and taps it.
+ */
+private fun readClipText(manager: ClipboardManager?): String? {
+    val clip = manager?.primaryClip ?: return null
+    if (clip.itemCount == 0) return null
+    return clip.getItemAt(0).text?.toString()
+}
+
 @Composable
 private fun Composer(
     text: String,
@@ -1605,6 +1564,8 @@ private fun Composer(
     onToggleMic: () -> Unit,
     onClear: () -> Unit,
     onStop: () -> Unit,
+    captureEnabled: Boolean,
+    onToggleCapture: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
         if (listening && partialText.isNotBlank()) {
@@ -1631,6 +1592,25 @@ private fun Composer(
         ) {
             val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
             val label = MaterialTheme.typography.bodyLarge
+            // The clipboard capture toggle. It shows its own state: filled and
+            // reading "Auto-paste on" when a copy will be collected, outlined and
+            // reading "Auto-paste" when it will not. It sits in the composer row
+            // because that is where the captured text arrives.
+            if (captureEnabled) {
+                FilledTonalButton(
+                    onClick = onToggleCapture,
+                    modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                ) {
+                    Text("Auto-paste on", style = label)
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onToggleCapture,
+                    modifier = buttonModifier.tactile(depth = AnswerStyle.keyDepth),
+                ) {
+                    Text("Auto-paste", style = label)
+                }
+            }
             FilledTonalButton(
                 onClick = onToggleMic,
                 modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),

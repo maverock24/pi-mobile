@@ -200,15 +200,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var draft by mutableStateOf("")
         private set
 
-    /**
-     * The excerpt a selection in an answer chose, or null. It is what the bar
-     * above the composer offers to send. It lives here rather than in a view so
-     * the transcript and the deck share one selection and switching between the
-     * two does not strand it.
-     */
-    var selectedExcerpt by mutableStateOf<String?>(null)
-        private set
-
     var connected by mutableStateOf(false)
         private set
     var busy by mutableStateOf(false)
@@ -255,6 +246,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * read and written like [appearance], and it only changes the dark side.
      */
     var theme by mutableStateOf(store.theme)
+        private set
+
+    /**
+     * Whether a copy lands in the composer. Read and written like [appearance],
+     * so it survives a restart. When it is on the chat screen watches the
+     * clipboard; when it is off nothing is watched and nothing is captured.
+     */
+    var clipboardCapture by mutableStateOf(store.clipboardCapture)
         private set
 
     /**
@@ -666,6 +665,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         appearance = value
     }
 
+    /** Turn clipboard capture on or off; the choice is written down. */
+    fun updateClipboardCapture(value: Boolean) {
+        store.clipboardCapture = value
+        clipboardCapture = value
+    }
+
     /** Switch between the transcript and the deck; the choice is written down. */
     fun updateViewMode(value: String) {
         store.viewMode = value
@@ -775,22 +780,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         draft = value
     }
 
-    /** A selection in an answer: keep it while it has content, drop it when empty. */
-    fun updateExcerpt(value: String?) {
-        selectedExcerpt = value?.takeIf { it.isNotBlank() }
-    }
-
-    /**
-     * Send the chosen excerpt through the ordinary prompt path, so the local
-     * echo, the busy state and the failure handling are the same as a typed
-     * prompt, then drop it because it has been used.
-     */
-    fun sendExcerpt() {
-        val text = selectedExcerpt ?: return
-        selectedExcerpt = null
-        if (text.isNotBlank()) send(text)
-    }
-
     /**
      * Save one prompt and its answer as a pin. A second pin of the same two
      * texts is refused, because the record it would hold is already there and
@@ -839,6 +828,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun appendToDraft(text: String) {
         if (text.isBlank()) return
         draft = if (draft.isBlank()) text else "${draft.trimEnd()} $text"
+    }
+
+    /**
+     * Put text captured from the clipboard into the composer. It joins an
+     * existing draft on a line of its own rather than replacing it, because a
+     * capture that wiped what was typed would lose work silently, which is worse
+     * than the extra newline. Nothing is sent; the user still decides.
+     */
+    fun captureToDraft(text: String) {
+        val picked = text.trim()
+        if (picked.isEmpty()) return
+        draft = if (draft.isBlank()) picked else "${draft.trimEnd()}\n$picked"
     }
 
     fun clearDraft() {

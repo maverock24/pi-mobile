@@ -45,6 +45,16 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit().putString("appearance", value).apply()
 
     /**
+     * Whether a copy lands in the composer. Off by default, and stored beside
+     * the appearance so the choice survives a restart. It is on only when the
+     * user asked for it, because reading the clipboard is a thing the app should
+     * not do uninvited.
+     */
+    var clipboardCapture: Boolean
+        get() = prefs.getBoolean("clipboardCapture", false)
+        set(value) = prefs.edit().putBoolean("clipboardCapture", value).apply()
+
+    /**
      * "transcript", "deck" or "pins": which view is shown. The first two are
      * views of the same transcript and the third is the saved pins. It is kept
      * next to the appearance, so the view the user last chose is the one a
