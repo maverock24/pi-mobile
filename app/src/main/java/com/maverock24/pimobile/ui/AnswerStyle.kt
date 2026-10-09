@@ -15,6 +15,10 @@ import androidx.compose.ui.unit.sp
  *   links underline · citations inline · diff inline · tools hidden
  *   think hidden · stream pulse · status shimmer · accent indigo · measure 54ch
  *
+ * The dark scheme no longer follows that accent: it now matches the media app's
+ * midnight sky instead, which is a different palette in the same spirit. The
+ * light scheme still uses the lab's indigo.
+ *
  * Change a value here and the whole answer view follows.
  */
 object AnswerStyle {
@@ -101,21 +105,38 @@ object AnswerStyle {
      */
     val measure = 460.dp
 
-    // Indigo accent, matching the lab's default.
-    private val accentDark = Color(0xFF7AA2F7)
+    /**
+     * The dark accent is a cyan-teal rather than the lab's indigo, because the
+     * dark scheme below follows the media app's midnight sky: navy surfaces,
+     * hairline navy borders, and one saturated colour used sparingly. The light
+     * scheme keeps the indigo.
+     */
+    private val accentDark = Color(0xFF0AD6FF)
     private val accentLight = Color(0xFF3562D6)
 
+    /**
+     * Midnight sky, taken from mobile-media-app's `src/app.css` @theme block with
+     * the HSL converted rather than rounded by eye: background hsl(218 55% 6%),
+     * card hsl(218 50% 9%), muted hsl(218 35% 11%), border hsl(218 40% 15%),
+     * foreground hsl(210 30% 94%), muted foreground hsl(210 20% 48%), accent
+     * hsl(190 100% 52%), destructive hsl(0 70% 55%).
+     *
+     * Surface is no longer the same colour as the background in this scheme, so
+     * anything drawn as a surface now reads as a panel instead of vanishing into
+     * the page.
+     */
     val darkScheme = darkColorScheme(
         primary = accentDark,
-        onPrimary = Color(0xFF08111F),
-        background = Color(0xFF0E1014),
-        onBackground = Color(0xFFE7E9EE),
-        surface = Color(0xFF0E1014),
-        onSurface = Color(0xFFE7E9EE),
-        surfaceVariant = Color(0xFF1D222B),
-        onSurfaceVariant = Color(0xFF939BAB),
-        outline = Color(0xFF262D38),
-        outlineVariant = Color(0xFF1D222B),
+        onPrimary = Color(0xFF060D18),
+        background = Color(0xFF070D18),
+        onBackground = Color(0xFFEBF0F4),
+        surface = Color(0xFF0B1422),
+        onSurface = Color(0xFFE6EBF0),
+        surfaceVariant = Color(0xFF121926),
+        onSurfaceVariant = Color(0xFF627A93),
+        outline = Color(0xFF172236),
+        outlineVariant = Color(0xFF141E2E),
+        error = Color(0xFFDD3C3C),
     )
 
     val lightScheme = lightColorScheme(
@@ -133,7 +154,7 @@ object AnswerStyle {
 
     /** Inline code chip background: accent at low alpha. */
     fun chipBackground(isDark: Boolean): Color =
-        if (isDark) Color(0x247AA2F7) else Color(0x1A3562D6)
+        if (isDark) Color(0x240AD6FF) else Color(0x1A3562D6)
 
     fun diffAdd(isDark: Boolean): Color = if (isDark) Color(0x2886D99A) else Color(0x1F2F9E5B)
 
