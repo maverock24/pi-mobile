@@ -15,6 +15,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +34,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -41,8 +43,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -70,6 +77,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -78,22 +86,31 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import com.maverock24.pimobile.update.UpdateChecker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 
 @Composable
-fun PiRemoteTheme(mode: String = "dark", content: @Composable () -> Unit) {
+fun PiRemoteTheme(
+    mode: String = "dark",
+    theme: String = AnswerStyle.defaultTheme,
+    content: @Composable () -> Unit,
+) {
     val dark = when (mode) {
         "dark" -> true
         "light" -> false
         else -> isSystemInDarkTheme()
     }
-    val scheme = if (dark) AnswerStyle.darkScheme else AnswerStyle.lightScheme
+    // Light mode is not a theme: it always takes the light scheme and the flat
+    // background, whatever dark palette is chosen. The palette colours the dark
+    // scheme and the sky drawn behind everything.
+    val palette = AnswerStyle.theme(theme)
+    val scheme = if (dark) palette.scheme else AnswerStyle.lightScheme
     MaterialTheme(colorScheme = scheme) {
         // One ground for every screen, drawn here once and left alone by the
         // screens above it, so the transcript, the deck and the settings all sit
         // on the same sky rather than each painting its own.
-        Box(modifier = Modifier.fillMaxSize().skyBackground(scheme, dark)) { content() }
+        Box(modifier = Modifier.fillMaxSize().skyBackground(scheme, dark, palette)) { content() }
     }
 }
 
@@ -106,25 +123,25 @@ fun PiRemoteTheme(mode: String = "dark", content: @Composable () -> Unit) {
  * light scheme put that scheme's dark-on-light text on whatever the window
  * happened to have behind it.
  */
-private fun Modifier.skyBackground(scheme: ColorScheme, dark: Boolean): Modifier =
+private fun Modifier.skyBackground(scheme: ColorScheme, dark: Boolean, palette: AnswerTheme): Modifier =
     this.drawWithContent {
         drawRect(color = scheme.background)
         if (dark) {
             drawRect(
                 brush = Brush.verticalGradient(
-                    colors = listOf(AnswerStyle.skyTop, AnswerStyle.skyMid, AnswerStyle.skyBottom),
+                    colors = listOf(palette.skyTop, palette.skyMid, palette.skyBottom),
                 )
             )
             drawRect(
                 brush = Brush.radialGradient(
-                    colors = listOf(AnswerStyle.skyHorizonGlow, Color.Transparent),
+                    colors = listOf(palette.skyHorizonGlow, Color.Transparent),
                     center = Offset(size.width / 2f, 0f),
                     radius = size.width * 0.9f,
                 )
             )
             drawRect(
                 brush = Brush.radialGradient(
-                    colors = listOf(AnswerStyle.skyMiddleGlow, Color.Transparent),
+                    colors = listOf(palette.skyMiddleGlow, Color.Transparent),
                     center = Offset(size.width / 2f, size.height * 0.62f),
                     radius = size.width,
                 )
@@ -1047,14 +1064,23 @@ fun SettingsScreen(
     sessionLabel: String,
     appearance: String,
     onAppearanceChange: (String) -> Unit,
+    theme: String,
+    onThemeChange: (String) -> Unit,
+    updateStatus: UpdateStatus,
+    onCheckUpdates: () -> Unit,
+    onInstallUpdate: (UpdateChecker.Info) -> Unit,
     onPairLink: (String) -> Unit,
     onSave: (String, String) -> Unit,
     onTest: () -> Unit,
-    onCheckUpdates: () -> Unit,
     onBack: () -> Unit,
 ) {
     var baseUrl by rememberSaveable { mutableStateOf(initialBaseUrl) }
     var token by rememberSaveable { mutableStateOf(initialToken) }
+
+    // One section is open at a time, as in the media app, so the list stays a set
+    // of statements about the current setup rather than a wall of controls.
+    var openSection by rememberSaveable { mutableStateOf<String?>(null) }
+    val toggle: (String) -> Unit = { name -> openSection = if (openSection == name) null else name }
 
     // Pairing lives here rather than in the chat screen because it is setup work: the
     // scanner reads the QR /pair drew, and both routes end in the same link parser.
@@ -1095,130 +1121,532 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Pairing", style = MaterialTheme.typography.labelLarge)
-            val pairButton = Modifier.heightIn(min = AnswerStyle.buttonHeight)
-            val pairLabel = MaterialTheme.typography.bodyLarge
-            Button(
-                onClick = {
-                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                        PackageManager.PERMISSION_GRANTED
-                    if (granted) {
-                        scanLauncher.launch(pairingScanOptions())
-                    } else {
-                        cameraPermission.launch(Manifest.permission.CAMERA)
-                    }
+            SettingsSection(
+                title = "Pairing",
+                subtitle = pairingStatus.ifBlank {
+                    if (initialBaseUrl.isNotBlank()) "Paired to a bridge" else "Not paired yet"
                 },
-                modifier = pairButton.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                icon = Icons.Filled.AccountBox,
+                expanded = openSection == "pairing",
+                onToggle = { toggle("pairing") },
             ) {
-                Text("Scan the pairing QR", style = pairLabel)
-            }
-            Text(
-                text = "On the laptop run /pair in the pi session that serves the bridge; a window " +
-                    "with the QR opens. Scanning it fills in the address and the token below and " +
-                    "pairs straight away. The camera is used to read that one code.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = pastedLink,
-                onValueChange = { pastedLink = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("pi-remote://pair?v=1&u=…&c=…") },
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = {
+                        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                        if (granted) {
+                            scanLauncher.launch(pairingScanOptions())
+                        } else {
+                            cameraPermission.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                        .heightIn(min = AnswerStyle.buttonHeight)
+                        .tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                ) {
+                    Text("Scan the pairing QR", style = MaterialTheme.typography.bodyLarge)
+                }
+                Text(
+                    text = "On the laptop run /pair in the pi session that serves the bridge; a window " +
+                        "with the QR opens. Scanning it fills in the address and the token below and " +
+                        "pairs straight away. The camera is used to read that one code.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = pastedLink,
+                    onValueChange = { pastedLink = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("pi-remote://pair?v=1&u=…&c=…") },
+                )
                 Button(
                     onClick = {
                         onPairLink(pastedLink)
                         pastedLink = ""
                     },
                     enabled = pastedLink.isNotBlank(),
-                    modifier = pairButton.tactile(haptics = true, enabled = pastedLink.isNotBlank(), depth = AnswerStyle.keyDepth),
+                    modifier = Modifier.fillMaxWidth()
+                        .heightIn(min = AnswerStyle.buttonHeight)
+                        .tactile(haptics = true, enabled = pastedLink.isNotBlank(), depth = AnswerStyle.keyDepth),
                 ) {
-                    Text("Pair with this link", style = pairLabel)
+                    Text("Pair with this link", style = MaterialTheme.typography.bodyLarge)
+                }
+                if (pairingStatus.isNotBlank()) {
+                    Text(pairingStatus, style = MaterialTheme.typography.bodySmall)
                 }
             }
-            if (pairingStatus.isNotBlank()) {
-                Text(pairingStatus, style = MaterialTheme.typography.bodySmall)
-            }
-            Text("Bridge URL", style = MaterialTheme.typography.labelLarge)
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = { baseUrl = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("http://your-laptop.your-tailnet.ts.net:8787") },
-            )
-            Text(
-                text = "The laptop on your tailnet. A pairing QR fills this in for you; the " +
-                    "address itself never ships with the app. Use the MagicDNS name, not a raw " +
-                    "IP: Android checks its cleartext-HTTP policy per hostname.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text("Token", style = MaterialTheme.typography.labelLarge)
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("paste the token") },
-            )
-            Text(
-                text = "On the laptop: cat ~/.config/pi-remote/token",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text("Appearance", style = MaterialTheme.typography.labelLarge)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                listOf("dark" to "Dark", "light" to "Light", "system" to "System").forEach { (value, label) ->
+
+            SettingsSection(
+                title = "Connection",
+                subtitle = baseUrl.ifBlank { "No bridge address yet" },
+                icon = Icons.Filled.Lock,
+                expanded = openSection == "connection",
+                onToggle = { toggle("connection") },
+            ) {
+                SectionLabel("Bridge URL")
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("http://your-laptop.your-tailnet.ts.net:8787") },
+                )
+                Text(
+                    text = "The laptop on your tailnet. A pairing QR fills this in for you; the " +
+                        "address itself never ships with the app. Use the MagicDNS name, not a raw " +
+                        "IP: Android checks its cleartext-HTTP policy per hostname.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SectionLabel("Token")
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("paste the token") },
+                )
+                Text(
+                    text = "On the laptop: cat ~/.config/pi-remote/token",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val label = MaterialTheme.typography.bodyLarge
+                    val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
+                    Button(
+                        onClick = { onSave(baseUrl, token) },
+                        modifier = size.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                    ) { Text("Save", style = label) }
+                    Spacer(modifier = Modifier.width(8.dp))
                     OutlinedButton(
-                        onClick = { onAppearanceChange(value) },
-                        modifier = Modifier.padding(end = 8.dp)
-                            .heightIn(min = AnswerStyle.buttonHeight)
-                            .tactile(depth = AnswerStyle.keyDepth),
-                    ) {
-                        Text(
-                            text = if (appearance == value) "• $label" else label,
-                            style = MaterialTheme.typography.bodyLarge,
+                        onClick = onTest,
+                        modifier = size.tactile(depth = AnswerStyle.keyDepth),
+                    ) { Text("Test", style = label) }
+                }
+                if (statusLine.isNotBlank()) {
+                    Text(statusLine, style = MaterialTheme.typography.bodyMedium)
+                }
+                if (sessionLabel.isNotBlank()) {
+                    Text(
+                        text = "session: $sessionLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            SettingsSection(
+                title = "Appearance",
+                subtitle = "${appearanceLabel(appearance)} · ${AnswerStyle.theme(theme).label}",
+                icon = Icons.Filled.Star,
+                expanded = openSection == "appearance",
+                onToggle = { toggle("appearance") },
+            ) {
+                SectionLabel("Appearance")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("dark" to "Dark", "light" to "Light", "system" to "System").forEach { (value, label) ->
+                        SegmentButton(
+                            label = label,
+                            active = appearance == value,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onAppearanceChange(value) },
+                        )
+                    }
+                }
+                SectionLabel("Theme")
+                Text(
+                    text = "The theme repaints the dark side of the app. Light mode always keeps " +
+                        "its own palette.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AnswerStyle.themes.forEach { (name, palette) ->
+                        SegmentButton(
+                            label = palette.label,
+                            active = theme == name,
+                            modifier = Modifier.weight(1f),
+                            swatch = { ThemeSwatch(palette) },
+                            onClick = { onThemeChange(name) },
                         )
                     }
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val label = MaterialTheme.typography.bodyLarge
-                val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
-                Button(
-                    onClick = { onSave(baseUrl, token) },
-                    modifier = size.tactile(haptics = true, depth = AnswerStyle.keyDepth),
-                ) { Text("Save", style = label) }
-                Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(
-                    onClick = onTest,
-                    modifier = size.tactile(depth = AnswerStyle.keyDepth),
-                ) { Text("Test", style = label) }
-                Spacer(modifier = Modifier.width(8.dp))
+
+            SettingsSection(
+                title = "App Updates",
+                subtitle = updateSubtitle(updateStatus),
+                icon = Icons.Filled.Refresh,
+                expanded = openSection == "updates",
+                onToggle = { toggle("updates") },
+            ) {
+                Text(
+                    text = "Install the newest Android build from this app's own releases. The APK " +
+                        "is checked against the manifest hash and this app's signing key before the " +
+                        "installer is offered.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                when (val status = updateStatus) {
+                    UpdateStatus.Checking -> StatusCard {
+                        Text(
+                            text = "Checking the latest Android build…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    is UpdateStatus.Failed -> StatusCard(border = MaterialTheme.colorScheme.error) {
+                        Text(
+                            text = status.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    is UpdateStatus.UpToDate -> VersionCard(
+                        versionName = status.versionName,
+                        versionCode = null,
+                        sizeBytes = null,
+                        available = false,
+                        onInstall = null,
+                    )
+                    is UpdateStatus.Available -> VersionCard(
+                        versionName = status.info.versionName,
+                        versionCode = status.info.versionCode,
+                        sizeBytes = status.info.sizeBytes,
+                        available = true,
+                        onInstall = { onInstallUpdate(status.info) },
+                    )
+                }
                 OutlinedButton(
                     onClick = onCheckUpdates,
-                    modifier = size.tactile(haptics = true, depth = AnswerStyle.keyDepth),
-                ) { Text("Update", style = label) }
+                    enabled = updateStatus != UpdateStatus.Checking,
+                    modifier = Modifier.fillMaxWidth()
+                        .heightIn(min = AnswerStyle.buttonHeight)
+                        .tactile(
+                            haptics = true,
+                            enabled = updateStatus != UpdateStatus.Checking,
+                            depth = AnswerStyle.keyDepth,
+                        ),
+                ) {
+                    Text(
+                        text = if (updateStatus == UpdateStatus.Checking) "Checking…" else "Check for updates",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
             }
-            if (statusLine.isNotBlank()) {
-                Text(statusLine, style = MaterialTheme.typography.bodyMedium)
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "session: $sessionLabel",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+
+            Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = versionLabel,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+/**
+ * What the App Updates section states. One check feeds it, so the chat banner
+ * and the settings section never disagree about whether a newer build exists.
+ */
+sealed interface UpdateStatus {
+    /** A check is in flight. */
+    data object Checking : UpdateStatus
+
+    /** The installed build is the newest one; it carries the name to show. */
+    data class UpToDate(val versionName: String) : UpdateStatus
+
+    /** A newer, verified build is ready to install. */
+    data class Available(val info: UpdateChecker.Info) : UpdateStatus
+
+    /** The check or the install failed; the message is shown unchanged. */
+    data class Failed(val message: String) : UpdateStatus
+}
+
+/** The App Updates subtitle: it always states the state, as the media app does. */
+private fun updateSubtitle(status: UpdateStatus): String = when (status) {
+    UpdateStatus.Checking -> "Checking the latest build"
+    is UpdateStatus.UpToDate -> "Up to date · ${status.versionName}"
+    is UpdateStatus.Available -> "Update available · ${status.info.versionName}"
+    is UpdateStatus.Failed -> status.message
+}
+
+/** The stored appearance value as the word the Appearance subtitle shows. */
+private fun appearanceLabel(value: String): String = when (value) {
+    "dark" -> "Dark"
+    "light" -> "Light"
+    else -> "System"
+}
+
+/** A field's name above its control. */
+@Composable
+private fun SectionLabel(text: String) {
+    Text(text, style = MaterialTheme.typography.labelLarge)
+}
+
+/**
+ * One collapsible section: a trigger row that always states the current value,
+ * and a bordered panel that holds the controls. It mirrors the media app's
+ * divide-y list, so the two apps read the same way.
+ */
+@Composable
+private fun SettingsSection(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle)
+                .tactile()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // The icon sits in a rounded square tinted with the accent, as in the
+            // media app, so a section is recognisable before its title is read.
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            // A down chevron that swings to point right when the section is shut,
+            // the same signal as the media app's rotating chevron.
+            val rotation by animateFloatAsState(
+                targetValue = if (expanded) 0f else -90f,
+                label = "settingsChevron",
+            )
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.rotate(rotation),
             )
         }
+        if (expanded) {
+            // The panel is the media app's settings-panel-body: a bordered rounded
+            // box a step off the sky, so it reads as a card rather than a page.
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    content = content,
+                )
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+/**
+ * A small bordered button for a set of mutually exclusive choices, in the media
+ * app's segmented style: the active one is tinted with the accent and drawn in
+ * the accent colour.
+ */
+@Composable
+private fun SegmentButton(
+    label: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    swatch: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(10.dp)
+    val accent = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .clip(shape)
+            .background(if (active) accent.copy(alpha = 0.12f) else Color.Transparent)
+            .border(1.dp, if (active) accent else MaterialTheme.colorScheme.outline, shape)
+            .clickable(onClick = onClick)
+            .tactile(shape = shape)
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            swatch?.invoke()
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** A theme's own colours in miniature: its accent over its own background. */
+@Composable
+private fun ThemeSwatch(palette: AnswerTheme) {
+    Box(
+        modifier = Modifier
+            .size(18.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .background(palette.scheme.background)
+            .border(1.dp, palette.scheme.outline, RoundedCornerShape(5.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(palette.scheme.primary),
+        )
+    }
+}
+
+/** The bordered card a status line sits in when there is no version to show. */
+@Composable
+private fun StatusCard(
+    border: Color = MaterialTheme.colorScheme.outline,
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, border),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Box(modifier = Modifier.fillMaxWidth().padding(12.dp)) { content() }
+    }
+}
+
+/**
+ * The version card in the expanded updates section: the build's name, a
+ * build-type pill and either an amber "Update available" or green "Up to date"
+ * pill. The install action appears only when there is something to install.
+ */
+@Composable
+private fun VersionCard(
+    versionName: String,
+    versionCode: Int?,
+    sizeBytes: Long?,
+    available: Boolean,
+    onInstall: (() -> Unit)?,
+) {
+    // The amber and green are deliberately not theme colours: they mean the same
+    // thing under every palette, and the media app uses the same pair.
+    val amber = Color(0xFFF0A83C)
+    val green = Color(0xFF46C97E)
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Android build $versionName",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (versionCode != null) {
+                        Text(
+                            text = "Version code $versionCode",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (sizeBytes != null && sizeBytes > 0) {
+                        Text(
+                            text = "${sizeBytes / (1024 * 1024)} MB",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    // The publish is always a release build, so the pill names that
+                    // rather than inventing a type the manifest does not carry.
+                    Pill(text = "release", color = MaterialTheme.colorScheme.primary)
+                    Pill(
+                        text = if (available) "Update available" else "Up to date",
+                        color = if (available) amber else green,
+                    )
+                }
+            }
+            if (available && onInstall != null) {
+                Button(
+                    onClick = onInstall,
+                    modifier = Modifier.fillMaxWidth()
+                        .heightIn(min = AnswerStyle.buttonHeight)
+                        .tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                ) {
+                    Text("Install update", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+    }
+}
+
+/** A rounded status pill, e.g. "Update available". */
+@Composable
+private fun Pill(text: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .background(color.copy(alpha = 0.16f))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
 

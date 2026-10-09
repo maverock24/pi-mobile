@@ -54,6 +54,15 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit().putString("viewMode", value).apply()
 
     /**
+     * "midnight", "indigo", "amber" or "forest": which dark palette the app
+     * paints with. Light mode ignores it, so this only matters on the dark side.
+     * Midnight is the original look and the default.
+     */
+    var theme: String
+        get() = prefs.getString("theme", "midnight") ?: "midnight"
+        set(value) = prefs.edit().putString("theme", value).apply()
+
+    /**
      * The pi session this phone attached to. It is written down so a restart
      * does not silently adopt whatever session happens to be serving: the app
      * moves only when the bridge reports a different id, and then it says so.

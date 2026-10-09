@@ -25,6 +25,7 @@ import com.maverock24.pimobile.ui.ChatScreen
 import com.maverock24.pimobile.ui.ChatViewModel
 import com.maverock24.pimobile.ui.PiRemoteTheme
 import com.maverock24.pimobile.ui.SettingsScreen
+import com.maverock24.pimobile.ui.UpdateStatus
 import com.maverock24.pimobile.update.UpdateChecker
 import com.maverock24.pimobile.voice.Dictation
 import kotlinx.coroutines.launch
@@ -51,7 +52,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val vm: ChatViewModel = viewModel()
-            PiRemoteTheme(mode = vm.appearance) {
+            PiRemoteTheme(mode = vm.appearance, theme = vm.theme) {
                 val context = LocalContext.current
                 val scope = rememberCoroutineScope()
 
@@ -59,7 +60,47 @@ class MainActivity : ComponentActivity() {
                 var listening by remember { mutableStateOf(false) }
                 var partialText by remember { mutableStateOf("") }
                 var notice by remember { mutableStateOf<String?>(null) }
-                var pendingUpdate by remember { mutableStateOf<UpdateChecker.Info?>(null) }
+                var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Checking) }
+
+                // One check and one install, in one place. The chat banner and the
+                // settings section both read the status this writes, so the two
+                // never disagree about whether a newer build exists.
+                val checkForUpdates: () -> Unit = {
+                    scope.launch {
+                        updateStatus = UpdateStatus.Checking
+                        updateStatus = runCatching { UpdateChecker.check(BuildConfig.VERSION_CODE) }.fold(
+                            onSuccess = { info ->
+                                if (info != null) {
+                                    UpdateStatus.Available(info)
+                                } else {
+                                    // A null result means the installed build is the
+                                    // newest one, not that the check failed.
+                                    UpdateStatus.UpToDate(BuildConfig.VERSION_NAME)
+                                }
+                            },
+                            onFailure = { error ->
+                                UpdateStatus.Failed(error.message ?: error.javaClass.simpleName)
+                            },
+                        )
+                    }
+                }
+
+                val installUpdate: (UpdateChecker.Info) -> Unit = { info ->
+                    scope.launch {
+                        runCatching { UpdateChecker.download(context, info) }
+                            .onSuccess { file ->
+                                if (UpdateChecker.needsInstallPermission(context)) {
+                                    UpdateChecker.requestInstallPermission(context)
+                                    notice = "Allow installs for Pi Remote, then install again"
+                                } else {
+                                    notice = UpdateChecker.install(context, file) ?: "Installer launched"
+                                }
+                            }
+                            .onFailure { error ->
+                                updateStatus = UpdateStatus.Failed(error.message ?: "Update failed")
+                            }
+                    }
+                }
 
                 val dictation = remember {
                     Dictation(
@@ -86,10 +127,7 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(Unit) {
                     vm.connect()
-                    val update = runCatching { UpdateChecker.check(BuildConfig.VERSION_CODE) }.getOrNull()
-                    if (update != null) {
-                        pendingUpdate = update
-                    }
+                    checkForUpdates()
                 }
 
                 // QR pairing: the camera hands the app pi-remote://pair?…, we spend the
@@ -146,29 +184,6 @@ class MainActivity : ComponentActivity() {
                     onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
                 }
 
-                val checkForUpdates: () -> Unit = {
-                    scope.launch {
-                        val update = runCatching { UpdateChecker.check(BuildConfig.VERSION_CODE) }.getOrNull()
-                        if (update == null) {
-                            notice = "Already on the newest build"
-                        } else {
-                            pendingUpdate = update
-                            notice = "Downloading ${update.versionName}…"
-                            runCatching { UpdateChecker.download(context, update) }
-                                .onSuccess { file ->
-                                    if (UpdateChecker.needsInstallPermission(context)) {
-                                        UpdateChecker.requestInstallPermission(context)
-                                        notice = "Allow installs for Pi Remote, then tap the banner again"
-                                        pendingUpdate = null
-                                    } else {
-                                        notice = UpdateChecker.install(context, file) ?: "Installer launched"
-                                    }
-                                        }
-                                        .onFailure { notice = "Update failed: ${it.message}" }
-                                }
-                            }
-                        }
-
                 if (showSettings) {
                     SettingsScreen(
                         initialBaseUrl = vm.baseUrl,
@@ -178,13 +193,17 @@ class MainActivity : ComponentActivity() {
                         sessionLabel = vm.attachedLabel.ifBlank { vm.sessionTitle },
                         appearance = vm.appearance,
                         onAppearanceChange = vm::updateAppearance,
+                        theme = vm.theme,
+                        onThemeChange = vm::updateTheme,
+                        updateStatus = updateStatus,
+                        onCheckUpdates = checkForUpdates,
+                        onInstallUpdate = installUpdate,
                         onPairLink = { pendingPairLink.value = it },
                         onSave = { url, token ->
                             vm.saveSettings(url, token)
                             showSettings = false
                         },
                         onTest = vm::testConnection,
-                        onCheckUpdates = checkForUpdates,
                         onBack = { showSettings = false },
                     )
                 } else {
@@ -192,7 +211,9 @@ class MainActivity : ComponentActivity() {
                         vm = vm,
                         listening = listening,
                         partialText = partialText,
-                        notice = pendingUpdate?.let { "Update ${it.versionName} ready — tap to install" },
+                        notice = (updateStatus as? UpdateStatus.Available)?.let {
+                            "Update ${it.info.versionName} ready — tap to install"
+                        },
                         onToggleMic = {
                             if (listening) {
                                 dictation.stop()
@@ -211,25 +232,9 @@ class MainActivity : ComponentActivity() {
                         },
                         onOpenSettings = { showSettings = true },
                         onDismissNotice = {
-                            if (pendingUpdate != null) {
-                                val update = pendingUpdate
-                                pendingUpdate = null
-                                if (update != null) {
-                                    scope.launch {
-                                        runCatching { UpdateChecker.download(context, update) }
-                                            .onSuccess { file ->
-                                                if (UpdateChecker.needsInstallPermission(context)) {
-                                                    UpdateChecker.requestInstallPermission(context)
-                                                    notice = "Allow installs for Pi Remote, then check for updates again"
-                                                } else {
-                                                    notice = UpdateChecker.install(context, file)
-                                                }
-                                            }
-                                            .onFailure { notice = "Update failed: ${it.message}" }
-                                    }
-                                }
-                            } else {
-                                notice = null
+                            val available = updateStatus as? UpdateStatus.Available
+                            if (available != null) {
+                                installUpdate(available.info)
                             }
                         },
                     )

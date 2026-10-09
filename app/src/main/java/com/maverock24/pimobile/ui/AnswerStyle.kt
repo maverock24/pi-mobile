@@ -1,5 +1,6 @@
 package com.maverock24.pimobile.ui
 
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
@@ -15,12 +16,29 @@ import androidx.compose.ui.unit.sp
  *   links underline · citations inline · diff inline · tools hidden
  *   think hidden · stream pulse · status shimmer · accent indigo · measure 54ch
  *
- * The dark scheme no longer follows that accent: it now matches the media app's
- * midnight sky instead, which is a different palette in the same spirit. The
- * light scheme still uses the lab's indigo.
+ * The dark side no longer follows that accent: it now comes in four named
+ * themes, Midnight first among them, each a complete palette with its own night
+ * sky. Light mode is not one of them: it always uses the lab's indigo and its
+ * own flat background.
  *
  * Change a value here and the whole answer view follows.
  */
+
+/**
+ * One named look for the dark side of the app: the colour scheme it paints
+ * with, the night sky drawn behind it, and the name the settings picker shows.
+ * Light mode ignores every field of it.
+ */
+data class AnswerTheme(
+    val label: String,
+    val scheme: ColorScheme,
+    val skyTop: Color,
+    val skyMid: Color,
+    val skyBottom: Color,
+    val skyHorizonGlow: Color,
+    val skyMiddleGlow: Color,
+)
+
 object AnswerStyle {
 
     // Raised on 2026-10-04: 14sp read as small on a phone held at arm's length.
@@ -106,38 +124,137 @@ object AnswerStyle {
     val measure = 460.dp
 
     /**
-     * The dark accent is a cyan-teal rather than the lab's indigo, because the
-     * dark scheme below follows the media app's midnight sky: navy surfaces,
-     * hairline navy borders, and one saturated colour used sparingly. The light
-     * scheme keeps the indigo.
+     * The two accents that are not a theme's own: Midnight's cyan-teal, which
+     * matches the media app's midnight sky, and the light scheme's indigo,
+     * which is the design lab's. The other themes carry their accent in their
+     * scheme below.
      */
     private val accentDark = Color(0xFF0AD6FF)
     private val accentLight = Color(0xFF3562D6)
 
     /**
-     * Midnight sky, taken from mobile-media-app's `src/app.css` @theme block with
-     * the HSL converted rather than rounded by eye: background hsl(218 55% 6%),
-     * card hsl(218 50% 9%), muted hsl(218 35% 11%), border hsl(218 40% 15%),
-     * foreground hsl(210 30% 94%), muted foreground hsl(210 20% 48%), accent
-     * hsl(190 100% 52%), destructive hsl(0 70% 55%).
+     * Midnight, the original dark look: taken from mobile-media-app's
+     * `src/app.css` @theme block with the HSL converted rather than rounded by
+     * eye: background hsl(218 55% 6%), card hsl(218 50% 9%), muted hsl(218 35%
+     * 11%), border hsl(218 40% 15%), foreground hsl(210 30% 94%), muted
+     * foreground hsl(210 20% 48%), accent hsl(190 100% 52%), destructive hsl(0
+     * 70% 55%).
      *
      * Surface is no longer the same colour as the background in this scheme, so
      * anything drawn as a surface now reads as a panel instead of vanishing into
      * the page.
+     *
+     * Its sky is the media app's layered background: a navy gradient down the
+     * page with a cyan glow at the horizon and a weaker one below the middle,
+     * converted from its HSL the same way, alphas included.
      */
-    val darkScheme = darkColorScheme(
-        primary = accentDark,
-        onPrimary = Color(0xFF060D18),
-        background = Color(0xFF070D18),
-        onBackground = Color(0xFFEBF0F4),
-        surface = Color(0xFF0B1422),
-        onSurface = Color(0xFFE6EBF0),
-        surfaceVariant = Color(0xFF121926),
-        onSurfaceVariant = Color(0xFF627A93),
-        outline = Color(0xFF172236),
-        outlineVariant = Color(0xFF141E2E),
-        error = Color(0xFFDD3C3C),
+    val midnight = AnswerTheme(
+        label = "Midnight",
+        scheme = darkColorScheme(
+            primary = accentDark,
+            onPrimary = Color(0xFF060D18),
+            background = Color(0xFF070D18),
+            onBackground = Color(0xFFEBF0F4),
+            surface = Color(0xFF0B1422),
+            onSurface = Color(0xFFE6EBF0),
+            surfaceVariant = Color(0xFF121926),
+            onSurfaceVariant = Color(0xFF627A93),
+            outline = Color(0xFF172236),
+            outlineVariant = Color(0xFF141E2E),
+            error = Color(0xFFDD3C3C),
+        ),
+        skyTop = Color(0xFF091120),
+        skyMid = Color(0xFF050B14),
+        skyBottom = Color(0xFF040911),
+        skyHorizonGlow = Color(0x99093453),
+        skyMiddleGlow = Color(0x5906516B),
     )
+
+    /** Indigo: a brighter blue accent over colder, bluer surfaces. */
+    val indigo = AnswerTheme(
+        label = "Indigo",
+        scheme = darkColorScheme(
+            primary = Color(0xFF7AA2F7),
+            onPrimary = Color(0xFF060C18),
+            background = Color(0xFF080D16),
+            onBackground = Color(0xFFEBEEF4),
+            surface = Color(0xFF0E1420),
+            onSurface = Color(0xFFE6E9F0),
+            surfaceVariant = Color(0xFF151A23),
+            onSurfaceVariant = Color(0xFF627293),
+            outline = Color(0xFF1B2232),
+            outlineVariant = Color(0xFF191E29),
+            error = Color(0xFFDD3C3C),
+        ),
+        skyTop = Color(0xFF0B111E),
+        skyMid = Color(0xFF060B13),
+        skyBottom = Color(0xFF050910),
+        skyHorizonGlow = Color(0x99090F53),
+        skyMiddleGlow = Color(0x59061F6B),
+    )
+
+    /** Amber: a warm accent over near-black browns. */
+    val amber = AnswerTheme(
+        label = "Amber",
+        scheme = darkColorScheme(
+            primary = Color(0xFFF9A91F),
+            onPrimary = Color(0xFF180F06),
+            background = Color(0xFF150F0A),
+            onBackground = Color(0xFFF4EFEB),
+            surface = Color(0xFF1E1610),
+            onSurface = Color(0xFFF0EAE6),
+            surfaceVariant = Color(0xFF201C18),
+            onSurfaceVariant = Color(0xFF937962),
+            outline = Color(0xFF2E261F),
+            outlineVariant = Color(0xFF26211C),
+            error = Color(0xFFDD3C3C),
+        ),
+        skyTop = Color(0xFF1C140D),
+        skyMid = Color(0xFF120C08),
+        skyBottom = Color(0xFF0F0906),
+        skyHorizonGlow = Color(0x99534A09),
+        skyMiddleGlow = Color(0x596B4E06),
+    )
+
+    /** Forest: a green accent over near-black greens. */
+    val forest = AnswerTheme(
+        label = "Forest",
+        scheme = darkColorScheme(
+            primary = Color(0xFF2EB877),
+            onPrimary = Color(0xFF061811),
+            background = Color(0xFF0A1510),
+            onBackground = Color(0xFFEBF4F0),
+            surface = Color(0xFF101E18),
+            onSurface = Color(0xFFE6F0EB),
+            surfaceVariant = Color(0xFF18201D),
+            onSurfaceVariant = Color(0xFF62937E),
+            outline = Color(0xFF1F2E28),
+            outlineVariant = Color(0xFF1C2622),
+            error = Color(0xFFDD3C3C),
+        ),
+        skyTop = Color(0xFF0D1C16),
+        skyMid = Color(0xFF08120E),
+        skyBottom = Color(0xFF060F0B),
+        skyHorizonGlow = Color(0x99095343),
+        skyMiddleGlow = Color(0x59066B44),
+    )
+
+    /**
+     * Every dark palette by the name the settings store keeps. It is a linked
+     * map so the picker keeps this order rather than the hash order.
+     */
+    val themes: Map<String, AnswerTheme> = linkedMapOf(
+        "midnight" to midnight,
+        "indigo" to indigo,
+        "amber" to amber,
+        "forest" to forest,
+    )
+
+    /** The theme a fresh install starts on. */
+    const val defaultTheme = "midnight"
+
+    /** The palette for a stored name; anything unknown falls back to Midnight. */
+    fun theme(name: String): AnswerTheme = themes[name] ?: midnight
 
     val lightScheme = lightColorScheme(
         primary = accentLight,
@@ -151,19 +268,6 @@ object AnswerStyle {
         outline = Color(0xFFDFE3EA),
         outlineVariant = Color(0xFFE7EAF0),
     )
-
-    /**
-     * The night sky the dark scheme sits on, from the media app's layered
-     * background: a navy gradient down the page with a cyan glow at the horizon
-     * and a weaker one below the middle. Converted from its HSL the same way as
-     * the scheme above, alphas included, so the two apps are the same sky rather
-     * than two similar ones.
-     */
-    val skyTop = Color(0xFF091120)
-    val skyMid = Color(0xFF050B14)
-    val skyBottom = Color(0xFF040911)
-    val skyHorizonGlow = Color(0x99093453)
-    val skyMiddleGlow = Color(0x5906516B)
 
     /** Inline code chip background: accent at low alpha. */
     fun chipBackground(isDark: Boolean): Color =

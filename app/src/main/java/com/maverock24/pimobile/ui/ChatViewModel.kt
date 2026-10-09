@@ -217,6 +217,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
+     * Which dark palette is on screen: Midnight, Indigo, Amber or Forest. It is
+     * read and written like [appearance], and it only changes the dark side.
+     */
+    var theme by mutableStateOf(store.theme)
+        private set
+
+    /**
      * Full-session search: what the bridge matched, whether a request is in
      * flight, and what the bridge said if it refused. The results are newest
      * first, as the bridge sends them.
@@ -617,6 +624,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun updateViewMode(value: String) {
         store.viewMode = value
         viewMode = value
+    }
+
+    /** Choose one of the four dark palettes; the choice is written down. */
+    fun updateTheme(value: String) {
+        store.theme = value
+        theme = value
     }
 
     /**
