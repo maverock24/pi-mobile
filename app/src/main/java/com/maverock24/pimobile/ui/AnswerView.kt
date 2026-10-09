@@ -1,3 +1,5 @@
+@file:Suppress("INVISIBLE_REFERENCE", "INVISIBLE_MEMBER")
+
 package com.maverock24.pimobile.ui
 
 import androidx.compose.foundation.BorderStroke
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.Selection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Button
@@ -27,7 +30,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,6 +90,7 @@ private fun trimUrl(url: String): String {
 fun AnswerView(
     text: String,
     modifier: Modifier = Modifier,
+    onSelectionChange: ((String?) -> Unit)? = null,
 ) {
     val blocks = remember(text) { parseAnswerBlocks(text) }
     val links = remember(text) { extractLinks(text) }
@@ -92,30 +98,58 @@ fun AnswerView(
     val linkColor = scheme.primary
     val chipColor = AnswerStyle.chipBackground(scheme.background.luminance() < 0.5f)
 
-    SelectionContainer {
-        Column(
-            modifier = modifier,
-            verticalArrangement = Arrangement.spacedBy(AnswerStyle.paragraphGap),
-        ) {
-            blocks.forEach { block ->
-                when (block) {
-                    is AnswerBlock.Heading -> Text(
-                        text = inlineText(block.text, linkColor, chipColor),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = AnswerStyle.headingSize,
-                        lineHeight = AnswerStyle.headingSize * 1.3,
-                        color = scheme.onBackground,
-                        modifier = Modifier.padding(top = AnswerStyle.headingGap),
-                    )
+    // Compose reports a selection's offsets within the run it belongs to, not
+    // across the answer, so an excerpt is taken from the run that owns it. The
+    // owner is remembered so a run clearing its own selection cannot wipe an
+    // excerpt that a newer selection in another run has already replaced.
+    var excerptOwner by remember { mutableStateOf<Any?>(null) }
+    var excerpt by remember { mutableStateOf<String?>(null) }
+    val reportExcerpt: (Any, String?) -> Unit = { owner, picked ->
+        if (!picked.isNullOrBlank()) {
+            excerptOwner = owner
+            excerpt = picked
+        } else if (excerptOwner === owner) {
+            excerptOwner = null
+            excerpt = null
+        }
+        onSelectionChange?.invoke(excerpt)
+    }
 
-                    is AnswerBlock.Paragraph -> Text(
-                        text = inlineText(block.text, linkColor, chipColor),
-                        fontSize = AnswerStyle.bodySize,
-                        lineHeight = AnswerStyle.bodyLineHeight,
-                        color = scheme.onBackground,
-                    )
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(AnswerStyle.paragraphGap),
+    ) {
+        blocks.forEach { block ->
+            when (block) {
+                is AnswerBlock.Heading -> {
+                    val rendered = inlineText(block.text, linkColor, chipColor)
+                    SelectableRun(rendered.text, reportExcerpt) {
+                        Text(
+                            text = rendered,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = AnswerStyle.headingSize,
+                            lineHeight = AnswerStyle.headingSize * 1.3,
+                            color = scheme.onBackground,
+                            modifier = Modifier.padding(top = AnswerStyle.headingGap),
+                        )
+                    }
+                }
 
-                    is AnswerBlock.Quote -> Row(verticalAlignment = Alignment.Top) {
+                is AnswerBlock.Paragraph -> {
+                    val rendered = inlineText(block.text, linkColor, chipColor)
+                    SelectableRun(rendered.text, reportExcerpt) {
+                        Text(
+                            text = rendered,
+                            fontSize = AnswerStyle.bodySize,
+                            lineHeight = AnswerStyle.bodyLineHeight,
+                            color = scheme.onBackground,
+                        )
+                    }
+                }
+
+                is AnswerBlock.Quote -> {
+                    val rendered = inlineText(block.text, linkColor, chipColor)
+                    Row(verticalAlignment = Alignment.Top) {
                         Box(
                             modifier = Modifier
                                 .padding(top = 2.dp, bottom = 2.dp, end = AnswerStyle.accentBarGap)
@@ -124,34 +158,39 @@ fun AnswerView(
                                 .clip(RoundedCornerShape(2.dp))
                                 .background(scheme.primary),
                         )
-                        Text(
-                            text = inlineText(block.text, linkColor, chipColor),
-                            fontSize = AnswerStyle.bodySize,
-                            lineHeight = AnswerStyle.bodyLineHeight,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
+                        SelectableRun(rendered.text, reportExcerpt) {
+                            Text(
+                                text = rendered,
+                                fontSize = AnswerStyle.bodySize,
+                                lineHeight = AnswerStyle.bodyLineHeight,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
                     }
+                }
 
-                    is AnswerBlock.Bullets -> Column(
-                        verticalArrangement = Arrangement.spacedBy(AnswerStyle.listItemGap),
-                    ) {
-                        var counter = 0
-                        block.items.forEach { item ->
-                            if (!item.marker) counter++
-                            Row(
-                                verticalAlignment = Alignment.Top,
-                                modifier = Modifier.padding(start = AnswerStyle.bulletIndent * item.level),
-                            ) {
+                is AnswerBlock.Bullets -> Column(
+                    verticalArrangement = Arrangement.spacedBy(AnswerStyle.listItemGap),
+                ) {
+                    var counter = 0
+                    block.items.forEach { item ->
+                        if (!item.marker) counter++
+                        val rendered = inlineText(item.text, linkColor, chipColor)
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            modifier = Modifier.padding(start = AnswerStyle.bulletIndent * item.level),
+                        ) {
+                            Text(
+                                text = if (block.ordered && !item.marker) "$counter." else "•",
+                                color = if (block.ordered && !item.marker) linkColor else scheme.onSurfaceVariant,
+                                fontSize = AnswerStyle.bodySize,
+                                lineHeight = AnswerStyle.bodyLineHeight,
+                                modifier = Modifier.width(AnswerStyle.bulletIndent),
+                            )
+                            SelectableRun(rendered.text, reportExcerpt) {
                                 Text(
-                                    text = if (block.ordered && !item.marker) "$counter." else "•",
-                                    color = if (block.ordered && !item.marker) linkColor else scheme.onSurfaceVariant,
-                                    fontSize = AnswerStyle.bodySize,
-                                    lineHeight = AnswerStyle.bodyLineHeight,
-                                    modifier = Modifier.width(AnswerStyle.bulletIndent),
-                                )
-                                Text(
-                                    text = inlineText(item.text, linkColor, chipColor),
+                                    text = rendered,
                                     fontSize = AnswerStyle.bodySize,
                                     lineHeight = AnswerStyle.bodyLineHeight,
                                     color = scheme.onBackground,
@@ -160,13 +199,15 @@ fun AnswerView(
                             }
                         }
                     }
+                }
 
-                    is AnswerBlock.Code -> Surface(
-                        modifier = Modifier.padding(top = AnswerStyle.blockGap),
-                        shape = RoundedCornerShape(AnswerStyle.codeRadius),
-                        color = scheme.surfaceVariant,
-                        border = BorderStroke(1.dp, scheme.outline),
-                    ) {
+                is AnswerBlock.Code -> Surface(
+                    modifier = Modifier.padding(top = AnswerStyle.blockGap),
+                    shape = RoundedCornerShape(AnswerStyle.codeRadius),
+                    color = scheme.surfaceVariant,
+                    border = BorderStroke(1.dp, scheme.outline),
+                ) {
+                    SelectableRun(block.code, reportExcerpt) {
                         Text(
                             text = block.code,
                             fontFamily = FontFamily.Monospace,
@@ -178,42 +219,72 @@ fun AnswerView(
                                 .padding(AnswerStyle.codePadding),
                         )
                     }
-
-                    is AnswerBlock.Diff -> Box(modifier = Modifier.padding(top = AnswerStyle.blockGap)) {
-                        DiffBlock(block)
-                    }
-
-                    is AnswerBlock.Table -> Box(modifier = Modifier.padding(top = AnswerStyle.blockGap)) {
-                        TableBlock(block)
-                    }
-
-                    AnswerBlock.Rule -> Box(
-                        modifier = Modifier
-                            .padding(vertical = AnswerStyle.blockGap)
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(scheme.outline),
-                    )
                 }
+
+                is AnswerBlock.Diff -> Box(modifier = Modifier.padding(top = AnswerStyle.blockGap)) {
+                    DiffBlock(block, reportExcerpt)
+                }
+
+                is AnswerBlock.Table -> Box(modifier = Modifier.padding(top = AnswerStyle.blockGap)) {
+                    TableBlock(block, reportExcerpt)
+                }
+
+                AnswerBlock.Rule -> Box(
+                    modifier = Modifier
+                        .padding(vertical = AnswerStyle.blockGap)
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(scheme.outline),
+                )
             }
+        }
 
-            // Links get their own buttons: tapping a URL in running text on a
-            // phone while walking is exactly the case that fails.
-            if (links.isNotEmpty()) {
-                Column(
-                    modifier = Modifier.padding(top = AnswerStyle.blockGap),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = if (links.size == 1) "Link" else "Links",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = scheme.onSurfaceVariant,
-                    )
-                    links.forEach { link -> LinkButton(link) }
-                }
+        // Links get their own buttons: tapping a URL in running text on a
+        // phone while walking is exactly the case that fails.
+        if (links.isNotEmpty()) {
+            Column(
+                modifier = Modifier.padding(top = AnswerStyle.blockGap),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = if (links.size == 1) "Link" else "Links",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = scheme.onSurfaceVariant,
+                )
+                links.forEach { link -> LinkButton(link) }
             }
         }
     }
+}
+
+/**
+ * One run of selectable text. Compose reports a selection's offsets within the
+ * run it belongs to, so each run keeps its own container and knows the exact
+ * characters it draws. Taking the excerpt from that string is what stops the
+ * offsets of the rendered text being read as offsets of the answer's markdown,
+ * which no longer has the same characters once the styling is stripped.
+ */
+@Composable
+private fun SelectableRun(
+    renderedText: String,
+    onExcerpt: (Any, String?) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val token = remember { Any() }
+    var selection by remember { mutableStateOf<Selection?>(null) }
+    // The overload that hands the app the selection is internal in this Compose
+    // version, so this file suppresses the visibility check. The app is pinned to
+    // one Compose BOM, and no custom selection UI is built.
+    SelectionContainer(
+        Modifier,
+        selection,
+        { picked ->
+            selection = picked
+            val range = picked?.toTextRange()
+            onExcerpt(token, range?.let { renderedText.substring(it.min, it.max) })
+        },
+        content,
+    )
 }
 
 @Composable
@@ -250,7 +321,7 @@ private fun LinkButton(link: AnswerLink) {
 }
 
 @Composable
-private fun DiffBlock(block: AnswerBlock.Diff) {
+private fun DiffBlock(block: AnswerBlock.Diff, onExcerpt: (Any, String?) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val isDark = scheme.background.luminance() < 0.5f
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -272,25 +343,27 @@ private fun DiffBlock(block: AnswerBlock.Diff) {
                     DiffLine.Kind.DEL -> AnswerStyle.diffDel(isDark)
                     DiffLine.Kind.CONTEXT -> Color.Transparent
                 }
-                Text(
-                    text = line.text,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = AnswerStyle.codeSize,
-                    lineHeight = AnswerStyle.codeSize * 1.5,
-                    color = scheme.onBackground,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(background)
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 1.dp),
-                )
+                SelectableRun(line.text, onExcerpt) {
+                    Text(
+                        text = line.text,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = AnswerStyle.codeSize,
+                        lineHeight = AnswerStyle.codeSize * 1.5,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(background)
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 1.dp),
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TableBlock(block: AnswerBlock.Table) {
+private fun TableBlock(block: AnswerBlock.Table, onExcerpt: (Any, String?) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))) {
         Row(
@@ -300,13 +373,15 @@ private fun TableBlock(block: AnswerBlock.Table) {
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
             block.header.forEach { cell ->
-                Text(
-                    text = cell,
-                    fontSize = AnswerStyle.codeSize,
-                    fontWeight = FontWeight.SemiBold,
-                    color = scheme.onBackground,
-                    modifier = Modifier.weight(1f).padding(end = 8.dp),
-                )
+                SelectableRun(cell, onExcerpt) {
+                    Text(
+                        text = cell,
+                        fontSize = AnswerStyle.codeSize,
+                        fontWeight = FontWeight.SemiBold,
+                        color = scheme.onBackground,
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    )
+                }
             }
         }
         block.rows.forEachIndexed { index, row ->
@@ -315,12 +390,14 @@ private fun TableBlock(block: AnswerBlock.Table) {
             }
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
                 row.forEach { cell ->
-                    Text(
-                        text = cell,
-                        fontSize = AnswerStyle.codeSize,
-                        color = scheme.onBackground,
-                        modifier = Modifier.weight(1f).padding(end = 8.dp),
-                    )
+                    SelectableRun(cell, onExcerpt) {
+                        Text(
+                            text = cell,
+                            fontSize = AnswerStyle.codeSize,
+                            color = scheme.onBackground,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
+                        )
+                    }
                 }
             }
         }

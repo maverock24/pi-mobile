@@ -175,6 +175,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var draft by mutableStateOf("")
         private set
 
+    /**
+     * The excerpt a selection in an answer chose, or null. It is what the bar
+     * above the composer offers to send. It lives here rather than in a view so
+     * the transcript and the deck share one selection and switching between the
+     * two does not strand it.
+     */
+    var selectedExcerpt by mutableStateOf<String?>(null)
+        private set
+
     var connected by mutableStateOf(false)
         private set
     var busy by mutableStateOf(false)
@@ -739,6 +748,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateDraft(value: String) {
         draft = value
+    }
+
+    /** A selection in an answer: keep it while it has content, drop it when empty. */
+    fun updateExcerpt(value: String?) {
+        selectedExcerpt = value?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Send the chosen excerpt through the ordinary prompt path, so the local
+     * echo, the busy state and the failure handling are the same as a typed
+     * prompt, then drop it because it has been used.
+     */
+    fun sendExcerpt() {
+        val text = selectedExcerpt ?: return
+        selectedExcerpt = null
+        if (text.isNotBlank()) send(text)
     }
 
     fun appendToDraft(text: String) {

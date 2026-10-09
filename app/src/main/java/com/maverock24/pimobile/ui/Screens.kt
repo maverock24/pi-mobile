@@ -412,12 +412,14 @@ fun ChatScreen(
                 TurnDeck(
                     vm = vm,
                     onAnswerConfirmed = { actionNotice = it },
+                    onExcerpt = vm::updateExcerpt,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else {
                 Transcript(
                     vm = vm,
                     onAnswerConfirmed = { actionNotice = it },
+                    onExcerpt = vm::updateExcerpt,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }
@@ -431,6 +433,20 @@ fun ChatScreen(
                 mode = vm.viewMode,
                 onChange = vm::updateViewMode,
             )
+
+            // What a selection in an answer picked, offered right above the
+            // composer: it names the exact text that will go out and sends it in
+            // one tap. It sits in the layout rather than over it, so it never
+            // covers the composer or a waiting question, and it disappears the
+            // moment the selection is gone.
+            vm.selectedExcerpt?.let { excerpt ->
+                SelectionBar(
+                    excerpt = excerpt,
+                    canSend = vm.composerBlock == null,
+                    onSend = vm::sendExcerpt,
+                    onClear = { vm.updateExcerpt(null) },
+                )
+            }
 
             Composer(
                 text = if (searchOpen) query else vm.draft,
@@ -484,6 +500,7 @@ fun ChatScreen(
 private fun Transcript(
     vm: ChatViewModel,
     onAnswerConfirmed: (String) -> Unit,
+    onExcerpt: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -561,6 +578,7 @@ private fun Transcript(
                         liveText = if (turn.id == newestTurn) liveAnswer else null,
                         working = turn.id == newestTurn && vm.busy,
                         onConfirm = onAnswerConfirmed,
+                        onExcerpt = onExcerpt,
                         // Fades in and out as the accordion opens and closes, so
                         // folding an answer reads as a change rather than as a
                         // jump.
@@ -596,6 +614,7 @@ private fun Transcript(
 private fun TurnDeck(
     vm: ChatViewModel,
     onAnswerConfirmed: (String) -> Unit,
+    onExcerpt: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val turns = vm.turns
@@ -690,6 +709,7 @@ private fun TurnDeck(
                 liveText = if (turn.id == newestTurn) liveAnswer else null,
                 working = turn.id == newestTurn && vm.busy,
                 onConfirm = onAnswerConfirmed,
+                onExcerpt = onExcerpt,
                 onToggle = { openTurn = if (openTurn == turn.id) null else turn.id },
             )
         }
@@ -708,6 +728,7 @@ private fun DeckCard(
     liveText: String?,
     working: Boolean,
     onConfirm: (String) -> Unit,
+    onExcerpt: (String?) -> Unit,
     onToggle: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -780,6 +801,7 @@ private fun DeckCard(
                         liveText = liveText,
                         working = working,
                         onConfirm = onConfirm,
+                        onExcerpt = onExcerpt,
                         modifier = Modifier.padding(
                             start = AnswerStyle.promptPadding,
                             end = AnswerStyle.promptPadding,
@@ -827,6 +849,60 @@ private fun ViewModeSwitch(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The bar that offers a selected excerpt as a prompt. It names the exact text
+ * that will be sent and sends it in one tap, and it exists only while there is
+ * a selection. The excerpt is ellipsised to two lines so a long pick cannot
+ * push the composer off the screen, but the whole excerpt is what goes out.
+ */
+@Composable
+private fun SelectionBar(
+    excerpt: String,
+    canSend: Boolean,
+    onSend: () -> Unit,
+    onClear: () -> Unit,
+) {
+    val onContainer = MaterialTheme.colorScheme.onSecondaryContainer
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = onContainer,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(
+                text = "Send selected text",
+                style = MaterialTheme.typography.labelMedium,
+                color = onContainer,
+            )
+            Text(
+                text = excerpt,
+                style = MaterialTheme.typography.bodySmall,
+                color = onContainer,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+            Row(
+                modifier = Modifier.padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = onSend,
+                    enabled = canSend,
+                    modifier = Modifier
+                        .heightIn(min = AnswerStyle.buttonHeight)
+                        .tactile(haptics = true, enabled = canSend, depth = AnswerStyle.keyDepth),
+                ) {
+                    Text("Send", style = MaterialTheme.typography.bodyLarge)
+                }
+                TextButton(onClick = onClear, modifier = Modifier.tactile()) { Text("Dismiss") }
             }
         }
     }
@@ -1078,6 +1154,7 @@ private fun TurnBody(
     liveText: String?,
     working: Boolean,
     onConfirm: (String) -> Unit,
+    onExcerpt: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1098,6 +1175,7 @@ private fun TurnBody(
                     AnswerView(
                         text = answer.text,
                         modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                        onSelectionChange = onExcerpt,
                     )
                     AnswerActions(text = answer.text, onConfirm = onConfirm)
                 }
@@ -1111,6 +1189,7 @@ private fun TurnBody(
                 AnswerView(
                     text = liveText,
                     modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                    onSelectionChange = onExcerpt,
                 )
                 AnswerActions(text = liveText, onConfirm = onConfirm)
             }
