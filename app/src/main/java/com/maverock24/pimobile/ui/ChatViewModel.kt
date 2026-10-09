@@ -12,6 +12,9 @@ import androidx.lifecycle.viewModelScope
 import com.maverock24.pimobile.data.Pin
 import com.maverock24.pimobile.data.PinsStore
 import com.maverock24.pimobile.data.SettingsStore
+import com.maverock24.pimobile.data.TranscriptEntry
+import com.maverock24.pimobile.data.TranscriptStore
+import com.maverock24.pimobile.data.mergeTranscript
 import com.maverock24.pimobile.net.BridgeException
 import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
@@ -25,6 +28,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Call
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.Instant
 import java.util.UUID
 
 /** What the session label says before anything is attached. */
@@ -43,6 +47,15 @@ private const val HISTORY_LIMIT = 500
  * belongs with the answers of the turn that was interrupted.
  */
 internal const val QUESTION_ROLE = "question"
+
+/**
+ * The id prefixes the app stamps on a message it made up rather than took from
+ * the bridge: an echoed prompt, an optimistic question trace and a committed
+ * answer. A fetch carries such a message over only while the bridge has no
+ * entry that matches it, which is what stops one being wiped by a fetch that
+ * runs before the laptop has recorded the turn.
+ */
+private val SYNTHETIC_ID_PREFIXES = listOf("local-", "prompt-", "answer-", "question-")
 
 /** The two tools whose result is a choice the person made, and not process. */
 private const val QUESTION_TOOL = "question"
@@ -107,6 +120,13 @@ data class ChatMessage(
      * without an answer.
      */
     val answer: String? = null,
+    /**
+     * When the bridge wrote the entry, in epoch millis. Only an entry the bridge
+     * reported has one: a message made up here carries 0, because the cache
+     * never keeps one. It orders the merge of a fetched window with the cached
+     * transcript, and is not read by the screen.
+     */
+    val timestamp: Long = 0L,
 )
 
 /**
@@ -180,6 +200,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = SettingsStore(app)
     private val pinsStore = PinsStore(app)
+    private val transcriptStore = TranscriptStore(app)
     private val client = PiRemoteClient { store.baseUrl to store.token }
     private val main = Handler(Looper.getMainLooper())
 
@@ -192,9 +213,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         pins.addAll(pinsStore.load())
+        // The pinned session's transcript goes up from the cache before the
+        // bridge is asked for anything, so a phone that cannot reach it still
+        // shows the record it saved instead of an empty screen.
+        safeLaunch { restoreCache(store.sessionId.takeIf { it.isNotBlank() }) }
     }
 
     val messages = mutableStateListOf<ChatMessage>()
+
+    /**
+     * True while what is on screen came from the cache and no fetch has
+     * confirmed it yet. The status line says the bridge is unreachable; this is
+     * what says the transcript under it is the saved copy rather than live.
+     */
+    var showingSavedCopy by mutableStateOf(false)
+        private set
 
     /** Composer text. Lives here so dictation and the UI share one source. */
     var draft by mutableStateOf("")
@@ -368,6 +401,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // the pin go with it. Saving the same values again must not clear
             // either: attaching is the only other place that drops the transcript.
             messages.clear()
+            showingSavedCopy = false
             forgetSession()
         }
         connect()
@@ -439,6 +473,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         streamCall = call
         startPolling()
         safeLaunch {
+            // The pinned session's cache goes up before the bridge is asked for
+            // anything, so an unreachable bridge leaves the saved transcript on
+            // screen rather than a blank one. It is a no-op once a fetch has
+            // given the screen its truth.
+            restoreCache(attachedSessionId)
             // Identify the session before pulling any of its content. applyState
             // adopts whoever serves and loads that session's own history, so a
             // restart or a handover never mixes two transcripts.
@@ -564,6 +603,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         store.sessionId = sessionId
         store.sessionName = name.orEmpty()
         messages.clear()
+        showingSavedCopy = false
         pendingQuestion = null
         // An answer that was streaming belongs to the session being left, and the
         // transcript it would be drawn over is gone with it.
@@ -572,7 +612,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val label = sessionLabel(cwd, name).ifBlank { "a new session" }
             sessionNotice = "The bridge moved to $label; this screen follows it"
         }
-        reloadHistory()
+        // The moved-to session's own cache goes up before its history is fetched,
+        // so the move is instant and an unreachable bridge still shows what was
+        // saved. The fetch then merges over it and prunes the session left behind.
+        safeLaunch {
+            restoreCache(sessionId)
+            reloadHistory()
+        }
     }
 
     fun refreshState() {
@@ -632,8 +678,34 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     refreshState()
                     return@safeLaunch
                 }
+                // What the fetch found, merged with the cache so a turn older
+                // than the bridge's window survives its next fetch instead of
+                // being cut back to the window every time. The cache holds only
+                // what the bridge reported, so it is written before the messages
+                // the app made up are put back on top of it.
+                val previous = messages.toList()
+                val shown = if (attached == null) {
+                    parsed
+                } else {
+                    val fetched = parsed.map(::toEntry)
+                    val merged = withContext(Dispatchers.IO) {
+                        val result = mergeTranscript(transcriptStore.load(attached), fetched)
+                        transcriptStore.save(attached, result)
+                        result
+                    }
+                    merged.map(::toMessage)
+                }
+                // A message this app made up is not in the fetch, and a fetch
+                // that runs before the laptop has recorded the turn would erase
+                // it. It is carried over until the bridge reports its equivalent,
+                // and dropped then, so it is never on screen twice.
+                val local = carriedLocals(previous, shown)
                 messages.clear()
-                messages.addAll(parsed)
+                messages.addAll(shown)
+                messages.addAll(local)
+                // A fetch has now confirmed the transcript against the bridge,
+                // so what is on screen is no longer only the saved copy.
+                showingSavedCopy = false
                 // The line naming the session the app moved to has been read by the
                 // time its transcript is here, so it goes. A notice that never
                 // leaves is noise rather than information.
@@ -658,6 +730,97 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 lastError = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
             }
         }
+    }
+
+    /**
+     * Put the session's cached transcript on screen, if the screen is still
+     * empty. The file is read and parsed off the main thread, because a long
+     * transcript is megabytes, and it is only drawn when the session has not
+     * moved underneath it while the read was in flight.
+     */
+    private suspend fun restoreCache(sessionId: String?) {
+        val id = sessionId ?: return
+        if (messages.isNotEmpty()) return
+        val entries = withContext(Dispatchers.IO) { transcriptStore.load(id) }
+        if (messages.isEmpty() && attachedSessionId == id && entries.isNotEmpty()) {
+            messages.addAll(entries.map(::toMessage))
+            showingSavedCopy = true
+        }
+    }
+
+    /** The stored form of a message the bridge reported, which is what the cache keeps. */
+    private fun toEntry(message: ChatMessage): TranscriptEntry =
+        TranscriptEntry(
+            id = message.id,
+            role = message.role,
+            text = message.text,
+            timestamp = message.timestamp,
+            toolName = message.toolName,
+            answer = message.answer,
+        )
+
+    /** A cached entry as the screen reads it. */
+    private fun toMessage(entry: TranscriptEntry): ChatMessage =
+        ChatMessage(
+            id = entry.id,
+            role = entry.role,
+            text = entry.text,
+            timestamp = entry.timestamp,
+            toolName = entry.toolName,
+            answer = entry.answer,
+        )
+
+    /**
+     * The messages this app made up that the fetched set has no equivalent for,
+     * in the order they were already in. An equivalent that is now in the fetch
+     * leaves its local copy behind rather than showing it twice, which is how an
+     * optimistic question trace or prompt echo retires once pi has recorded it.
+     */
+    private fun carriedLocals(before: List<ChatMessage>, fetched: List<ChatMessage>): List<ChatMessage> {
+        val kept = ArrayList<ChatMessage>()
+        for (message in before) {
+            if (!isLocal(message)) continue
+            if (fetched.any { sameEntry(it, message) }) continue
+            // Two copies of the same local entry are one entry and settle the same
+            // way once the fetch brings its record.
+            if (kept.any { sameEntry(it, message) }) continue
+            kept.add(message)
+        }
+        return kept
+    }
+
+    /** True for a message the app made up rather than one the bridge reported. */
+    private fun isLocal(message: ChatMessage): Boolean =
+        SYNTHETIC_ID_PREFIXES.any { message.id.startsWith(it) }
+
+    /**
+     * Whether a fetched entry and a local message are the same thing. A question
+     * trace is compared on its question and its answer together, because that is
+     * the pair the tool result repeats; everything else is compared on role and
+     * text. Both sides are trimmed, since a local answer is trimmed before it is
+     * shown and the bridge's own copy may not be.
+     */
+    private fun sameEntry(a: ChatMessage, b: ChatMessage): Boolean =
+        if (a.role == QUESTION_ROLE && b.role == QUESTION_ROLE) {
+            a.text.trim() == b.text.trim() && a.answer?.trim() == b.answer?.trim()
+        } else {
+            a.role == b.role && a.text.trim() == b.text.trim()
+        }
+
+    /**
+     * When the session wrote an entry, in epoch millis. The session entry's own
+     * ISO 8601 timestamp is the one every entry carries, so it is used first; the
+     * message inside it carries an epoch in millis of its own and is the fallback
+     * for a payload that lost the first. Neither present leaves 0, which the
+     * merge fills from the entry's neighbour rather than letting a dateless one
+     * jump to the front of the transcript.
+     */
+    private fun entryTime(entry: JSONObject): Long {
+        val iso = entry.optString("timestamp").takeIf { it.isNotBlank() && it != "null" }
+        if (iso != null) {
+            runCatching { Instant.parse(iso).toEpochMilli() }.getOrNull()?.let { return it }
+        }
+        return entry.optJSONObject("message")?.optLong("timestamp") ?: 0L
     }
 
     fun updateAppearance(value: String) {
@@ -773,6 +936,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // A fresh pairing is a fresh attachment: nothing from the old one may
         // survive a history fetch that fails.
         messages.clear()
+        showingSavedCopy = false
         forgetSession()
     }
 
@@ -1105,11 +1269,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val message = entry.optJSONObject("message") ?: return emptyList()
         val role = message.optString("role").ifBlank { return emptyList() }
         val text = textOf(message, "content")
+        val time = entryTime(entry)
         // A tool result is process, and process stays off the transcript. The
         // question tools are the exception: what they return is what the person
         // chose, which is an answer and not narration. A questionnaire is the
         // one entry that becomes several, one per question it asked.
-        if (role == "toolResult") return questionTraces(entry, message, text)
+        if (role == "toolResult") return questionTraces(entry, message, text, time)
         if (text.isBlank()) return emptyList()
         return listOf(
             ChatMessage(
@@ -1117,6 +1282,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 role = role,
                 text = text,
                 toolName = if (role == "assistant" && hasToolCalls(message)) "toolCall" else null,
+                timestamp = time,
             )
         )
     }
@@ -1136,7 +1302,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * not available" with `answer: null` and no error flag, so the sentence is
      * the only thing that separates a dismissal from a failure.
      */
-    private fun questionTraces(entry: JSONObject, message: JSONObject, text: String): List<ChatMessage> {
+    private fun questionTraces(entry: JSONObject, message: JSONObject, text: String, time: Long): List<ChatMessage> {
         if (message.optBoolean("isError")) return emptyList() // a tool that failed chose nothing
         val details = message.optJSONObject("details")
         val name = message.optString("toolName")
@@ -1149,7 +1315,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         val id = entry.optString("id", UUID.randomUUID().toString())
         if (tool == QUESTIONNAIRE_TOOL) {
-            return details?.let { questionnaireTraces(id, it) }.orEmpty()
+            return details?.let { questionnaireTraces(id, it, time) }.orEmpty()
         }
         if (details == null) {
             // Only the sentence came through. Keep it, rather than invent the
@@ -1157,7 +1323,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // were carried, and the choice is still worth showing.
             val sentence = text.trim()
             if (sentence.isBlank()) return emptyList()
-            return listOf(ChatMessage(id = id, role = QUESTION_ROLE, text = "", answer = sentence, toolName = tool))
+            return listOf(
+                ChatMessage(id = id, role = QUESTION_ROLE, text = "", answer = sentence, toolName = tool, timestamp = time)
+            )
         }
         val question = details.string("question").orEmpty()
         // Null when nothing was chosen, which is what a dismissal records. A
@@ -1165,7 +1333,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val answer = details.string("answer")
         if (answer == null && !text.contains("cancel", ignoreCase = true)) return emptyList()
         if (question.isBlank()) return emptyList()
-        return listOf(ChatMessage(id = id, role = QUESTION_ROLE, text = question, answer = answer, toolName = tool))
+        return listOf(
+            ChatMessage(id = id, role = QUESTION_ROLE, text = question, answer = answer, toolName = tool, timestamp = time)
+        )
     }
 
     /**
@@ -1175,7 +1345,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * more than one, so a long pair of lists still reads straight down. A
      * questionnaire nobody answered was dismissed, and says so once.
      */
-    private fun questionnaireTraces(id: String, details: JSONObject): List<ChatMessage> {
+    private fun questionnaireTraces(id: String, details: JSONObject, time: Long): List<ChatMessage> {
         val questions = details.optJSONArray("questions") ?: JSONArray()
         val answers = details.optJSONArray("answers") ?: JSONArray()
         val labels = HashMap<String, String>()
@@ -1207,6 +1377,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     text = "$prefix$prompt",
                     answer = "$prefix$value",
                     toolName = QUESTIONNAIRE_TOOL,
+                    timestamp = time,
                 )
             )
         }
@@ -1220,6 +1391,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         text = dismissed,
                         answer = null,
                         toolName = QUESTIONNAIRE_TOOL,
+                        timestamp = time,
                     )
                 )
             }

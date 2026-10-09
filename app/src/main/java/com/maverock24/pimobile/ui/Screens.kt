@@ -393,6 +393,17 @@ fun ChatScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
+            // The transcript under that line can be the copy saved on this phone
+            // rather than live, and saying so is the difference between a record
+            // and a claim that the bridge just said it.
+            if (!vm.connected && vm.showingSavedCopy) {
+                Text(
+                    text = "Showing the transcript saved on this phone",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
             if (notice != null) {
                 NoticeBar(text = notice, onDismiss = onDismissNotice)
             }
