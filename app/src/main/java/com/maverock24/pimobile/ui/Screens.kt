@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -53,8 +55,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.flow.collect
 
 @Composable
 fun PiRemoteTheme(mode: String = "dark", content: @Composable () -> Unit) {
@@ -134,35 +139,8 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onDismissNotice: () -> Unit,
 ) {
-    val listState = rememberLazyListState()
     val turns = vm.turns
     val pending = vm.pendingQuestion
-    val liveAnswer = vm.liveAnswer
-
-    // Accordion: exactly one answer is open. Until you pick a prompt that is the
-    // newest turn, and a new prompt or a fresh answer puts the choice back
-    // there, so the answer you are waiting for is never the one left folded.
-    var explicitTurn by rememberSaveable { mutableStateOf<String?>(null) }
-    var followNewest by rememberSaveable { mutableStateOf(true) }
-    val newestTurn = turns.lastOrNull()?.id
-    val expandedTurn = if (followNewest) newestTurn else explicitTurn
-
-    LaunchedEffect(newestTurn, turns.lastOrNull()?.answers?.size) { followNewest = true }
-
-    // How many items the transcript makes: a prompt for every turn, a body for
-    // the one the accordion has open, a card when a question is waiting, and the
-    // end marker. The scroll below aims at the last of those.
-    val bottomItem = turns.size +
-        (if (turns.any { it.id == expandedTurn }) 1 else 0) +
-        (if (pending != null) 1 else 0)
-
-    LaunchedEffect(pending?.id, turns.size, turns.lastOrNull()?.answers?.size) {
-        // The end of the list, so the newest entry is on screen. Scrolling an
-        // item to the top of the viewport is not the same thing: a long answer
-        // would show its first lines, and the question widget below it would come
-        // to rest above the bottom edge rather than at it.
-        listState.animateScrollToItem(bottomItem)
-    }
 
     // The outcome of a request the user started: confirm when the bridge took
     // it, reject when it failed. Only these two paths and never a background
@@ -251,61 +229,19 @@ fun ChatScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            } else if (vm.viewMode == "deck") {
+                // The same transcript as cards. The deck and the transcript read
+                // one view model, so a turn and its answer are one thing shown
+                // two ways rather than two lists kept in step.
+                TurnDeck(vm = vm, modifier = Modifier.weight(1f).fillMaxWidth())
             } else {
-                // One scrolling surface for the transcript and the question
-                // widget. The widget is the newest thing there is and pi cannot
-                // go on without it, so it is the last item, below the turn that
-                // is waiting on it, and its options keep their full height
-                // instead of living inside a scroll box of their own.
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
-                ) {
-                    turns.forEach { turn ->
-                        // The prompt is a sticky header, so it stays at the top of
-                        // the screen while its answer is scrolled, and the answer
-                        // can be folded away without going back up to find it.
-                        stickyHeader(key = "prompt-${turn.id}") {
-                            TurnPrompt(
-                                turn = turn,
-                                expanded = turn.id == expandedTurn,
-                                onToggle = {
-                                    followNewest = false
-                                    explicitTurn = if (expandedTurn == turn.id) null else turn.id
-                                },
-                            )
-                        }
-                        if (turn.id == expandedTurn) {
-                            item(key = "body-${turn.id}") {
-                                TurnBody(
-                                    turn = turn,
-                                    liveText = if (turn.id == newestTurn) liveAnswer else null,
-                                    working = turn.id == newestTurn && vm.busy,
-                                    // Fades in and out as the accordion opens and
-                                    // closes, so folding an answer reads as a change
-                                    // rather than as a jump.
-                                    modifier = Modifier.animateItem(),
-                                )
-                            }
-                        }
-                    }
-                    if (pending != null) {
-                        item(key = "pending-question") {
-                            QuestionCard(
-                                pending = pending,
-                                onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
-                                onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
-                                onCancel = vm::cancelQuestion,
-                            )
-                        }
-                    }
-                    // The end of the list, so a scroll to the last item comes to
-                    // rest at the bottom edge with the newest entry above it,
-                    // rather than putting that entry at the top of the screen.
-                    item(key = "bottom") { Spacer(modifier = Modifier.height(1.dp)) }
-                }
+                Transcript(vm = vm, modifier = Modifier.weight(1f).fillMaxWidth())
             }
+
+            // The switch sits directly above the composer, in the same thumb's
+            // reach as the box you type in, and above it rather than over it so
+            // the composer keeps its full width and height.
+            ViewModeSwitch(mode = vm.viewMode, onChange = vm::updateViewMode)
 
             Composer(
                 draft = vm.draft,
@@ -322,6 +258,320 @@ fun ChatScreen(
                 onClear = vm::clearDraft,
                 onStop = vm::abort,
             )
+        }
+    }
+}
+
+/**
+ * The transcript: a list of turns whose prompt is a sticky header and whose
+ * answers open one at a time. It is the view the deck substitutes for, kept
+ * whole so the two share nothing but the view model they both read.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Transcript(vm: ChatViewModel, modifier: Modifier = Modifier) {
+    val listState = rememberLazyListState()
+    val turns = vm.turns
+    val pending = vm.pendingQuestion
+    val liveAnswer = vm.liveAnswer
+
+    // Accordion: exactly one answer is open. Until you pick a prompt that is the
+    // newest turn, and a new prompt or a fresh answer puts the choice back
+    // there, so the answer you are waiting for is never the one left folded.
+    var explicitTurn by rememberSaveable { mutableStateOf<String?>(null) }
+    var followNewest by rememberSaveable { mutableStateOf(true) }
+    val newestTurn = turns.lastOrNull()?.id
+    val expandedTurn = if (followNewest) newestTurn else explicitTurn
+
+    LaunchedEffect(newestTurn, turns.lastOrNull()?.answers?.size) { followNewest = true }
+
+    // How many items the transcript makes: a prompt for every turn, a body for
+    // the one the accordion has open, a card when a question is waiting, and the
+    // end marker. The scroll below aims at the last of those.
+    val bottomItem = turns.size +
+        (if (turns.any { it.id == expandedTurn }) 1 else 0) +
+        (if (pending != null) 1 else 0)
+
+    LaunchedEffect(pending?.id, turns.size, turns.lastOrNull()?.answers?.size) {
+        // The end of the list, so the newest entry is on screen. Scrolling an
+        // item to the top of the viewport is not the same thing: a long answer
+        // would show its first lines, and the question widget below it would come
+        // to rest above the bottom edge rather than at it.
+        listState.animateScrollToItem(bottomItem)
+    }
+
+    // One scrolling surface for the transcript and the question widget. The
+    // widget is the newest thing there is and pi cannot go on without it, so it
+    // is the last item, below the turn that is waiting on it, and its options
+    // keep their full height instead of living inside a scroll box of their own.
+    LazyColumn(
+        state = listState,
+        modifier = modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
+    ) {
+        turns.forEach { turn ->
+            // The prompt is a sticky header, so it stays at the top of the
+            // screen while its answer is scrolled, and the answer can be folded
+            // away without going back up to find it.
+            stickyHeader(key = "prompt-${turn.id}") {
+                TurnPrompt(
+                    turn = turn,
+                    expanded = turn.id == expandedTurn,
+                    onToggle = {
+                        followNewest = false
+                        explicitTurn = if (expandedTurn == turn.id) null else turn.id
+                    },
+                )
+            }
+            if (turn.id == expandedTurn) {
+                item(key = "body-${turn.id}") {
+                    TurnBody(
+                        turn = turn,
+                        liveText = if (turn.id == newestTurn) liveAnswer else null,
+                        working = turn.id == newestTurn && vm.busy,
+                        // Fades in and out as the accordion opens and closes, so
+                        // folding an answer reads as a change rather than as a
+                        // jump.
+                        modifier = Modifier.animateItem(),
+                    )
+                }
+            }
+        }
+        if (pending != null) {
+            item(key = "pending-question") {
+                QuestionCard(
+                    pending = pending,
+                    onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
+                    onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
+                    onCancel = vm::cancelQuestion,
+                )
+            }
+        }
+        // The end of the list, so a scroll to the last item comes to rest at the
+        // bottom edge with the newest entry above it, rather than putting that
+        // entry at the top of the screen.
+        item(key = "bottom") { Spacer(modifier = Modifier.height(1.dp)) }
+    }
+}
+
+/**
+ * The same transcript as a deck: one prompt per card, newest first, swiped
+ * sideways instead of scrolled. A turn and its answer are the same objects the
+ * transcript draws, so there is one transcript and two ways to read it rather
+ * than two records to keep in step.
+ */
+@Composable
+private fun TurnDeck(vm: ChatViewModel, modifier: Modifier = Modifier) {
+    val turns = vm.turns
+    val pending = vm.pendingQuestion
+    val liveAnswer = vm.liveAnswer
+    val newestTurn = turns.lastOrNull()?.id
+
+    // Newest first. A waiting question leads, because it is the newest thing in
+    // the session and pi is blocked on it.
+    val ordered = turns.asReversed()
+    val pageCount = ordered.size + if (pending != null) 1 else 0
+    val pagerState = rememberPagerState(pageCount = { pageCount })
+
+    // The card the answer is open on, one at a time as in the transcript.
+    var openTurn by rememberSaveable { mutableStateOf<String?>(null) }
+    // The older card the thumb is on, held by turn id: a turn arriving above it
+    // must not swap the card underneath, which is what a page number would do.
+    var heldTurn by remember { mutableStateOf<String?>(null) }
+
+    val keys = remember(ordered.map { it.id }, pending?.id) {
+        buildList {
+            if (pending != null) add("pending-question")
+            ordered.forEach { add("turn-${it.id}") }
+        }
+    }
+    val currentKeys by rememberUpdatedState(keys)
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPage }.collect { page ->
+            // Page zero is the newest card and follows whatever arrives there.
+            // Any other page is a turn being read, so it keeps its place.
+            heldTurn = if (page <= 0) null else currentKeys.getOrNull(page)?.removePrefix("turn-")
+        }
+    }
+
+    LaunchedEffect(keys, pagerState) {
+        // A waiting question is first and pi is blocked on it, so the deck opens
+        // there. Otherwise hold the card the user is on, or the newest when they
+        // are already at the front.
+        val held = heldTurn?.let { keys.indexOf("turn-$it") } ?: -1
+        val target = if (pending != null) 0 else if (held >= 0) held else 0
+        if (target != pagerState.currentPage) pagerState.scrollToPage(target)
+    }
+
+    HorizontalPager(
+        state = pagerState,
+        modifier = modifier,
+        key = { index ->
+            if (pending != null && index == 0) {
+                "pending-question"
+            } else {
+                "turn-" + ordered[if (pending != null) index - 1 else index].id
+            }
+        },
+    ) { page ->
+        val index = page - if (pending != null) 1 else 0
+        if (pending != null && page == 0) {
+            // The question is the whole page and scrolls on its own, so a long
+            // widget is answered without leaving the deck.
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+            ) {
+                QuestionCard(
+                    pending = pending,
+                    onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
+                    onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
+                    onCancel = vm::cancelQuestion,
+                )
+            }
+        } else if (index in ordered.indices) {
+            val turn = ordered[index]
+            DeckCard(
+                turn = turn,
+                expanded = turn.id == openTurn,
+                liveText = if (turn.id == newestTurn) liveAnswer else null,
+                working = turn.id == newestTurn && vm.busy,
+                onToggle = { openTurn = if (openTurn == turn.id) null else turn.id },
+            )
+        }
+    }
+}
+
+/**
+ * One turn as a card: the prompt in full as its heading, the answer folded
+ * behind a tap on that heading. The card scrolls on its own, so an answer taller
+ * than the screen is read within the page rather than by leaving the deck.
+ */
+@Composable
+private fun DeckCard(
+    turn: ChatTurn,
+    expanded: Boolean,
+    liveText: String?,
+    working: Boolean,
+    onToggle: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val prompt = turn.prompt
+    // A turn with no prompt is the answers that arrived before any prompt, which
+    // is what a history fetch mid-run gives back. There is nothing to fold them
+    // behind, so they are always shown.
+    val openable = prompt != null && turn.answers.isNotEmpty()
+    val showBody = prompt == null || expanded
+    val chevron by animateFloatAsState(if (expanded) 180f else 0f, label = "deckChevron")
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = AnswerStyle.promptGap),
+    ) {
+        Surface(
+            color = scheme.surfaceVariant,
+            border = BorderStroke(1.dp, scheme.outline),
+            shape = RoundedCornerShape(AnswerStyle.promptRadius),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column {
+                if (prompt != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Min)
+                            .clickable(enabled = openable, onClick = onToggle)
+                            .tactile(enabled = openable)
+                            .padding(
+                                start = AnswerStyle.promptPadding,
+                                end = AnswerStyle.promptPadding,
+                                top = AnswerStyle.promptPadding - 2.dp,
+                                bottom = AnswerStyle.promptPadding - 2.dp,
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(AnswerStyle.accentBar)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(scheme.primary),
+                        )
+                        Spacer(modifier = Modifier.width(AnswerStyle.accentBarGap))
+                        Text(
+                            text = prompt,
+                            fontSize = AnswerStyle.promptSize,
+                            lineHeight = AnswerStyle.promptLineHeight,
+                            fontWeight = FontWeight.SemiBold,
+                            color = scheme.onBackground,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (openable) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Filled.KeyboardArrowDown,
+                                contentDescription = if (expanded) "Hide answer" else "Show answer",
+                                tint = scheme.primary,
+                                modifier = Modifier.size(22.dp).rotate(chevron),
+                            )
+                        }
+                    }
+                }
+                when {
+                    showBody -> TurnBody(
+                        turn = turn,
+                        liveText = liveText,
+                        working = working,
+                        modifier = Modifier.padding(
+                            start = AnswerStyle.promptPadding,
+                            end = AnswerStyle.promptPadding,
+                            bottom = AnswerStyle.promptPadding,
+                        ),
+                    )
+                    // The working indicator belongs on the newest card while pi
+                    // is busy, so it shows even folded: the deck never leaves the
+                    // person without the one signal that work is happening.
+                    working -> WorkingShimmer(
+                        modifier = Modifier.padding(
+                            start = AnswerStyle.promptPadding,
+                            bottom = AnswerStyle.promptPadding,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The switch between the transcript and the deck: two buttons that name the
+ * views, the one in use bearing the mark the appearance buttons use. It sits in
+ * a row of its own so it never lands on the composer.
+ */
+@Composable
+private fun ViewModeSwitch(mode: String, onChange: (String) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        listOf("transcript" to "Transcript", "deck" to "Cards").forEach { (value, label) ->
+            TextButton(onClick = { onChange(value) }, modifier = Modifier.tactile()) {
+                Text(
+                    text = if (mode == value) "• $label" else label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (mode == value) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
         }
     }
 }

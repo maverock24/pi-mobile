@@ -192,6 +192,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var appearance by mutableStateOf(store.appearance)
         private set
 
+    /**
+     * Which view of the transcript is on screen: the scrolling transcript or the
+     * card deck. It is read and written the same way as [appearance], and both
+     * live in the store, so the choice survives a restart.
+     */
+    var viewMode by mutableStateOf(store.viewMode)
+        private set
+
     /** Set when a request the user started succeeds or fails. */
     var outcome by mutableStateOf<RequestOutcome?>(null)
         private set
@@ -562,6 +570,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun updateAppearance(value: String) {
         store.appearance = value
         appearance = value
+    }
+
+    /** Switch between the transcript and the deck; the choice is written down. */
+    fun updateViewMode(value: String) {
+        store.viewMode = value
+        viewMode = value
     }
 
     /**

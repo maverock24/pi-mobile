@@ -45,6 +45,15 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit().putString("appearance", value).apply()
 
     /**
+     * "transcript" or "deck": which of the two views of the same transcript is
+     * shown. It is kept next to the appearance, so the view the user last chose
+     * is the one a restart comes back to. The transcript is the default.
+     */
+    var viewMode: String
+        get() = prefs.getString("viewMode", "transcript") ?: "transcript"
+        set(value) = prefs.edit().putString("viewMode", value).apply()
+
+    /**
      * The pi session this phone attached to. It is written down so a restart
      * does not silently adopt whatever session happens to be serving: the app
      * moves only when the bridge reports a different id, and then it says so.
