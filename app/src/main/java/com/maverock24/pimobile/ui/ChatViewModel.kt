@@ -9,6 +9,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.maverock24.pimobile.data.Pin
+import com.maverock24.pimobile.data.PinsStore
 import com.maverock24.pimobile.data.SettingsStore
 import com.maverock24.pimobile.net.BridgeException
 import com.maverock24.pimobile.net.Diagnostics
@@ -80,6 +82,17 @@ internal fun sessionLabel(cwd: String?, name: String?): String =
         cwd?.let(::shortPath)?.takeIf { it.isNotBlank() },
         name?.takeIf { it.isNotBlank() },
     ).joinToString(" · ")
+
+/**
+ * A first title for a pin: the first non-blank line of the prompt, short enough
+ * for one list row. A pin of an answer that came before any prompt still needs
+ * a name, so it gets one rather than an empty line.
+ */
+internal fun defaultPinTitle(prompt: String): String {
+    val line = prompt.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    if (line.isEmpty()) return "Pinned answer"
+    return if (line.length <= 60) line else line.take(57).trimEnd() + "…"
+}
 
 data class ChatMessage(
     val id: String,
@@ -166,8 +179,20 @@ data class RequestOutcome(val id: Long, val ok: Boolean)
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = SettingsStore(app)
+    private val pinsStore = PinsStore(app)
     private val client = PiRemoteClient { store.baseUrl to store.token }
     private val main = Handler(Looper.getMainLooper())
+
+    /**
+     * The pinned prompts and answers, newest first. It is loaded once at start
+     * and written through [pinsStore] on every change, so a pin survives a
+     * restart. Pins name no session, so they outlive the one that made them.
+     */
+    val pins = mutableStateListOf<Pin>()
+
+    init {
+        pins.addAll(pinsStore.load())
+    }
 
     val messages = mutableStateListOf<ChatMessage>()
 
@@ -764,6 +789,51 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val text = selectedExcerpt ?: return
         selectedExcerpt = null
         if (text.isNotBlank()) send(text)
+    }
+
+    /**
+     * Save one prompt and its answer as a pin. A second pin of the same two
+     * texts is refused, because the record it would hold is already there and
+     * two identical entries would only be noise; the caller says so. Returns
+     * true when a new pin was added.
+     */
+    fun pin(prompt: String?, answer: String): Boolean {
+        val promptText = prompt.orEmpty().trim()
+        val answerText = answer.trim()
+        if (answerText.isEmpty() || isPinned(promptText, answerText)) return false
+        pins.add(
+            0,
+            Pin(
+                id = UUID.randomUUID().toString(),
+                title = defaultPinTitle(promptText),
+                prompt = promptText,
+                answer = answerText,
+            ),
+        )
+        pinsStore.save(pins)
+        return true
+    }
+
+    /** True when this prompt and answer are already pinned. */
+    fun isPinned(prompt: String?, answer: String): Boolean {
+        val promptText = prompt.orEmpty().trim()
+        val answerText = answer.trim()
+        if (answerText.isEmpty()) return false
+        return pins.any { it.prompt == promptText && it.answer == answerText }
+    }
+
+    /** Change only a pin's title; the two texts are the record and stay put. */
+    fun renamePin(id: String, title: String) {
+        val index = pins.indexOfFirst { it.id == id }
+        if (index < 0) return
+        val trimmed = title.trim()
+        if (trimmed.isEmpty() || trimmed == pins[index].title) return
+        pins[index] = pins[index].copy(title = trimmed)
+        pinsStore.save(pins)
+    }
+
+    fun deletePin(id: String) {
+        if (pins.removeAll { it.id == id }) pinsStore.save(pins)
     }
 
     fun appendToDraft(text: String) {

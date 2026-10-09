@@ -45,9 +45,10 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit().putString("appearance", value).apply()
 
     /**
-     * "transcript" or "deck": which of the two views of the same transcript is
-     * shown. It is kept next to the appearance, so the view the user last chose
-     * is the one a restart comes back to. The transcript is the default.
+     * "transcript", "deck" or "pins": which view is shown. The first two are
+     * views of the same transcript and the third is the saved pins. It is kept
+     * next to the appearance, so the view the user last chose is the one a
+     * restart comes back to. The transcript is the default.
      */
     var viewMode: String
         get() = prefs.getString("viewMode", "transcript") ?: "transcript"

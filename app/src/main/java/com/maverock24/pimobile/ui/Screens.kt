@@ -44,9 +44,12 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -99,6 +102,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import com.maverock24.pimobile.data.Pin
 import com.maverock24.pimobile.update.UpdateChecker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -397,6 +401,15 @@ fun ChatScreen(
                     },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
+            } else if (vm.viewMode == "pins") {
+                // Pins is its own view of the record, so it is shown even when
+                // the transcript is empty: a phone that has not connected yet can
+                // still read and send what it saved before.
+                PinsView(
+                    vm = vm,
+                    onConfirm = { actionNotice = it },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
             } else if (turns.isEmpty() && pending == null) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
@@ -574,6 +587,7 @@ private fun Transcript(
             if (turn.id == expandedTurn) {
                 item(key = "body-${turn.id}") {
                     TurnBody(
+                        vm = vm,
                         turn = turn,
                         liveText = if (turn.id == newestTurn) liveAnswer else null,
                         working = turn.id == newestTurn && vm.busy,
@@ -704,6 +718,7 @@ private fun TurnDeck(
         } else if (index in ordered.indices) {
             val turn = ordered[index]
             DeckCard(
+                vm = vm,
                 turn = turn,
                 expanded = turn.id == openTurn,
                 liveText = if (turn.id == newestTurn) liveAnswer else null,
@@ -723,6 +738,7 @@ private fun TurnDeck(
  */
 @Composable
 private fun DeckCard(
+    vm: ChatViewModel,
     turn: ChatTurn,
     expanded: Boolean,
     liveText: String?,
@@ -797,6 +813,7 @@ private fun DeckCard(
                 }
                 when {
                     showBody -> TurnBody(
+                        vm = vm,
                         turn = turn,
                         liveText = liveText,
                         working = working,
@@ -838,7 +855,7 @@ private fun ViewModeSwitch(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        listOf("transcript" to "Transcript", "deck" to "Cards").forEach { (value, label) ->
+        listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins").forEach { (value, label) ->
             TextButton(onClick = { onChange(value) }, modifier = Modifier.tactile()) {
                 Text(
                     text = if (mode == value) "• $label" else label,
@@ -904,6 +921,241 @@ private fun SelectionBar(
                 }
                 TextButton(onClick = onClear, modifier = Modifier.tactile()) { Text("Dismiss") }
             }
+        }
+    }
+}
+
+/**
+ * The pins, newest first: each row is a title with enough of the prompt under it
+ * to recognise the pin by. Tapping a row opens it whole. The row carries no
+ * actions of its own because they all belong to one pin and need the pin on
+ * screen, so they live in the opened view instead of on a list that can only
+ * show a snippet.
+ */
+@Composable
+private fun PinsView(
+    vm: ChatViewModel,
+    onConfirm: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val pins = vm.pins
+    var openedId by rememberSaveable { mutableStateOf<String?>(null) }
+    val opened = pins.firstOrNull { it.id == openedId }
+
+    if (opened != null) {
+        PinDetail(
+            pin = opened,
+            vm = vm,
+            onConfirm = onConfirm,
+            onBack = { openedId = null },
+            modifier = modifier,
+        )
+    } else if (pins.isEmpty()) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text(
+                text = "No pins yet. Pin an answer to keep its prompt and its reply here.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(24.dp),
+            )
+        }
+    } else {
+        LazyColumn(
+            modifier = modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
+        ) {
+            items(pins, key = { it.id }) { pin ->
+                PinRow(pin = pin, onClick = { openedId = pin.id })
+            }
+        }
+    }
+}
+
+/** One pin in the list: its title, then the prompt, or the answer when there is none. */
+@Composable
+private fun PinRow(pin: Pin, onClick: () -> Unit) {
+    val snippet = pin.prompt.ifBlank { pin.answer }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(AnswerStyle.promptRadius),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).tactile(),
+    ) {
+        Column(modifier = Modifier.padding(AnswerStyle.promptPadding)) {
+            Text(
+                text = pin.title,
+                fontSize = AnswerStyle.promptSize,
+                lineHeight = AnswerStyle.promptLineHeight,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = snippet,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+/**
+ * One pin, opened. The prompt and the answer are shown in full, the answer drawn
+ * the way answers are drawn everywhere else. Editing the title, deleting the pin
+ * and sending the prompt again all live here, on the one pin they act on.
+ *
+ * Deleting takes two taps: the first asks, the second does it, so a thumb that
+ * lands on Delete by accident cannot lose a pin.
+ */
+@Composable
+private fun PinDetail(
+    pin: Pin,
+    vm: ChatViewModel,
+    onConfirm: (String) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var editing by rememberSaveable(pin.id) { mutableStateOf(false) }
+    var titleDraft by rememberSaveable(pin.id) { mutableStateOf(pin.title) }
+    var confirmingDelete by rememberSaveable(pin.id) { mutableStateOf(false) }
+    val canSend = pin.prompt.isNotBlank() && vm.composerBlock == null
+
+    Column(modifier = modifier.verticalScroll(rememberScrollState())) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.tactile()) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to pins")
+            }
+            Text(
+                text = "Pinned",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
+        ) {
+            if (editing) {
+                OutlinedTextField(
+                    value = titleDraft,
+                    onValueChange = { titleDraft = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("Title") },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            vm.renamePin(pin.id, titleDraft)
+                            editing = false
+                            onConfirm("Title saved")
+                        },
+                        enabled = titleDraft.isNotBlank(),
+                        modifier = Modifier
+                            .heightIn(min = AnswerStyle.buttonHeight)
+                            .tactile(haptics = true, enabled = titleDraft.isNotBlank(), depth = AnswerStyle.keyDepth),
+                    ) {
+                        Text("Save", style = MaterialTheme.typography.bodyLarge)
+                    }
+                    TextButton(
+                        onClick = { titleDraft = pin.title; editing = false },
+                        modifier = Modifier.tactile(),
+                    ) { Text("Cancel") }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = pin.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = { titleDraft = pin.title; editing = true },
+                        modifier = Modifier.tactile(),
+                    ) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit title")
+                    }
+                }
+            }
+
+            if (pin.prompt.isNotBlank()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    shape = RoundedCornerShape(AnswerStyle.promptRadius),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = pin.prompt,
+                        fontSize = AnswerStyle.promptSize,
+                        lineHeight = AnswerStyle.promptLineHeight,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(AnswerStyle.promptPadding),
+                    )
+                }
+            }
+
+            AnswerView(
+                text = pin.answer,
+                modifier = Modifier.widthIn(max = AnswerStyle.measure),
+            )
+
+            Button(
+                onClick = {
+                    vm.send(pin.prompt)
+                    onConfirm("Prompt sent")
+                },
+                enabled = canSend,
+                modifier = Modifier
+                    .heightIn(min = AnswerStyle.buttonHeight)
+                    .tactile(haptics = true, enabled = canSend, depth = AnswerStyle.keyDepth),
+            ) {
+                Text("Send prompt", style = MaterialTheme.typography.bodyLarge)
+            }
+
+            if (confirmingDelete) {
+                Text(
+                    text = "Delete this pin? This cannot be undone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            vm.deletePin(pin.id)
+                            onBack()
+                            onConfirm("Pin deleted")
+                        },
+                        modifier = Modifier
+                            .heightIn(min = AnswerStyle.buttonHeight)
+                            .tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                    ) {
+                        Text("Delete", style = MaterialTheme.typography.bodyLarge)
+                    }
+                    TextButton(onClick = { confirmingDelete = false }, modifier = Modifier.tactile()) {
+                        Text("Cancel")
+                    }
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { confirmingDelete = true },
+                    modifier = Modifier
+                        .heightIn(min = AnswerStyle.buttonHeight)
+                        .tactile(depth = AnswerStyle.keyDepth),
+                ) {
+                    Text("Delete pin", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
         }
     }
 }
@@ -1092,14 +1344,48 @@ private val CopyIcon: ImageVector by lazy {
 }
 
 /**
- * Copy and share, under one answer. Copy puts the answer's text on the
- * clipboard; share hands it to the system chooser as plain text. Both ring the
- * confirm haptic and raise the chat screen's notice, so a tap always says it did
- * something. The row belongs to a plain answer only, never to a question trace
- * or to the working indicator.
+ * The pin glyph, built here for the same reason as the copy glyph: the icon set
+ * on the classpath has no pin and the extended set is too large a dependency. It
+ * is a thumbtack, a head over a narrowed neck and a point.
+ */
+private val PinIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Pin",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        addPath(
+            pathData = PathParser().parsePathString(
+                "M16,9V4l1,0c0.55,0 1,-0.45 1,-1v0c0,-0.55 -0.45,-1 -1,-1H7" +
+                    "C6.45,2 6,2.45 6,3v0c0,0.55 0.45,1 1,1l1,0v5c0,1.66 -1.34,3 -3,3v2h5.97v7" +
+                    "l1,1l1,-1v-7H19v-2c-1.66,0 -3,-1.34 -3,-3z",
+            ).toNodes(),
+            fill = SolidColor(Color.Black),
+        )
+    }.build()
+}
+
+/**
+ * Copy, share and pin, under one answer. Copy puts the answer's text on the
+ * clipboard; share hands it to the system chooser as plain text; pin saves the
+ * prompt and the answer together, with a title the user can change in the Pins
+ * view. All three ring the confirm haptic and raise the chat screen's notice, so
+ * a tap always says it did something. The row belongs to a plain answer only,
+ * never to a question trace or to the working indicator.
+ *
+ * The pin drawn filled means this prompt and answer are already saved, and a
+ * second tap says so rather than making a duplicate; removing a pin is done in
+ * the Pins view, where the whole pin is on screen.
  */
 @Composable
-private fun AnswerActions(text: String, onConfirm: (String) -> Unit) {
+private fun AnswerActions(
+    text: String,
+    pinned: Boolean,
+    onPin: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val view = LocalView.current
@@ -1140,6 +1426,14 @@ private fun AnswerActions(text: String, onConfirm: (String) -> Unit) {
                 modifier = Modifier.size(18.dp),
             )
         }
+        IconButton(onClick = onPin) {
+            Icon(
+                imageVector = PinIcon,
+                contentDescription = if (pinned) "Pinned" else "Pin answer",
+                tint = if (pinned) MaterialTheme.colorScheme.primary else tint,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 
@@ -1150,6 +1444,7 @@ private fun AnswerActions(text: String, onConfirm: (String) -> Unit) {
  */
 @Composable
 private fun TurnBody(
+    vm: ChatViewModel,
     turn: ChatTurn,
     liveText: String?,
     working: Boolean,
@@ -1177,7 +1472,15 @@ private fun TurnBody(
                         modifier = Modifier.widthIn(max = AnswerStyle.measure),
                         onSelectionChange = onExcerpt,
                     )
-                    AnswerActions(text = answer.text, onConfirm = onConfirm)
+                    AnswerActions(
+                        text = answer.text,
+                        pinned = vm.isPinned(turn.prompt, answer.text),
+                        onPin = {
+                            val added = vm.pin(turn.prompt, answer.text)
+                            onConfirm(if (added) "Prompt pinned" else "Already pinned")
+                        },
+                        onConfirm = onConfirm,
+                    )
                 }
             }
         }
@@ -1191,7 +1494,15 @@ private fun TurnBody(
                     modifier = Modifier.widthIn(max = AnswerStyle.measure),
                     onSelectionChange = onExcerpt,
                 )
-                AnswerActions(text = liveText, onConfirm = onConfirm)
+                AnswerActions(
+                    text = liveText,
+                    pinned = vm.isPinned(turn.prompt, liveText),
+                    onPin = {
+                        val added = vm.pin(turn.prompt, liveText)
+                        onConfirm(if (added) "Prompt pinned" else "Already pinned")
+                    },
+                    onConfirm = onConfirm,
+                )
             }
         } else if (working && turn.answers.isEmpty()) {
             // Nothing has streamed yet and nothing has been committed, so the run
