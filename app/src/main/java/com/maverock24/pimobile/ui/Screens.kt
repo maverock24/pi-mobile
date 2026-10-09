@@ -38,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -87,45 +88,50 @@ fun PiRemoteTheme(mode: String = "dark", content: @Composable () -> Unit) {
         "light" -> false
         else -> isSystemInDarkTheme()
     }
-    MaterialTheme(colorScheme = if (dark) AnswerStyle.darkScheme else AnswerStyle.lightScheme) {
+    val scheme = if (dark) AnswerStyle.darkScheme else AnswerStyle.lightScheme
+    MaterialTheme(colorScheme = scheme) {
         // One ground for every screen, drawn here once and left alone by the
         // screens above it, so the transcript, the deck and the settings all sit
         // on the same sky rather than each painting its own.
-        Box(modifier = Modifier.fillMaxSize().skyBackground(dark)) { content() }
+        Box(modifier = Modifier.fillMaxSize().skyBackground(scheme, dark)) { content() }
     }
 }
 
 /**
- * The media app's night sky: a navy gradient down the page with a cyan glow at
- * the horizon and a weaker one below the middle, both at the alphas that app
- * uses. It is drawn only for the dark scheme, because that app is a dark app and
- * a glow on near-white is a smudge.
+ * The page the app sits on: the scheme's own background colour, with the media
+ * app's night sky drawn over it for the dark scheme.
+ *
+ * The flat colour is painted either way, because the screens above are
+ * transparent so that this is what shows through. Leaving it unpainted for the
+ * light scheme put that scheme's dark-on-light text on whatever the window
+ * happened to have behind it.
  */
-private fun Modifier.skyBackground(dark: Boolean): Modifier {
-    if (!dark) return this
-    return this.drawWithContent {
-        drawRect(
-            brush = Brush.verticalGradient(
-                colors = listOf(AnswerStyle.skyTop, AnswerStyle.skyMid, AnswerStyle.skyBottom),
+private fun Modifier.skyBackground(scheme: ColorScheme, dark: Boolean): Modifier =
+    this.drawWithContent {
+        drawRect(color = scheme.background)
+        if (dark) {
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(AnswerStyle.skyTop, AnswerStyle.skyMid, AnswerStyle.skyBottom),
+                )
             )
-        )
-        drawRect(
-            brush = Brush.radialGradient(
-                colors = listOf(AnswerStyle.skyHorizonGlow, Color.Transparent),
-                center = Offset(size.width / 2f, 0f),
-                radius = size.width * 0.9f,
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = listOf(AnswerStyle.skyHorizonGlow, Color.Transparent),
+                    center = Offset(size.width / 2f, 0f),
+                    radius = size.width * 0.9f,
+                )
             )
-        )
-        drawRect(
-            brush = Brush.radialGradient(
-                colors = listOf(AnswerStyle.skyMiddleGlow, Color.Transparent),
-                center = Offset(size.width / 2f, size.height * 0.62f),
-                radius = size.width,
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = listOf(AnswerStyle.skyMiddleGlow, Color.Transparent),
+                    center = Offset(size.width / 2f, size.height * 0.62f),
+                    radius = size.width,
+                )
             )
-        )
+        }
         drawContent()
     }
-}
 
 /**
  * The bar's working indicator: an accent line sweeping along its top edge, shown
