@@ -256,6 +256,15 @@ fun ChatScreen(
     // was typed for a prompt and closing it hands that draft straight back.
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+    // The command palette opens on its own when the draft starts with a slash,
+    // and by the affordance beside the field otherwise. Tapping a command only
+    // writes it into the draft, so the palette never sends; the user still adds
+    // arguments and presses Send.
+    var paletteOpen by rememberSaveable { mutableStateOf(false) }
+    // A command was just picked, so the palette stays closed while the user adds
+    // arguments even though the draft still starts with a slash. It reopens once
+    // the slash is gone, or if the affordance is tapped again.
+    var paletteDismissed by rememberSaveable { mutableStateOf(false) }
     // A copy or share says it worked in the notice bar, the same bar the rest of
     // the app's notices use. It clears itself, because a confirmation is only
     // useful while the action is still fresh, and it is kept apart from the
@@ -299,6 +308,21 @@ fun ChatScreen(
         }
         delay(350)
         vm.search(query)
+    }
+
+    // Commands are offered for a prompt and never for a search, and only when
+    // the user is reaching for one: a leading slash, or the affordance. What
+    // follows the slash is the filter, so /ski narrows to the skills. A pick
+    // hides the palette until the slash goes, so the arguments can be typed.
+    val slashQuery = if (!searchOpen && vm.draft.startsWith("/")) vm.draft.drop(1) else null
+    val paletteVisible = !searchOpen && ((slashQuery != null && !paletteDismissed) || paletteOpen)
+    LaunchedEffect(slashQuery) {
+        if (slashQuery == null) paletteDismissed = false
+    }
+    // Opening the palette fetches the list if nothing has yet. The call is
+    // keyed by session, so this is a no-op once the list is here.
+    LaunchedEffect(paletteVisible) {
+        if (paletteVisible) vm.loadCommands()
     }
 
     // The outcome of a request the user started: confirm when the bridge took
@@ -479,6 +503,23 @@ fun ChatScreen(
                 onChange = vm::updateViewMode,
             )
 
+            // The commands sit directly above the composer, in the same thumb's
+            // reach as the field they fill. It is only present while the user is
+            // reaching for a command, so the transcript keeps the room otherwise.
+            if (paletteVisible) {
+                CommandPalette(
+                    commands = vm.commands,
+                    query = slashQuery,
+                    note = vm.commandsNote,
+                    onPick = { command ->
+                        vm.updateDraft("/${command.name} ")
+                        paletteOpen = false
+                        paletteDismissed = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
             Composer(
                 text = if (searchOpen) query else vm.draft,
                 onTextChange = { if (searchOpen) query = it else vm.updateDraft(it) },
@@ -506,6 +547,16 @@ fun ChatScreen(
                         vm.clearDraft()
                     }
                 },
+                onToggleCommands = {
+                    if (paletteVisible) {
+                        paletteOpen = false
+                        paletteDismissed = true
+                    } else {
+                        paletteOpen = true
+                        paletteDismissed = false
+                    }
+                },
+                commandsEnabled = !searchOpen,
                 onToggleMic = onToggleMic,
                 onClear = {
                     if (searchOpen) {
@@ -1559,6 +1610,79 @@ private fun readClipText(manager: ClipboardManager?): String? {
     return clip.getItemAt(0).text?.toString()
 }
 
+/**
+ * The commands a prompt may dispatch, above the composer. It is shown filtered
+ * by whatever follows a leading slash, and whole when the affordance opened it.
+ * Each row names the command, says what it does and marks where it comes from,
+ * so a skill reads as a skill rather than as another extension. A tap only
+ * writes the command into the draft; the row never sends on its own.
+ */
+@Composable
+private fun CommandPalette(
+    commands: List<SessionCommand>,
+    query: String?,
+    note: String?,
+    onPick: (SessionCommand) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val needle = query?.trim()?.lowercase()
+    val shown = if (needle.isNullOrEmpty()) commands else commands.filter { it.name.lowercase().contains(needle) }
+    Column(
+        modifier = modifier
+            .heightIn(max = 240.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        if (shown.isEmpty()) {
+            // The note covers an older bridge that has no command list at all;
+            // an empty list that is merely not loaded yet stays quiet.
+            Text(
+                text = note ?: if (commands.isEmpty()) "no commands to offer" else "no matching command",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+            )
+            return@Column
+        }
+        for (command in shown) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(AnswerStyle.promptRadius))
+                    .clickable { onPick(command) }
+                    .tactile()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "/${command.name}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    if (command.description.isNotBlank()) {
+                        Text(
+                            text = command.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (command.source.isNotBlank()) {
+                    Text(
+                        text = command.source,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun Composer(
     text: String,
@@ -1572,6 +1696,8 @@ private fun Composer(
     actionLabel: String,
     actionEnabled: Boolean,
     onAction: () -> Unit,
+    onToggleCommands: () -> Unit,
+    commandsEnabled: Boolean,
     onToggleMic: () -> Unit,
     onClear: () -> Unit,
     onStop: () -> Unit,
@@ -1587,12 +1713,29 @@ private fun Composer(
                 modifier = Modifier.padding(bottom = 4.dp),
             )
         }
+        // The command affordance, small and at the field's leading edge. It
+        // opens the palette for a prompt; in search mode it is absent, since
+        // there is no prompt to complete.
+        val commandAffordance: (@Composable () -> Unit)? = if (commandsEnabled) {
+            {
+                IconButton(onClick = onToggleCommands) {
+                    Text(
+                        text = "/",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        } else {
+            null
+        }
         OutlinedTextField(
             value = text,
             onValueChange = onTextChange,
             modifier = Modifier.fillMaxWidth(),
             minLines = 1,
             maxLines = 6,
+            leadingIcon = commandAffordance,
             placeholder = { Text(placeholder) },
         )
         Spacer(modifier = Modifier.height(8.dp))

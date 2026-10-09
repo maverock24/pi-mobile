@@ -10,6 +10,8 @@
  *   GET  /api/state     - session, model, idle/busy, pending queue, bound address
  *   GET  /api/history   - messages on the active branch (?limit=N)
  *   GET  /api/search    - message entries matching ?q= (case-insensitive)
+ *   GET  /api/commands  - slash commands, prompt templates and skills, so the
+ *                         phone can offer what it can dispatch
  *   GET  /api/events    - SSE stream of agent/tool/message events
  *   POST /api/prompt    - {"text": "...", "deliverAs": "steer"|"followUp"}
  *   POST /api/abort     - abort the current agent run
@@ -657,6 +659,37 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	/**
+	 * The things a prompt may dispatch: extension commands, prompt templates and
+	 * skills, the same set the laptop completes on. getCommands() reports exactly
+	 * those three sources and nothing else. Built-in slash commands are left out
+	 * on purpose: they are not in this list, and one that only exists in the
+	 * interactive TUI is a keystroke the TUI handles rather than text a prompt
+	 * expands, so sending it from here would be a name that quietly does nothing.
+	 * Offering it would promise a command the phone cannot run.
+	 *
+	 * sourceInfo is dropped: it is a local path or a plugin name the phone has no
+	 * use for, and the app only draws the source kind.
+	 */
+	function commandsPayload() {
+		const base = { sessionId: sessionId() };
+		if (!context) {
+			return { ...base, commands: [] };
+		}
+		try {
+			const commands = pi.getCommands().map((command) => ({
+				name: command.name,
+				description: command.description ?? "",
+				source: command.source,
+			}));
+			return { ...base, commands };
+		} catch {
+			// A session caught between states answers with none rather than a 500;
+			// the phone does not need a command list to use the bridge.
+			return { ...base, commands: [] };
+		}
+	}
+
+	/**
 	 * Pairing trades a short-lived, single-use code for a device token, so the token
 	 * itself never lands in a QR image, a deep link, or the phone's camera history.
 	 * Reading the code off the laptop screen is the one step a human must do.
@@ -965,6 +998,11 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
+		if (req.method === "GET" && url.pathname === "/api/commands") {
+			sendJson(res, 200, shrink(commandsPayload()));
+			return;
+		}
+
 		if (req.method === "GET" && url.pathname === "/api/events") {
 			res.writeHead(200, {
 				"content-type": "text/event-stream; charset=utf-8",
@@ -1010,10 +1048,15 @@ export default function (pi: ExtensionAPI) {
 					const busy = !ctx.isIdle();
 					const requested = typeof body.deliverAs === "string" ? body.deliverAs : "steer";
 					const deliverAs = requested === "followUp" ? "followUp" : "steer";
+					// expandPromptTemplates is what makes a phone prompt behave like a
+					// prompt typed on the laptop: /name dispatches an extension command
+					// or a skill, and a template name expands. Without it the text stays
+					// literal and /skill:foo does nothing. There is no flag for the app
+					// to send, because the point is parity, not a second way to prompt.
 					if (busy) {
-						pi.sendUserMessage(text, { deliverAs });
+						pi.sendUserMessage(text, { deliverAs, expandPromptTemplates: true });
 					} else {
-						pi.sendUserMessage(text);
+						pi.sendUserMessage(text, { expandPromptTemplates: true });
 					}
 					emit("prompt_accepted", { busy, deliverAs: busy ? deliverAs : "immediate", chars: text.length });
 					audit({

@@ -156,6 +156,19 @@ data class SearchHit(
 )
 
 /**
+ * One command a prompt may dispatch: an extension command, a prompt template or
+ * a skill. [source] is which of the three ("extension", "prompt" or "skill"),
+ * so a skill is recognisable as a skill rather than as another extension
+ * command. The bridge names a skill "skill:<name>", which is also what the
+ * draft gets.
+ */
+data class SessionCommand(
+    val name: String,
+    val description: String,
+    val source: String,
+)
+
+/**
  * Groups the transcript by prompt. An assistant message carries no link to the
  * prompt that caused it, but the order does: every answer that follows a prompt
  * belongs to it. Answers that arrive before any prompt, which happens when the
@@ -321,6 +334,30 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var searchSeq = 0L
 
     /**
+     * The commands a prompt may dispatch for the attached session, offered by
+     * the composer. They are read once per session and kept in memory only;
+     * nothing here is worth surviving a restart.
+     */
+    var commands by mutableStateOf<List<SessionCommand>>(emptyList())
+        private set
+
+    /**
+     * The session [commands] was read for. A handover makes it stale, so the
+     * next read replaces the list whole rather than mixing two sessions'.
+     */
+    private var commandsFor: String? = null
+    private var commandsLoaded = false
+    private var commandsInFlight = false
+
+    /**
+     * A quiet line for the palette when the bridge has no command endpoint at
+     * all, which is what an older build is. It is only ever drawn inside the
+     * palette, never on the screen at rest, so nothing shouts unasked.
+     */
+    var commandsNote by mutableStateOf<String?>(null)
+        private set
+
+    /**
      * The session this app is pinned to. Requests carry it, so the bridge
      * refuses one that arrives after the bridge changed hands, and a restart
      * reads it back from [SettingsStore] instead of adopting whatever serves.
@@ -420,6 +457,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         sessionName = null
         sessionCwd = null
         sessionNotice = null
+        // The commands named a bridge that is no longer attached, so they go
+        // with it rather than sitting under the next one's name.
+        commands = emptyList()
+        commandsFor = null
+        commandsLoaded = false
+        commandsNote = null
     }
 
     fun connect() {
@@ -487,6 +530,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 reloadHistory()
             }
             refreshState()
+            loadCommands()
             runCatching { client.question() }
                 .onSuccess { applyQuestion(it.optJSONObject("pending")) }
         }
@@ -619,6 +663,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             restoreCache(sessionId)
             reloadHistory()
         }
+        // The commands belong to the session; a move drops the old set and asks
+        // for the new one. The call is keyed by session, so it never refetches
+        // what is already here.
+        loadCommands()
     }
 
     fun refreshState() {
@@ -913,6 +961,64 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         searchResults = emptyList()
         searching = false
         searchError = null
+    }
+
+    /**
+     * Ask the bridge for the commands a prompt may dispatch. The list is
+     * optional: an older bridge has no endpoint and answers 404, and then the
+     * palette simply offers nothing. It is read once per session, so opening
+     * the palette costs nothing, and a failure that is not a 404 is left
+     * unloaded so the next reachable moment tries again.
+     */
+    fun loadCommands() {
+        val session = attachedSessionId
+        if (commandsLoaded && session == commandsFor) return
+        if (commandsInFlight) return
+        commandsInFlight = true
+        safeLaunch {
+            runCatching { client.commands() }
+                .onSuccess { payload ->
+                    commandsInFlight = false
+                    val from = payload.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
+                    val attached = attachedSessionId
+                    // The bridge can change hands mid-request; those commands
+                    // belong to another session and are dropped.
+                    if (from != null && attached != null && from != attached) {
+                        refreshState()
+                        return@onSuccess
+                    }
+                    val array = payload.optJSONArray("commands") ?: JSONArray()
+                    val list = ArrayList<SessionCommand>()
+                    for (index in 0 until array.length()) {
+                        val item = array.optJSONObject(index) ?: continue
+                        val name = item.optString("name")
+                        if (name.isBlank()) continue
+                        list.add(
+                            SessionCommand(
+                                name = name,
+                                description = item.optString("description"),
+                                source = item.optString("source"),
+                            )
+                        )
+                    }
+                    commands = list
+                    commandsFor = attachedSessionId
+                    commandsLoaded = true
+                    commandsNote = null
+                }
+                .onFailure { error ->
+                    commandsInFlight = false
+                    // A 404 is an older bridge with no such path, the same way
+                    // search reads it. There is nothing to offer and nothing
+                    // worth saying outside the palette, so remember only that
+                    // this session has none.
+                    if (error is BridgeException && error.code == 404) {
+                        commandsFor = attachedSessionId
+                        commandsLoaded = true
+                        commandsNote = "this bridge has no command list; reload it on the laptop"
+                    }
+                }
+        }
     }
 
     /** Ask either view to open the turn with this id on its next composition. */

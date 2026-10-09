@@ -86,6 +86,14 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
         return execute(builder("/api/search?q=$encoded&limit=$limit").get().build())
     }
 
+    /**
+     * The slash commands the bridge offers in the session: extension commands,
+     * prompt templates and skills. An older bridge answers 404 for a path it
+     * does not know, which the caller reads as "no command list" rather than a
+     * failure worth showing.
+     */
+    suspend fun commands(): JSONObject = execute(builder("/api/commands").get().build())
+
     suspend fun prompt(text: String, deliverAs: String = "steer", sessionId: String? = null): JSONObject {
         val payload = JSONObject().apply {
             put("text", text)
