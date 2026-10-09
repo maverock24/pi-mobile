@@ -4,6 +4,8 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -133,6 +135,58 @@ object AnswerStyle {
     private val accentLight = Color(0xFF3562D6)
 
     /**
+     * Fills every colour role Material3 can fall back on from the handful a theme
+     * states, so nothing on screen paints with Material's purple baseline. The
+     * baseline is what a plain notice bar, a tonal button and a text field would
+     * otherwise use, because a scheme that sets only its core slots leaves every
+     * other role at the default.
+     *
+     * Every derived value comes from the theme's own colours so the result still
+     * looks like that theme: the containers are its surface lifted toward its
+     * accent or its error colour, their "on" colours are its own foreground,
+     * secondary is its variant surface, tertiary is its accent, and the surface
+     * container steps sit between its background and its surface. Nothing is
+     * copied from the baseline.
+     */
+    private fun deriveScheme(base: ColorScheme): ColorScheme {
+        val accent = base.primary
+        val surface = base.surface
+        val background = base.background
+        val foreground = base.onBackground
+        val error = base.error
+        // A dark fill gets light text and a light fill dark text, so the error
+        // colour reads under the dark palettes and under the light scheme alike.
+        val onFill = if (error.luminance() > 0.5f) Color(0xFF14181F) else Color(0xFFF6F8FB)
+        return base.copy(
+            primaryContainer = lerp(surface, accent, 0.22f),
+            onPrimaryContainer = foreground,
+            inversePrimary = accent,
+            surfaceTint = accent,
+            secondary = base.surfaceVariant,
+            onSecondary = base.onSurfaceVariant,
+            secondaryContainer = lerp(surface, accent, 0.14f),
+            onSecondaryContainer = foreground,
+            tertiary = accent,
+            onTertiary = base.onPrimary,
+            tertiaryContainer = lerp(surface, accent, 0.30f),
+            onTertiaryContainer = foreground,
+            errorContainer = lerp(surface, error, 0.20f),
+            onErrorContainer = foreground,
+            onError = onFill,
+            inverseSurface = surface,
+            inverseOnSurface = background,
+            scrim = Color(0xFF000000),
+            surfaceDim = background,
+            surfaceBright = lerp(surface, foreground, 0.05f),
+            surfaceContainerLowest = background,
+            surfaceContainerLow = lerp(background, surface, 0.25f),
+            surfaceContainer = lerp(background, surface, 0.5f),
+            surfaceContainerHigh = lerp(background, surface, 0.75f),
+            surfaceContainerHighest = surface,
+        )
+    }
+
+    /**
      * Midnight, the original dark look: taken from mobile-media-app's
      * `src/app.css` @theme block with the HSL converted rather than rounded by
      * eye: background hsl(218 55% 6%), card hsl(218 50% 9%), muted hsl(218 35%
@@ -150,18 +204,20 @@ object AnswerStyle {
      */
     val midnight = AnswerTheme(
         label = "Midnight",
-        scheme = darkColorScheme(
-            primary = accentDark,
-            onPrimary = Color(0xFF060D18),
-            background = Color(0xFF070D18),
-            onBackground = Color(0xFFEBF0F4),
-            surface = Color(0xFF0B1422),
-            onSurface = Color(0xFFE6EBF0),
-            surfaceVariant = Color(0xFF121926),
-            onSurfaceVariant = Color(0xFF627A93),
-            outline = Color(0xFF172236),
-            outlineVariant = Color(0xFF141E2E),
-            error = Color(0xFFDD3C3C),
+        scheme = deriveScheme(
+            darkColorScheme(
+                primary = accentDark,
+                onPrimary = Color(0xFF060D18),
+                background = Color(0xFF070D18),
+                onBackground = Color(0xFFEBF0F4),
+                surface = Color(0xFF0B1422),
+                onSurface = Color(0xFFE6EBF0),
+                surfaceVariant = Color(0xFF121926),
+                onSurfaceVariant = Color(0xFF627A93),
+                outline = Color(0xFF172236),
+                outlineVariant = Color(0xFF141E2E),
+                error = Color(0xFFDD3C3C),
+            ),
         ),
         skyTop = Color(0xFF091120),
         skyMid = Color(0xFF050B14),
@@ -173,18 +229,20 @@ object AnswerStyle {
     /** Indigo: a brighter blue accent over colder, bluer surfaces. */
     val indigo = AnswerTheme(
         label = "Indigo",
-        scheme = darkColorScheme(
-            primary = Color(0xFF7AA2F7),
-            onPrimary = Color(0xFF060C18),
-            background = Color(0xFF080D16),
-            onBackground = Color(0xFFEBEEF4),
-            surface = Color(0xFF0E1420),
-            onSurface = Color(0xFFE6E9F0),
-            surfaceVariant = Color(0xFF151A23),
-            onSurfaceVariant = Color(0xFF627293),
-            outline = Color(0xFF1B2232),
-            outlineVariant = Color(0xFF191E29),
-            error = Color(0xFFDD3C3C),
+        scheme = deriveScheme(
+            darkColorScheme(
+                primary = Color(0xFF7AA2F7),
+                onPrimary = Color(0xFF060C18),
+                background = Color(0xFF080D16),
+                onBackground = Color(0xFFEBEEF4),
+                surface = Color(0xFF0E1420),
+                onSurface = Color(0xFFE6E9F0),
+                surfaceVariant = Color(0xFF151A23),
+                onSurfaceVariant = Color(0xFF627293),
+                outline = Color(0xFF1B2232),
+                outlineVariant = Color(0xFF191E29),
+                error = Color(0xFFDD3C3C),
+            ),
         ),
         skyTop = Color(0xFF0B111E),
         skyMid = Color(0xFF060B13),
@@ -196,18 +254,20 @@ object AnswerStyle {
     /** Amber: a warm accent over near-black browns. */
     val amber = AnswerTheme(
         label = "Amber",
-        scheme = darkColorScheme(
-            primary = Color(0xFFF9A91F),
-            onPrimary = Color(0xFF180F06),
-            background = Color(0xFF150F0A),
-            onBackground = Color(0xFFF4EFEB),
-            surface = Color(0xFF1E1610),
-            onSurface = Color(0xFFF0EAE6),
-            surfaceVariant = Color(0xFF201C18),
-            onSurfaceVariant = Color(0xFF937962),
-            outline = Color(0xFF2E261F),
-            outlineVariant = Color(0xFF26211C),
-            error = Color(0xFFDD3C3C),
+        scheme = deriveScheme(
+            darkColorScheme(
+                primary = Color(0xFFF9A91F),
+                onPrimary = Color(0xFF180F06),
+                background = Color(0xFF150F0A),
+                onBackground = Color(0xFFF4EFEB),
+                surface = Color(0xFF1E1610),
+                onSurface = Color(0xFFF0EAE6),
+                surfaceVariant = Color(0xFF201C18),
+                onSurfaceVariant = Color(0xFF937962),
+                outline = Color(0xFF2E261F),
+                outlineVariant = Color(0xFF26211C),
+                error = Color(0xFFDD3C3C),
+            ),
         ),
         skyTop = Color(0xFF1C140D),
         skyMid = Color(0xFF120C08),
@@ -219,18 +279,20 @@ object AnswerStyle {
     /** Forest: a green accent over near-black greens. */
     val forest = AnswerTheme(
         label = "Forest",
-        scheme = darkColorScheme(
-            primary = Color(0xFF2EB877),
-            onPrimary = Color(0xFF061811),
-            background = Color(0xFF0A1510),
-            onBackground = Color(0xFFEBF4F0),
-            surface = Color(0xFF101E18),
-            onSurface = Color(0xFFE6F0EB),
-            surfaceVariant = Color(0xFF18201D),
-            onSurfaceVariant = Color(0xFF62937E),
-            outline = Color(0xFF1F2E28),
-            outlineVariant = Color(0xFF1C2622),
-            error = Color(0xFFDD3C3C),
+        scheme = deriveScheme(
+            darkColorScheme(
+                primary = Color(0xFF2EB877),
+                onPrimary = Color(0xFF061811),
+                background = Color(0xFF0A1510),
+                onBackground = Color(0xFFEBF4F0),
+                surface = Color(0xFF101E18),
+                onSurface = Color(0xFFE6F0EB),
+                surfaceVariant = Color(0xFF18201D),
+                onSurfaceVariant = Color(0xFF62937E),
+                outline = Color(0xFF1F2E28),
+                outlineVariant = Color(0xFF1C2622),
+                error = Color(0xFFDD3C3C),
+            ),
         ),
         skyTop = Color(0xFF0D1C16),
         skyMid = Color(0xFF08120E),
@@ -256,17 +318,20 @@ object AnswerStyle {
     /** The palette for a stored name; anything unknown falls back to Midnight. */
     fun theme(name: String): AnswerTheme = themes[name] ?: midnight
 
-    val lightScheme = lightColorScheme(
-        primary = accentLight,
-        onPrimary = Color.White,
-        background = Color(0xFFF6F7FA),
-        onBackground = Color(0xFF14181F),
-        surface = Color(0xFFF6F7FA),
-        onSurface = Color(0xFF14181F),
-        surfaceVariant = Color(0xFFF1F3F7),
-        onSurfaceVariant = Color(0xFF5C6572),
-        outline = Color(0xFFDFE3EA),
-        outlineVariant = Color(0xFFE7EAF0),
+    val lightScheme = deriveScheme(
+        lightColorScheme(
+            primary = accentLight,
+            onPrimary = Color.White,
+            background = Color(0xFFF6F7FA),
+            onBackground = Color(0xFF14181F),
+            surface = Color(0xFFF6F7FA),
+            onSurface = Color(0xFF14181F),
+            surfaceVariant = Color(0xFFF1F3F7),
+            onSurfaceVariant = Color(0xFF5C6572),
+            outline = Color(0xFFDFE3EA),
+            outlineVariant = Color(0xFFE7EAF0),
+            error = Color(0xFFDD3C3C),
+        ),
     )
 
     /** Inline code chip background: accent at low alpha. */

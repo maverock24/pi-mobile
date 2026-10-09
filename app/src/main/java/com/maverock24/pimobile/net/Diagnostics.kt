@@ -84,7 +84,9 @@ object Diagnostics {
             is android.os.NetworkOnMainThreadException ->
                 "internal bug — a blocking network call ran on the UI thread"
             is java.net.UnknownHostException ->
-                "host not found — MagicDNS may be off, or the URL has a typo"
+                "host not found — Tailscale is probably not running on the phone, so " +
+                    "this name cannot be resolved; if it is running, MagicDNS may be off or " +
+                    "the URL has a typo"
             is java.net.SocketTimeoutException ->
                 "timed out — Tailscale may be connected but blocked, or the laptop is asleep"
             is SSLException ->

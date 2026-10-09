@@ -1,6 +1,7 @@
 package com.maverock24.pimobile.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,12 +50,14 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -65,6 +68,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,9 +86,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -112,10 +120,16 @@ fun PiRemoteTheme(
     val palette = AnswerStyle.theme(theme)
     val scheme = if (dark) palette.scheme else AnswerStyle.lightScheme
     MaterialTheme(colorScheme = scheme) {
-        // One ground for every screen, drawn here once and left alone by the
-        // screens above it, so the transcript, the deck and the settings all sit
-        // on the same sky rather than each painting its own.
-        Box(modifier = Modifier.fillMaxSize().skyBackground(scheme, dark, palette)) { content() }
+        // Material3 leaves LocalContentColor at black, so any Text outside a
+        // Surface or a Button would draw black. In a dark theme that is
+        // unreadable, so the page's content colour is set here to the scheme's
+        // own onBackground. Do not remove this again.
+        CompositionLocalProvider(LocalContentColor provides scheme.onBackground) {
+            // One ground for every screen, drawn here once and left alone by the
+            // screens above it, so the transcript, the deck and the settings all sit
+            // on the same sky rather than each painting its own.
+            Box(modifier = Modifier.fillMaxSize().skyBackground(scheme, dark, palette)) { content() }
+        }
     }
 }
 
@@ -236,6 +250,17 @@ fun ChatScreen(
     // was typed for a prompt and closing it hands that draft straight back.
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+    // A copy or share says it worked in the notice bar, the same bar the rest of
+    // the app's notices use. It clears itself, because a confirmation is only
+    // useful while the action is still fresh, and it is kept apart from the
+    // update notice above so one cannot wipe the other.
+    var actionNotice by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(actionNotice) {
+        if (actionNotice != null) {
+            delay(2000)
+            actionNotice = null
+        }
+    }
     // A keystroke is not a request: the typing settles before the bridge is
     // asked, and a newer keystroke cancels the request the older one would send.
     // The button runs the same search at once when it is pressed.
@@ -347,6 +372,9 @@ fun ChatScreen(
             vm.lastError?.let { error ->
                 NoticeBar(text = error, onDismiss = vm::dismissError, isError = true)
             }
+            actionNotice?.let { line ->
+                NoticeBar(text = line, onDismiss = { actionNotice = null })
+            }
 
             // A handover is named here, in one line, rather than a bar with an
             // attach button: the move has already happened, and this says so.
@@ -381,9 +409,17 @@ fun ChatScreen(
                 // The same transcript as cards. The deck and the transcript read
                 // one view model, so a turn and its answer are one thing shown
                 // two ways rather than two lists kept in step.
-                TurnDeck(vm = vm, modifier = Modifier.weight(1f).fillMaxWidth())
+                TurnDeck(
+                    vm = vm,
+                    onAnswerConfirmed = { actionNotice = it },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
             } else {
-                Transcript(vm = vm, modifier = Modifier.weight(1f).fillMaxWidth())
+                Transcript(
+                    vm = vm,
+                    onAnswerConfirmed = { actionNotice = it },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
             }
 
             // The switch between the transcript and the deck stays its own row
@@ -445,7 +481,11 @@ fun ChatScreen(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Transcript(vm: ChatViewModel, modifier: Modifier = Modifier) {
+private fun Transcript(
+    vm: ChatViewModel,
+    onAnswerConfirmed: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val listState = rememberLazyListState()
     val turns = vm.turns
     val pending = vm.pendingQuestion
@@ -520,6 +560,7 @@ private fun Transcript(vm: ChatViewModel, modifier: Modifier = Modifier) {
                         turn = turn,
                         liveText = if (turn.id == newestTurn) liveAnswer else null,
                         working = turn.id == newestTurn && vm.busy,
+                        onConfirm = onAnswerConfirmed,
                         // Fades in and out as the accordion opens and closes, so
                         // folding an answer reads as a change rather than as a
                         // jump.
@@ -552,7 +593,11 @@ private fun Transcript(vm: ChatViewModel, modifier: Modifier = Modifier) {
  * than two records to keep in step.
  */
 @Composable
-private fun TurnDeck(vm: ChatViewModel, modifier: Modifier = Modifier) {
+private fun TurnDeck(
+    vm: ChatViewModel,
+    onAnswerConfirmed: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val turns = vm.turns
     val pending = vm.pendingQuestion
     val liveAnswer = vm.liveAnswer
@@ -644,6 +689,7 @@ private fun TurnDeck(vm: ChatViewModel, modifier: Modifier = Modifier) {
                 expanded = turn.id == openTurn,
                 liveText = if (turn.id == newestTurn) liveAnswer else null,
                 working = turn.id == newestTurn && vm.busy,
+                onConfirm = onAnswerConfirmed,
                 onToggle = { openTurn = if (openTurn == turn.id) null else turn.id },
             )
         }
@@ -661,6 +707,7 @@ private fun DeckCard(
     expanded: Boolean,
     liveText: String?,
     working: Boolean,
+    onConfirm: (String) -> Unit,
     onToggle: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -732,6 +779,7 @@ private fun DeckCard(
                         turn = turn,
                         liveText = liveText,
                         working = working,
+                        onConfirm = onConfirm,
                         modifier = Modifier.padding(
                             start = AnswerStyle.promptPadding,
                             end = AnswerStyle.promptPadding,
@@ -941,12 +989,97 @@ private fun TurnPrompt(turn: ChatTurn, expanded: Boolean, onToggle: () -> Unit) 
 }
 
 /**
+ * The copy glyph, built here rather than pulled from material-icons-extended,
+ * which is a large dependency for one icon. material-icons-core has Share but no
+ * copy, so this is two rounded rectangles, a back page behind a front page, the
+ * two shapes the standard copy mark is made from.
+ */
+private val CopyIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Copy",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        addPath(
+            pathData = PathParser().parsePathString(
+                // The top and left of the back page, left open where the front
+                // page covers it, then the front page as an outlined rectangle.
+                "M16,1H4C2.9,1 2,1.9 2,3v14h2V3h12V1z" +
+                    "M19,5H8C6.9,5 6,5.9 6,7v14c0,1.1 0.9,2 2,2h11c1.1,0 2,-0.9 2,-2V7C21,5.9 20.1,5 19,5z" +
+                    "M19,21H8V7h11V21z",
+            ).toNodes(),
+            fill = SolidColor(Color.Black),
+        )
+    }.build()
+}
+
+/**
+ * Copy and share, under one answer. Copy puts the answer's text on the
+ * clipboard; share hands it to the system chooser as plain text. Both ring the
+ * confirm haptic and raise the chat screen's notice, so a tap always says it did
+ * something. The row belongs to a plain answer only, never to a question trace
+ * or to the working indicator.
+ */
+@Composable
+private fun AnswerActions(text: String, onConfirm: (String) -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val view = LocalView.current
+    val tint = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        IconButton(
+            onClick = {
+                clipboard.setText(AnnotatedString(text))
+                Haptics.confirm(view)
+                onConfirm("Answer copied")
+            },
+        ) {
+            Icon(
+                imageVector = CopyIcon,
+                contentDescription = "Copy answer",
+                tint = tint,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        IconButton(
+            onClick = {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }
+                context.startActivity(Intent.createChooser(send, "Share answer"))
+                Haptics.confirm(view)
+                onConfirm("Answer ready to share")
+            },
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Share,
+                contentDescription = "Share answer",
+                tint = tint,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+/**
  * The answer of one prompt, drawn only for the turn the accordion has open.
  * Nothing else of the run is shown, which is why an older answer is reachable
  * from its prompt alone.
  */
 @Composable
-private fun TurnBody(turn: ChatTurn, liveText: String?, working: Boolean, modifier: Modifier = Modifier) {
+private fun TurnBody(
+    turn: ChatTurn,
+    liveText: String?,
+    working: Boolean,
+    onConfirm: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier = modifier.padding(start = AnswerStyle.accentBar + AnswerStyle.accentBarGap),
         verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
@@ -959,20 +1092,28 @@ private fun TurnBody(turn: ChatTurn, liveText: String?, working: Boolean, modifi
                     modifier = Modifier.widthIn(max = AnswerStyle.measure),
                 )
             } else {
-                AnswerView(
-                    text = answer.text,
-                    modifier = Modifier.widthIn(max = AnswerStyle.measure),
-                )
+                // The actions sit just under their own answer, closer to it than
+                // the gap between two answers, so the pair reads as one block.
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    AnswerView(
+                        text = answer.text,
+                        modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                    )
+                    AnswerActions(text = answer.text, onConfirm = onConfirm)
+                }
             }
         }
         // The answer of the run that is still going. It is drawn like a finished
         // answer and replaced by the committed one when the run settles, which
         // clears it in the same step that adds the answer.
         if (!liveText.isNullOrBlank()) {
-            AnswerView(
-                text = liveText,
-                modifier = Modifier.widthIn(max = AnswerStyle.measure),
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                AnswerView(
+                    text = liveText,
+                    modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                )
+                AnswerActions(text = liveText, onConfirm = onConfirm)
+            }
         } else if (working && turn.answers.isEmpty()) {
             // Nothing has streamed yet and nothing has been committed, so the run
             // has nothing to show but itself: this is the step between the prompt
@@ -1025,8 +1166,21 @@ private fun AnsweredQuestion(question: String, answer: String?, modifier: Modifi
 
 @Composable
 private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = false) {
+    // The text colour is passed with the fill rather than left to the container,
+    // so it can never fall back to a default that does not match this theme.
+    val container = if (isError) {
+        MaterialTheme.colorScheme.errorContainer
+    } else {
+        MaterialTheme.colorScheme.secondaryContainer
+    }
+    val onContainer = if (isError) {
+        MaterialTheme.colorScheme.onErrorContainer
+    } else {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    }
     Surface(
-        color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+        color = container,
+        contentColor = onContainer,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
         shape = RoundedCornerShape(8.dp),
     ) {
@@ -1034,7 +1188,12 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = fa
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text = text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            Text(
+                text = text,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = onContainer,
+            )
             TextButton(onClick = onDismiss, modifier = Modifier.tactile()) { Text("OK") }
         }
     }
