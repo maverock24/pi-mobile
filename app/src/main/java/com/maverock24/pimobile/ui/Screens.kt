@@ -44,13 +44,17 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -59,6 +63,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -184,6 +189,26 @@ private fun Modifier.workingEdge(visible: Boolean): Modifier {
 }
 
 /**
+ * A hairline along the bar's bottom edge. The bar paints its own surface so it
+ * reads as a bar against the page, and in the light scheme that surface is the
+ * page's own colour, so this line is what keeps the two apart there. It is
+ * drawn inside the bar's bounds, so it costs the bar no height.
+ */
+@Composable
+private fun Modifier.barHairline(): Modifier {
+    val color = MaterialTheme.colorScheme.outline
+    return drawWithContent {
+        drawContent()
+        val thickness = 1.dp.toPx()
+        drawRect(
+            color = color,
+            topLeft = Offset(0f, size.height - thickness),
+            size = Size(size.width, thickness),
+        )
+    }
+}
+
+/**
  * Results-only view.
  *
  * Answers are what matter on a phone, so the transcript shows finished (and
@@ -204,14 +229,18 @@ fun ChatScreen(
     val turns = vm.turns
     val pending = vm.pendingQuestion
 
-    // Search is a mode, not a field that always takes space. It is opened from
-    // the row above the composer and, while it is open, the results take the
-    // transcript's place so the composer and the switch stay where they are.
+    // Search is a mode, not a field of its own: while it is open the composer
+    // becomes the field, so there is one input on screen and the action button
+    // under it runs the search instead of sending. The prompt draft lives in the
+    // view model and this text lives here, so opening search does not touch what
+    // was typed for a prompt and closing it hands that draft straight back.
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     // A keystroke is not a request: the typing settles before the bridge is
     // asked, and a newer keystroke cancels the request the older one would send.
-    LaunchedEffect(query) {
+    // The button runs the same search at once when it is pressed.
+    LaunchedEffect(query, searchOpen) {
+        if (!searchOpen) return@LaunchedEffect
         if (query.isBlank()) {
             vm.clearSearch()
             return@LaunchedEffect
@@ -236,47 +265,75 @@ fun ChatScreen(
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                // The working accent line rides on the bar's own top edge, so it
-                // costs the bar no height and shifts nothing below it.
-                modifier = Modifier.workingEdge(vm.busy),
+                // The working accent line rides on the bar's own top edge and the
+                // hairline closes the bar off from the page. Both are drawn inside
+                // the bar's bounds, so the bar keeps one height and the content
+                // below it never moves when either appears or goes.
+                modifier = Modifier.workingEdge(vm.busy).barHairline(),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
                 title = {
                     Column {
+                        // The title names the session this screen is attached to,
+                        // not the last thing typed. It stays a title.
                         Text(
-                            text = vm.lastPrompt?.takeIf { it.isNotBlank() } ?: vm.sessionTitle,
+                            text = vm.barTitle,
                             style = MaterialTheme.typography.titleMedium,
-                            maxLines = 2,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        // The last prompt is a subtitle, one ellipsised line that
+                        // tells you which turn you are in. It never grows past one
+                        // line, so it cannot push the bar taller than an app bar.
+                        // With no prompt yet the session label stands in, so the
+                        // line is never blank.
+                        Text(
+                            text = vm.lastPrompt?.takeIf { it.isNotBlank() } ?: vm.attachedLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                },
+                actions = {
+                    // One fixed slot for the working signal. Whatever stands here
+                    // is smaller than the icon buttons beside it, so showing or
+                    // clearing it cannot change the bar's height.
+                    Box(modifier = Modifier.height(24.dp), contentAlignment = Alignment.Center) {
                         when {
                             vm.pendingQuestion != null -> Text(
-                                text = "waiting for your answer",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = "waiting",
+                                style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.SemiBold,
                             )
-                            vm.busy -> WorkingShimmer(modifier = Modifier.padding(top = 4.dp))
-                            !vm.connected && vm.statusLine.isNotBlank() -> Text(
-                                text = vm.statusLine,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            vm.busy -> WorkingShimmer()
                         }
                     }
+                    IconButton(onClick = { searchOpen = !searchOpen }, modifier = Modifier.tactile()) {
+                        Icon(
+                            imageVector = if (searchOpen) Icons.Filled.Close else Icons.Filled.Search,
+                            contentDescription = if (searchOpen) "Close search" else "Search",
+                        )
+                    }
+                    IconButton(onClick = onOpenSettings, modifier = Modifier.tactile()) {
+                        Icon(imageVector = Icons.Filled.Settings, contentDescription = "Settings")
+                    }
                 },
-                actions = { TextButton(onClick = onOpenSettings, modifier = Modifier.tactile()) { Text("Settings") } },
             )
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // Which session this screen is showing. Once there is a prompt the
-            // title bar carries that instead, so the identity of the session
-            // gets a line of its own here, above the transcript, and it stays put
-            // while the answers scroll. When the bridge changes hands the screen
-            // follows it, and the line below says which session it moved to.
-            val attachedTo = vm.attachedLabel
-            if (attachedTo.isNotBlank()) {
+            // The bar's title and subtitle now carry the session identity, so the
+            // folder and name are not repeated under it. What still needs a line
+            // of its own is a lost connection: the status says which bridge it is
+            // trying and why it stopped, and it stays visible however many turns
+            // the transcript holds.
+            if (!vm.connected && vm.statusLine.isNotBlank()) {
                 Text(
-                    text = attachedTo,
+                    text = vm.statusLine,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -306,7 +363,6 @@ fun ChatScreen(
                 SearchPanel(
                     vm = vm,
                     query = query,
-                    onQueryChange = { query = it },
                     onOpenResult = { hit ->
                         hit.turnId?.let(vm::jumpToTurn)
                         searchOpen = false
@@ -330,31 +386,52 @@ fun ChatScreen(
                 Transcript(vm = vm, modifier = Modifier.weight(1f).fillMaxWidth())
             }
 
-            // The switch sits directly above the composer, in the same thumb's
-            // reach as the box you type in, and above it rather than over it so
-            // the composer keeps its full width and height. Search shares the
-            // row, so it is one tap away and never lands on the composer or on a
-            // waiting question below the transcript.
+            // The switch between the transcript and the deck stays its own row
+            // here, directly above the composer and in the same thumb's reach as
+            // the box you type in. It is one tap away and never lands on the
+            // composer or on a waiting question. Search moved to the app bar, so
+            // it is no longer sharing this row.
             ViewModeSwitch(
                 mode = vm.viewMode,
                 onChange = vm::updateViewMode,
-                searchOpen = searchOpen,
-                onToggleSearch = { searchOpen = !searchOpen },
             )
 
             Composer(
-                draft = vm.draft,
-                onDraftChange = vm::updateDraft,
+                text = if (searchOpen) query else vm.draft,
+                onTextChange = { if (searchOpen) query = it else vm.updateDraft(it) },
+                placeholder = if (searchOpen) {
+                    "Search every prompt and answer…"
+                } else {
+                    vm.composerBlock ?: "Prompt pi…"
+                },
                 partialText = partialText,
                 listening = listening,
                 busy = vm.busy,
-                blockReason = vm.composerBlock,
-                onToggleMic = onToggleMic,
-                onSend = {
-                    vm.send(vm.draft)
-                    vm.clearDraft()
+                actionLabel = if (searchOpen) "Search" else "Send",
+                // Search runs on whatever is typed, connected or not, while a
+                // prompt still needs a live bridge.
+                actionEnabled = if (searchOpen) {
+                    query.isNotBlank()
+                } else {
+                    vm.draft.isNotBlank() && vm.composerBlock == null
                 },
-                onClear = vm::clearDraft,
+                onAction = {
+                    if (searchOpen) {
+                        vm.search(query)
+                    } else {
+                        vm.send(vm.draft)
+                        vm.clearDraft()
+                    }
+                },
+                onToggleMic = onToggleMic,
+                onClear = {
+                    if (searchOpen) {
+                        query = ""
+                        vm.clearSearch()
+                    } else {
+                        vm.clearDraft()
+                    }
+                },
                 onStop = vm::abort,
             )
         }
@@ -685,8 +762,6 @@ private fun DeckCard(
 private fun ViewModeSwitch(
     mode: String,
     onChange: (String) -> Unit,
-    searchOpen: Boolean,
-    onToggleSearch: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
@@ -706,18 +781,6 @@ private fun ViewModeSwitch(
                 )
             }
         }
-        Spacer(modifier = Modifier.weight(1f))
-        TextButton(onClick = onToggleSearch, modifier = Modifier.tactile()) {
-            Text(
-                text = if (searchOpen) "Close" else "Search",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (searchOpen) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
-        }
     }
 }
 
@@ -731,18 +794,12 @@ private fun ViewModeSwitch(
 private fun SearchPanel(
     vm: ChatViewModel,
     query: String,
-    onQueryChange: (String) -> Unit,
     onOpenResult: (SearchHit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-            singleLine = true,
-            placeholder = { Text("Search every prompt and answer…") },
-        )
+        // The field is the composer now, so the panel is only the outcome: the
+        // error, the wait, the empty answer, and the matches themselves.
         vm.searchError?.let { error ->
             Text(
                 text = error,
@@ -985,14 +1042,18 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = fa
 
 @Composable
 private fun Composer(
-    draft: String,
-    onDraftChange: (String) -> Unit,
+    text: String,
+    onTextChange: (String) -> Unit,
+    // What the field is for right now. The caller resolves it, so a search says
+    // it is a search and a prompt says what a prompt says.
+    placeholder: String,
     partialText: String,
     listening: Boolean,
     busy: Boolean,
-    blockReason: String?,
+    actionLabel: String,
+    actionEnabled: Boolean,
+    onAction: () -> Unit,
     onToggleMic: () -> Unit,
-    onSend: () -> Unit,
     onClear: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -1006,12 +1067,12 @@ private fun Composer(
             )
         }
         OutlinedTextField(
-            value = draft,
-            onValueChange = onDraftChange,
+            value = text,
+            onValueChange = onTextChange,
             modifier = Modifier.fillMaxWidth(),
             minLines = 1,
             maxLines = 6,
-            placeholder = { Text(blockReason ?: "Prompt pi…") },
+            placeholder = { Text(placeholder) },
         )
         Spacer(modifier = Modifier.height(8.dp))
         Row(
@@ -1021,24 +1082,26 @@ private fun Composer(
         ) {
             val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
             val label = MaterialTheme.typography.bodyLarge
-            val canSend = draft.isNotBlank() && blockReason == null
             FilledTonalButton(
                 onClick = onToggleMic,
                 modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
             ) {
                 Text(if (listening) "Mic on" else "Mic", style = label)
             }
+            // One button, two jobs: it reads what it will do. Sending is the same
+            // as before, while searching runs the search on this same text, so a
+            // search can never leave as a prompt.
             Button(
-                onClick = onSend,
-                enabled = canSend,
-                modifier = buttonModifier.tactile(haptics = true, enabled = canSend, depth = AnswerStyle.keyDepth),
+                onClick = onAction,
+                enabled = actionEnabled,
+                modifier = buttonModifier.tactile(haptics = true, enabled = actionEnabled, depth = AnswerStyle.keyDepth),
             ) {
-                Text("Send", style = label)
+                Text(actionLabel, style = label)
             }
             OutlinedButton(
                 onClick = onClear,
-                enabled = draft.isNotBlank(),
-                modifier = buttonModifier.tactile(enabled = draft.isNotBlank(), depth = AnswerStyle.keyDepth),
+                enabled = text.isNotBlank(),
+                modifier = buttonModifier.tactile(enabled = text.isNotBlank(), depth = AnswerStyle.keyDepth),
             ) {
                 Text("Clear", style = label)
             }

@@ -278,6 +278,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val attachedLabel: String
         get() = sessionLabel(sessionCwd, sessionName)
 
+    /**
+     * The name the app bar shows: the bridge's title for the session, then the
+     * name it carries, then the folder it runs in. The title and the name are
+     * what a person recognises; the folder is what is left before the bridge has
+     * named the session at all.
+     */
+    val barTitle: String
+        get() = sessionTitle.takeIf { it.isNotBlank() && it != NO_SESSION }
+            ?: sessionName?.takeIf { it.isNotBlank() }
+            ?: sessionCwd?.let(::shortPath)?.takeIf { it.isNotBlank() }
+            ?: sessionTitle
+
     /** The latest thing you typed, shown at the top of the main view. */
     val lastPrompt: String?
         get() = messages.lastOrNull { it.role == "user" && it.text.isNotBlank() }?.text
