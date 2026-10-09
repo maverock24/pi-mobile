@@ -152,6 +152,19 @@ object AnswerStyle {
         outlineVariant = Color(0xFFE7EAF0),
     )
 
+    /**
+     * The night sky the dark scheme sits on, from the media app's layered
+     * background: a navy gradient down the page with a cyan glow at the horizon
+     * and a weaker one below the middle. Converted from its HSL the same way as
+     * the scheme above, alphas included, so the two apps are the same sky rather
+     * than two similar ones.
+     */
+    val skyTop = Color(0xFF091120)
+    val skyMid = Color(0xFF050B14)
+    val skyBottom = Color(0xFF040911)
+    val skyHorizonGlow = Color(0x99093453)
+    val skyMiddleGlow = Color(0x5906516B)
+
     /** Inline code chip background: accent at low alpha. */
     fun chipBackground(isDark: Boolean): Color =
         if (isDark) Color(0x240AD6FF) else Color(0x1A3562D6)

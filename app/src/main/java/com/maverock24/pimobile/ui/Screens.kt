@@ -87,7 +87,44 @@ fun PiRemoteTheme(mode: String = "dark", content: @Composable () -> Unit) {
         "light" -> false
         else -> isSystemInDarkTheme()
     }
-    MaterialTheme(colorScheme = if (dark) AnswerStyle.darkScheme else AnswerStyle.lightScheme, content = content)
+    MaterialTheme(colorScheme = if (dark) AnswerStyle.darkScheme else AnswerStyle.lightScheme) {
+        // One ground for every screen, drawn here once and left alone by the
+        // screens above it, so the transcript, the deck and the settings all sit
+        // on the same sky rather than each painting its own.
+        Box(modifier = Modifier.fillMaxSize().skyBackground(dark)) { content() }
+    }
+}
+
+/**
+ * The media app's night sky: a navy gradient down the page with a cyan glow at
+ * the horizon and a weaker one below the middle, both at the alphas that app
+ * uses. It is drawn only for the dark scheme, because that app is a dark app and
+ * a glow on near-white is a smudge.
+ */
+private fun Modifier.skyBackground(dark: Boolean): Modifier {
+    if (!dark) return this
+    return this.drawWithContent {
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(AnswerStyle.skyTop, AnswerStyle.skyMid, AnswerStyle.skyBottom),
+            )
+        )
+        drawRect(
+            brush = Brush.radialGradient(
+                colors = listOf(AnswerStyle.skyHorizonGlow, Color.Transparent),
+                center = Offset(size.width / 2f, 0f),
+                radius = size.width * 0.9f,
+            )
+        )
+        drawRect(
+            brush = Brush.radialGradient(
+                colors = listOf(AnswerStyle.skyMiddleGlow, Color.Transparent),
+                center = Offset(size.width / 2f, size.height * 0.62f),
+                radius = size.width,
+            )
+        )
+        drawContent()
+    }
 }
 
 /**
@@ -171,6 +208,9 @@ fun ChatScreen(
     }
 
     Scaffold(
+        // Transparent so the sky behind it is what shows, rather than the theme's
+        // background colour painted over it.
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
                 // The working accent line rides on the bar's own top edge, so it
@@ -1035,6 +1075,9 @@ fun SettingsScreen(
     }
 
     Scaffold(
+        // Transparent for the same reason as the chat screen: the sky is drawn
+        // once, behind everything, and this must not paint over it.
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
