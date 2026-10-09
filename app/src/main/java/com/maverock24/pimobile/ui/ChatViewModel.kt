@@ -107,6 +107,22 @@ data class ChatTurn(
 )
 
 /**
+ * One full-session search hit. It names the entry it was found in and carries a
+ * snippet with the match inside it, but the useful part is [turnId]: the id of
+ * the prompt that opened the turn, so a tap can open that turn in either view.
+ * [prompt] is the same turn's prompt text, shown under the snippet so a result
+ * says where it came from. Both are null for an answer that arrived before any
+ * prompt, which has no turn to open.
+ */
+data class SearchHit(
+    val entryId: String,
+    val role: String,
+    val snippet: String,
+    val prompt: String?,
+    val turnId: String?,
+)
+
+/**
  * Groups the transcript by prompt. An assistant message carries no link to the
  * prompt that caused it, but the order does: every answer that follows a prompt
  * belongs to it. Answers that arrive before any prompt, which happens when the
@@ -200,11 +216,36 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var viewMode by mutableStateOf(store.viewMode)
         private set
 
+    /**
+     * Full-session search: what the bridge matched, whether a request is in
+     * flight, and what the bridge said if it refused. The results are newest
+     * first, as the bridge sends them.
+     */
+    var searchResults by mutableStateOf<List<SearchHit>>(emptyList())
+        private set
+    var searching by mutableStateOf(false)
+        private set
+    var searchError by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * A turn the search wants opened, by id. The views read it once and clear it
+     * with [clearJump], so a signal is honoured once and never again.
+     */
+    var pendingJump by mutableStateOf<String?>(null)
+        private set
+
     /** Set when a request the user started succeeds or fails. */
     var outcome by mutableStateOf<RequestOutcome?>(null)
         private set
 
     private var outcomeSeq = 0L
+
+    /**
+     * Bumped per search request so a slow answer cannot overwrite a newer one.
+     * Typing restarts the request, and the last keystroke is the one that counts.
+     */
+    private var searchSeq = 0L
 
     /**
      * The session this app is pinned to. Requests carry it, so the bridge
@@ -576,6 +617,85 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun updateViewMode(value: String) {
         store.viewMode = value
         viewMode = value
+    }
+
+    /**
+     * Search the whole session for [query]. A blank query clears the panel
+     * rather than asking the bridge for everything, which is what an empty
+     * substring would otherwise mean to a match. A newer query cancels the
+     * result of an older one, so a slow response never wins the race.
+     */
+    fun search(query: String) {
+        val text = query.trim()
+        val seq = ++searchSeq
+        if (text.isEmpty()) {
+            searchResults = emptyList()
+            searching = false
+            searchError = null
+            return
+        }
+        searching = true
+        searchError = null
+        safeLaunch {
+            runCatching { client.search(text) }
+                .onSuccess { payload ->
+                    if (seq != searchSeq) return@onSuccess
+                    // The bridge may have changed hands mid-request; the results
+                    // then belong to another session and are dropped rather than
+                    // shown under this one's pin.
+                    val from = payload.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
+                    val attached = attachedSessionId
+                    if (from != null && attached != null && from != attached) {
+                        refreshState()
+                        return@onSuccess
+                    }
+                    val array = payload.optJSONArray("results") ?: JSONArray()
+                    val hits = ArrayList<SearchHit>()
+                    for (index in 0 until array.length()) {
+                        val hit = array.optJSONObject(index) ?: continue
+                        hits.add(
+                            SearchHit(
+                                entryId = hit.optString("entryId").ifBlank { "hit-$index" },
+                                role = hit.optString("role"),
+                                snippet = hit.optString("snippet"),
+                                prompt = hit.string("prompt"),
+                                turnId = hit.string("turnId"),
+                            )
+                        )
+                    }
+                    searchResults = hits
+                    searching = false
+                }
+                .onFailure { error ->
+                    if (seq != searchSeq) return@onFailure
+                    searching = false
+                    // A 404 is what an older bridge answers for a path it does not
+                    // know, and the running bridge stays old until it is reloaded.
+                    searchError = if (error is BridgeException && error.code == 404) {
+                        "this bridge has no search yet; reload it on the laptop"
+                    } else {
+                        Diagnostics.describe(error, store.baseUrl)
+                    }
+                }
+        }
+    }
+
+    /** Close the panel: drop the last query's results and any error. */
+    fun clearSearch() {
+        searchSeq++
+        searchResults = emptyList()
+        searching = false
+        searchError = null
+    }
+
+    /** Ask either view to open the turn with this id on its next composition. */
+    fun jumpToTurn(turnId: String) {
+        pendingJump = turnId
+    }
+
+    /** A view has opened the turn it was asked for; forget the signal. */
+    fun clearJump() {
+        pendingJump = null
     }
 
     /**

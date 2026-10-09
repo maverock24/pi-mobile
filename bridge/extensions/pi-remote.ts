@@ -9,6 +9,7 @@
  *   GET  /api/health    - liveness probe
  *   GET  /api/state     - session, model, idle/busy, pending queue, bound address
  *   GET  /api/history   - messages on the active branch (?limit=N)
+ *   GET  /api/search    - message entries matching ?q= (case-insensitive)
  *   GET  /api/events    - SSE stream of agent/tool/message events
  *   POST /api/prompt    - {"text": "...", "deliverAs": "steer"|"followUp"}
  *   POST /api/abort     - abort the current agent run
@@ -83,6 +84,11 @@ const PAIR_WIDGET_ID = "pi-remote-pair";
 const MAX_STRING = 4000;
 const MAX_ARRAY = 40;
 const MAX_DEPTH = 8;
+
+/** How much of a matched message a search hit carries around the match. */
+const SNIPPET_BEFORE = 40;
+const SNIPPET_AFTER = 120;
+const SNIPPET_MAX = 200;
 
 function tokenPath(): string {
 	return process.env.PI_REMOTE_TOKEN_FILE || path.join(os.homedir(), ".config", "pi-remote", "token");
@@ -560,6 +566,97 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	/**
+	 * The words a message carries, and nothing else. Thinking and tool calls are
+	 * how an answer was reached rather than part of it, and a tool result is
+	 * process, so only text blocks count. This is the same rule the app draws by,
+	 * which is what keeps a search hit and the thing it names the same text.
+	 */
+	function textBlocksOf(content: unknown): string {
+		if (typeof content === "string") return content;
+		if (!Array.isArray(content)) return "";
+		const parts: string[] = [];
+		for (const block of content) {
+			if (block && typeof block === "object" && (block as { type?: unknown }).type === "text") {
+				const text = (block as { text?: unknown }).text;
+				if (typeof text === "string") parts.push(text);
+			}
+		}
+		return parts.join("\n");
+	}
+
+	/**
+	 * A window of the text with the match inside it, so a hit shows what it says
+	 * rather than where it says it. Whitespace is collapsed first, because a
+	 * snippet read on a phone is one line and the match may sit behind a run of
+	 * newlines.
+	 */
+	function snippetAround(text: string, at: number, matchLength: number): string {
+		const start = Math.max(0, at - SNIPPET_BEFORE);
+		const end = Math.min(text.length, at + matchLength + SNIPPET_AFTER);
+		let snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
+		if (start > 0) snippet = `…${snippet}`;
+		if (end < text.length) snippet = `${snippet}…`;
+		return snippet.length > SNIPPET_MAX ? `${snippet.slice(0, SNIPPET_MAX)}…` : snippet;
+	}
+
+	/**
+	 * Message entries on the branch whose text contains the query, newest first.
+	 * A match is only placeable if it names the prompt it answers, so the walk
+	 * carries the nearest preceding user message and hands it back with each hit.
+	 * An empty or blank query matches nothing rather than everything.
+	 */
+	function searchPayload(query: string, limit: number) {
+		const sessionManager = context?.sessionManager;
+		const needle = query.trim().toLowerCase();
+		const base = {
+			query: query.trim(),
+			sessionFile: sessionFile(),
+			sessionId: sessionManager?.getSessionId() ?? null,
+		};
+		if (!sessionManager || !needle) {
+			return { ...base, total: 0, results: [] };
+		}
+		const branch = sessionManager.getBranch();
+		const results: Array<{
+			entryId: string | null;
+			role: string;
+			snippet: string;
+			prompt: string | null;
+			turnId: string | null;
+		}> = [];
+		let promptText: string | null = null;
+		let promptId: string | null = null;
+		for (const entry of branch) {
+			if (entry.type !== "message") continue;
+			const message = entry.message;
+			const role = typeof message.role === "string" ? message.role : "";
+			// Only what the app draws takes part: a prompt, or an answer. A tool
+			// result is process, and is left out even when it carries text.
+			if (role !== "user" && role !== "assistant") continue;
+			const text = textBlocksOf((message as { content?: unknown }).content);
+			if (role === "user") {
+				// A user message is the prompt of its own turn, and of everything
+				// after it until the next one.
+				promptId = entry.id;
+				promptText = text;
+			}
+			if (!text) continue;
+			const at = text.toLowerCase().indexOf(needle);
+			if (at < 0) continue;
+			results.push({
+				entryId: entry.id,
+				role,
+				snippet: snippetAround(text, at, needle.length),
+				prompt: promptText,
+				turnId: promptId,
+			});
+		}
+		// The branch reads oldest first; a search reads best from the newest.
+		results.reverse();
+		return { ...base, total: results.length, results: results.slice(0, limit) };
+	}
+
+	/**
 	 * Pairing trades a short-lived, single-use code for a device token, so the token
 	 * itself never lands in a QR image, a deep link, or the phone's camera history.
 	 * Reading the code off the laptop screen is the one step a human must do.
@@ -857,6 +954,14 @@ export default function (pi: ExtensionAPI) {
 		if (req.method === "GET" && url.pathname === "/api/history") {
 			const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 40), 1), 500);
 			sendJson(res, 200, historyPayload(limit));
+			return;
+		}
+
+		if (req.method === "GET" && url.pathname === "/api/search") {
+			const query = url.searchParams.get("q") || "";
+			// The same clamp as /api/history; shrink() then caps the list itself at 40.
+			const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 40), 1), 500);
+			sendJson(res, 200, shrink(searchPayload(query, limit)));
 			return;
 		}
 

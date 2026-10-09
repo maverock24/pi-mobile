@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /**
@@ -73,6 +74,17 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
     suspend fun state(): JSONObject = execute(builder("/api/state").get().build())
 
     suspend fun history(limit: Int = 60): JSONObject = execute(builder("/api/history?limit=$limit").get().build())
+
+    /**
+     * Full-session search. The bridge matches the query against the text of
+     * every prompt and answer and returns the matches newest first. An empty
+     * query is refused by the caller rather than sent, but the bridge answers
+     * one with no results too.
+     */
+    suspend fun search(query: String, limit: Int = 40): JSONObject {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        return execute(builder("/api/search?q=$encoded&limit=$limit").get().build())
+    }
 
     suspend fun prompt(text: String, deliverAs: String = "steer", sessionId: String? = null): JSONObject {
         val payload = JSONObject().apply {

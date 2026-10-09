@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -76,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 
 @Composable
@@ -141,6 +143,22 @@ fun ChatScreen(
 ) {
     val turns = vm.turns
     val pending = vm.pendingQuestion
+
+    // Search is a mode, not a field that always takes space. It is opened from
+    // the row above the composer and, while it is open, the results take the
+    // transcript's place so the composer and the switch stay where they are.
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    // A keystroke is not a request: the typing settles before the bridge is
+    // asked, and a newer keystroke cancels the request the older one would send.
+    LaunchedEffect(query) {
+        if (query.isBlank()) {
+            vm.clearSearch()
+            return@LaunchedEffect
+        }
+        delay(350)
+        vm.search(query)
+    }
 
     // The outcome of a request the user started: confirm when the bridge took
     // it, reject when it failed. Only these two paths and never a background
@@ -221,7 +239,18 @@ fun ChatScreen(
                 )
             }
 
-            if (turns.isEmpty() && pending == null) {
+            if (searchOpen) {
+                SearchPanel(
+                    vm = vm,
+                    query = query,
+                    onQueryChange = { query = it },
+                    onOpenResult = { hit ->
+                        hit.turnId?.let(vm::jumpToTurn)
+                        searchOpen = false
+                    },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+            } else if (turns.isEmpty() && pending == null) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
                         text = if (vm.busy) "thinking…" else "no results yet",
@@ -240,8 +269,15 @@ fun ChatScreen(
 
             // The switch sits directly above the composer, in the same thumb's
             // reach as the box you type in, and above it rather than over it so
-            // the composer keeps its full width and height.
-            ViewModeSwitch(mode = vm.viewMode, onChange = vm::updateViewMode)
+            // the composer keeps its full width and height. Search shares the
+            // row, so it is one tap away and never lands on the composer or on a
+            // waiting question below the transcript.
+            ViewModeSwitch(
+                mode = vm.viewMode,
+                onChange = vm::updateViewMode,
+                searchOpen = searchOpen,
+                onToggleSearch = { searchOpen = !searchOpen },
+            )
 
             Composer(
                 draft = vm.draft,
@@ -298,6 +334,21 @@ private fun Transcript(vm: ChatViewModel, modifier: Modifier = Modifier) {
         // would show its first lines, and the question widget below it would come
         // to rest above the bottom edge rather than at it.
         listState.animateScrollToItem(bottomItem)
+    }
+
+    // A search hit names the turn to open. This view opens that turn's answer and
+    // scrolls its prompt to the top, then clears the signal so it fires once. A
+    // hit from outside the held window names no turn here and only clears it.
+    val jump = vm.pendingJump
+    LaunchedEffect(jump) {
+        val target = jump ?: return@LaunchedEffect
+        val index = turns.indexOfFirst { it.id == target }
+        if (index >= 0) {
+            followNewest = false
+            explicitTurn = target
+            listState.animateScrollToItem(index)
+        }
+        vm.clearJump()
     }
 
     // One scrolling surface for the transcript and the question widget. The
@@ -402,6 +453,20 @@ private fun TurnDeck(vm: ChatViewModel, modifier: Modifier = Modifier) {
         val held = heldTurn?.let { keys.indexOf("turn-$it") } ?: -1
         val target = if (pending != null) 0 else if (held >= 0) held else 0
         if (target != pagerState.currentPage) pagerState.scrollToPage(target)
+    }
+
+    // A search hit names the turn to open. The deck moves its pager to that card
+    // and holds it there, then clears the signal so it fires once. A hit from
+    // outside the held window names no card here and only clears it.
+    val jump = vm.pendingJump
+    LaunchedEffect(jump) {
+        val target = jump ?: return@LaunchedEffect
+        val index = ordered.indexOfFirst { it.id == target }
+        if (index >= 0) {
+            heldTurn = target
+            pagerState.scrollToPage(index + if (pending != null) 1 else 0)
+        }
+        vm.clearJump()
     }
 
     HorizontalPager(
@@ -554,7 +619,12 @@ private fun DeckCard(
  * a row of its own so it never lands on the composer.
  */
 @Composable
-private fun ViewModeSwitch(mode: String, onChange: (String) -> Unit) {
+private fun ViewModeSwitch(
+    mode: String,
+    onChange: (String) -> Unit,
+    searchOpen: Boolean,
+    onToggleSearch: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -572,6 +642,114 @@ private fun ViewModeSwitch(mode: String, onChange: (String) -> Unit) {
                     },
                 )
             }
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        TextButton(onClick = onToggleSearch, modifier = Modifier.tactile()) {
+            Text(
+                text = if (searchOpen) "Close" else "Search",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (searchOpen) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+    }
+}
+
+/**
+ * Full-session search: a field and the matches under it. It takes the
+ * transcript's place while it is open, so the composer and the view switch keep
+ * their positions and neither is covered. A tap on a hit hands its turn to the
+ * view that is showing, which opens and scrolls to it.
+ */
+@Composable
+private fun SearchPanel(
+    vm: ChatViewModel,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onOpenResult: (SearchHit) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            singleLine = true,
+            placeholder = { Text("Search every prompt and answer…") },
+        )
+        vm.searchError?.let { error ->
+            Text(
+                text = error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+        val results = vm.searchResults
+        // Search reads the whole session; the screen only holds a window of it.
+        // A hit whose turn is outside that window has nothing here to open, so
+        // its row is inert rather than tapping into nothing.
+        val loadedTurnIds = vm.turns.mapTo(HashSet()) { it.id }
+        when {
+            vm.searching -> Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "searching…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            results.isEmpty() && query.isNotBlank() && vm.searchError == null ->
+                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "no matches",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            else -> LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                items(results, key = { it.entryId }) { hit ->
+                    SearchResultRow(
+                        hit = hit,
+                        openable = hit.turnId != null && hit.turnId in loadedTurnIds,
+                        onOpen = { onOpenResult(hit) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One search hit: the snippet with the match inside it, and the prompt of the
+ * turn it belongs to, so a result says where it was said and not just what.
+ * [openable] is false for a hit whose turn is not in the held window, since
+ * there is nothing on screen to open.
+ */
+@Composable
+private fun SearchResultRow(hit: SearchHit, openable: Boolean, onOpen: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = openable, onClick = onOpen)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = hit.snippet,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        if (hit.prompt != null) {
+            Text(
+                text = hit.prompt,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
     }
 }
