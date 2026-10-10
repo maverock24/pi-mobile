@@ -1,8 +1,13 @@
 package com.maverock24.pimobile
 
+import android.app.Activity
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import androidx.core.app.NotificationManagerCompat
 import com.maverock24.pimobile.data.CrashLog
 
 /**
@@ -35,11 +40,67 @@ class PiRemoteApp : Application() {
         // A launch that is still up seconds later is not a launch that failed to
         // come up, so a crash from here must not put the next one in safe mode.
         Handler(Looper.getMainLooper()).postDelayed({ log.markRunning() }, STAYED_UP_MS)
+
+        registerActivityLifecycleCallbacks(foregroundTracker)
+        createRunChannel()
+    }
+
+    /**
+     * Keeps [resumedActivities] in step with what is in front. Pause and stop
+     * both end the resumed state, so both remove the activity: removing an
+     * activity that is already gone is a no-op, where a count decremented from
+     * both callbacks would fall below zero and never read as foreground again.
+     */
+    private val foregroundTracker = object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityResumed(activity: Activity) {
+            resumedActivities.add(activity)
+        }
+
+        override fun onActivityPaused(activity: Activity) {
+            resumedActivities.remove(activity)
+        }
+
+        override fun onActivityStopped(activity: Activity) {
+            resumedActivities.remove(activity)
+        }
+
+        override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+        override fun onActivityStarted(activity: Activity) = Unit
+        override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+        override fun onActivityDestroyed(activity: Activity) = Unit
+    }
+
+    /**
+     * The channel every run notification posts to. Creating it on every launch is
+     * what the platform asks for, since a channel is a user-facing setting that
+     * has to exist before anything posts to it.
+     */
+    private fun createRunChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_RUNS,
+            "pi runs",
+            NotificationManager.IMPORTANCE_DEFAULT,
+        )
+        NotificationManagerCompat.from(this).createNotificationChannel(channel)
     }
 
     companion object {
         /** How long a launch has to survive before it counts as having come up. */
         private const val STAYED_UP_MS = 5_000L
+
+        /** The notification channel a finished run or an open question posts to. */
+        private const val CHANNEL_RUNS = "pi-runs"
+
+        /**
+         * The activities currently in front, by identity. The notifier stays
+         * quiet while this is non-empty: a notification reports something you
+         * cannot see, so one raised with the transcript already on screen is
+         * noise.
+         */
+        private val resumedActivities = mutableSetOf<Activity>()
+
+        /** True while one of the app's activities is in front. */
+        val isResumed: Boolean get() = resumedActivities.isNotEmpty()
 
         /**
          * True when the previous launch crashed before it came up. Set once in

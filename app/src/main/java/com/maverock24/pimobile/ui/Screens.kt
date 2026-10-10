@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -92,6 +93,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
@@ -243,12 +245,8 @@ fun ChatScreen(
     vm: ChatViewModel,
     listening: Boolean,
     partialText: String,
-    notice: String?,
-    bootNotice: String?,
     onToggleMic: () -> Unit,
     onOpenSettings: () -> Unit,
-    onDismissNotice: () -> Unit,
-    onDismissBootNotice: () -> Unit,
 ) {
     val turns = vm.turns
     val pending = vm.pendingQuestion
@@ -269,17 +267,6 @@ fun ChatScreen(
     // arguments even though the draft still starts with a slash. It reopens once
     // the slash is gone, or if the affordance is tapped again.
     var paletteDismissed by rememberSaveable { mutableStateOf(false) }
-    // A copy or share says it worked in the notice bar, the same bar the rest of
-    // the app's notices use. It clears itself, because a confirmation is only
-    // useful while the action is still fresh, and it is kept apart from the
-    // update notice above so one cannot wipe the other.
-    var actionNotice by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(actionNotice) {
-        if (actionNotice != null) {
-            delay(2000)
-            actionNotice = null
-        }
-    }
     // Compose does not hand the app the text a selection picked, so the only way
     // to move selected text into the composer is the clipboard. The user selects
     // with the normal handles and taps Copy in the system toolbar; that copy is
@@ -295,7 +282,7 @@ fun ChatScreen(
             val picked = readClipText(manager)
             if (!picked.isNullOrBlank()) {
                 vm.captureToDraft(picked)
-                actionNotice = "Copied text added to prompt"
+                vm.notifyConfirmation("Copied text added to prompt")
             }
         }
         manager?.addPrimaryClipChangedListener(listener)
@@ -328,6 +315,15 @@ fun ChatScreen(
     LaunchedEffect(paletteVisible) {
         if (paletteVisible) vm.loadCommands()
     }
+
+    // System back closes one layer at a time. The palette and search are
+    // mutually exclusive modes of the composer, so at most one of these is ever
+    // enabled; with neither, back keeps the platform default and leaves the app.
+    BackHandler(enabled = paletteVisible) {
+        paletteOpen = false
+        paletteDismissed = true
+    }
+    BackHandler(enabled = searchOpen) { searchOpen = false }
 
     // The outcome of a request the user started: confirm when the bridge took
     // it, reject when it failed. Only these two paths and never a background
@@ -432,31 +428,12 @@ fun ChatScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
-            if (notice != null) {
-                NoticeBar(text = notice, onDismiss = onDismissNotice)
-            }
-            // A launch that died before it came up left data unread, and the
-            // transcript on screen is then missing what the phone still holds.
-            // Saying so once is the difference between a record and a lie.
-            if (bootNotice != null) {
-                NoticeBar(text = bootNotice, onDismiss = onDismissBootNotice)
-            }
-            vm.lastError?.let { error ->
-                NoticeBar(text = error, onDismiss = vm::dismissError, isError = true)
-            }
-            actionNotice?.let { line ->
-                NoticeBar(text = line, onDismiss = { actionNotice = null })
-            }
-
-            // A handover is named here, in one line, rather than a bar with an
-            // attach button: the move has already happened, and this says so.
-            vm.sessionNotice?.let { line ->
-                Text(
-                    text = line,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                )
+            // The view model's notice channel draws here, in the order it keeps
+            // its entries: the error, the actionable entry, then the
+            // confirmations. One render site is the whole of it, so nothing can
+            // stack a second message on top of this one.
+            vm.notices.forEach { n ->
+                NoticeBar(text = n.text, onDismiss = { vm.dismissNotice(n.id) }, isError = n.kind == NoticeKind.Error, actionLabel = n.actionLabel, onAction = n.action)
             }
 
             if (searchOpen) {
@@ -475,7 +452,7 @@ fun ChatScreen(
                 // still read and send what it saved before.
                 PinsView(
                     vm = vm,
-                    onConfirm = { actionNotice = it },
+                    onConfirm = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else if (turns.isEmpty() && pending == null) {
@@ -492,13 +469,13 @@ fun ChatScreen(
                 // two ways rather than two lists kept in step.
                 TurnDeck(
                     vm = vm,
-                    onAnswerConfirmed = { actionNotice = it },
+                    onAnswerConfirmed = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else {
                 Transcript(
                     vm = vm,
-                    onAnswerConfirmed = { actionNotice = it },
+                    onAnswerConfirmed = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }
@@ -961,6 +938,10 @@ private fun PinsView(
 ) {
     val pins = vm.pins
     var openedId by rememberSaveable { mutableStateOf<String?>(null) }
+    // An open pin is a layer over the list, so back returns to the list. This is
+    // registered after the chat's handlers, which puts it ahead of them while a
+    // pin is open.
+    BackHandler(enabled = openedId != null) { openedId = null }
     val opened = pins.firstOrNull { it.id == openedId }
 
     if (opened != null) {
@@ -1196,15 +1177,9 @@ private fun SearchPanel(
 ) {
     Column(modifier = modifier) {
         // The field is the composer now, so the panel is only the outcome: the
-        // error, the wait, the empty answer, and the matches themselves.
-        vm.searchError?.let { error ->
-            Text(
-                text = error,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-        }
+        // wait, the empty answer, and the matches themselves. A refusal is a
+        // message, and the notice channel owns those, so there is no error line
+        // here to duplicate it.
         val results = vm.searchResults
         // Search reads the whole session; the screen only holds a window of it.
         // A hit whose turn is outside that window has nothing here to open, so
@@ -1218,7 +1193,7 @@ private fun SearchPanel(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            results.isEmpty() && query.isNotBlank() && vm.searchError == null ->
+            results.isEmpty() && query.isNotBlank() && !vm.searchFailed ->
                 Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     Text(
                         text = "no matches",
@@ -1250,6 +1225,7 @@ private fun SearchResultRow(hit: SearchHit, openable: Boolean, onOpen: () -> Uni
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clickable(enabled = openable, onClick = onOpen)
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
@@ -1573,7 +1549,13 @@ private fun AnsweredQuestion(question: String, answer: String?, modifier: Modifi
 }
 
 @Composable
-private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = false) {
+private fun NoticeBar(
+    text: String,
+    onDismiss: () -> Unit,
+    isError: Boolean = false,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+) {
     // The text colour is passed with the fill rather than left to the container,
     // so it can never fall back to a default that does not match this theme.
     val container = if (isError) {
@@ -1602,7 +1584,13 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = fa
                 style = MaterialTheme.typography.bodySmall,
                 color = onContainer,
             )
-            TextButton(onClick = onDismiss, modifier = Modifier.tactile()) { Text("OK") }
+            // The action and the dismiss are two controls, not one: a dismiss
+            // must never fire the action. Sharing the button is how the update
+            // banner used to start an install on a tap meant to close it.
+            if (actionLabel != null && onAction != null) {
+                TextButton(onClick = onAction, modifier = Modifier.tactile()) { Text(actionLabel) }
+            }
+            TextButton(onClick = onDismiss, modifier = Modifier.tactile()) { Text("Dismiss") }
         }
     }
 }
@@ -1658,6 +1646,7 @@ private fun CommandPalette(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(AnswerStyle.promptRadius))
                     .clickable { onPick(command) }
                     .tactile()
@@ -2417,9 +2406,12 @@ private fun VersionCard(
     onInstall: (() -> Unit)?,
 ) {
     // The amber and green are deliberately not theme colours: they mean the same
-    // thing under every palette, and the media app uses the same pair.
+    // thing under every palette, and the media app uses the same pair. On the
+    // 16% tint the fill already reads in the dark schemes, but the light tint
+    // needs a darker shade of the same hue for the label to clear AA.
     val amber = Color(0xFFF0A83C)
     val green = Color(0xFF46C97E)
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(12.dp),
@@ -2462,6 +2454,11 @@ private fun VersionCard(
                     Pill(
                         text = if (available) "Update available" else "Up to date",
                         color = if (available) amber else green,
+                        textColor = if (available) {
+                            if (dark) amber else Color(0xFF6E4400)
+                        } else {
+                            if (dark) green else Color(0xFF0F6234)
+                        },
                     )
                 }
             }
@@ -2481,7 +2478,7 @@ private fun VersionCard(
 
 /** A rounded status pill, e.g. "Update available". */
 @Composable
-private fun Pill(text: String, color: Color) {
+private fun Pill(text: String, color: Color, textColor: Color = color) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(percent = 50))
@@ -2491,7 +2488,7 @@ private fun Pill(text: String, color: Color) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = color,
+            color = textColor,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
