@@ -360,32 +360,35 @@ fun ChatScreen(
                 title = {
                     Column {
                         // The title names the session this screen is attached to,
-                        // not the last thing typed. It stays a title.
+                        // not the last thing typed. It stays a title. Two lines is
+                        // the cap so a long name at a large font scale is read
+                        // rather than cut mid-glyph.
                         Text(
                             text = vm.barTitle,
                             style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        // The last prompt is a subtitle, one ellipsised line that
-                        // tells you which turn you are in. It never grows past one
-                        // line, so it cannot push the bar taller than an app bar.
-                        // With no prompt yet the session label stands in, so the
-                        // line is never blank.
+                        // The last prompt is a subtitle that tells you which turn
+                        // you are in. It wraps and ellipsises rather than being
+                        // pinned to one line: at fontScale 2.0 a single forced line
+                        // is taller than the bar and the bottom of the glyphs is
+                        // clipped.
                         Text(
                             text = vm.lastPrompt?.takeIf { it.isNotBlank() } ?: vm.attachedLabel,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
                 },
                 actions = {
-                    // One fixed slot for the working signal. Whatever stands here
-                    // is smaller than the icon buttons beside it, so showing or
-                    // clearing it cannot change the bar's height.
-                    Box(modifier = Modifier.height(24.dp), contentAlignment = Alignment.Center) {
+                    // One slot for the working signal, floored at the height of the
+                    // icon buttons beside it so showing or clearing it cannot move
+                    // the bar. A floor rather than a fixed size because the waiting
+                    // label is taller than 24 dp at a large font scale, and a fixed
+                    // box would clip it.
+                    Box(modifier = Modifier.heightIn(min = 24.dp), contentAlignment = Alignment.Center) {
                         when {
                             vm.pendingQuestion != null -> Text(
                                 text = "waiting",
