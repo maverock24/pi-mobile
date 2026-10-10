@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -232,58 +233,66 @@ class MainActivity : ComponentActivity() {
                     onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
                 }
 
-                if (showSettings) {
-                    // Back leaves settings rather than the app. The screen is a
-                    // destination and the chat is the app's body, so the gesture
-                    // that closes a layer should land on the chat, not finish.
-                    BackHandler(enabled = showSettings) { showSettings = false }
-                    SettingsScreen(
-                        initialBaseUrl = vm.baseUrl,
-                        initialToken = vm.token,
-                        statusLine = vm.statusLine,
-                        versionLabel = "Pi Remote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                        sessionLabel = vm.attachedLabel.ifBlank { vm.sessionTitle },
-                        appearance = vm.appearance,
-                        onAppearanceChange = vm::updateAppearance,
-                        theme = vm.theme,
-                        onThemeChange = vm::updateTheme,
-                        updateStatus = updateStatus,
-                        onCheckUpdates = checkForUpdates,
-                        onInstallUpdate = installUpdate,
-                        onPairLink = { pendingPairLink.value = it },
-                        onSave = { url, token ->
-                            vm.saveSettings(url, token)
-                            showSettings = false
-                        },
-                        onTest = vm::testConnection,
-                        lastCrash = vm.lastCrash,
-                        quarantined = vm.quarantinedData,
-                        onClearCrashState = vm::clearCrashState,
-                        onBack = { showSettings = false },
-                    )
-                } else {
-                    ChatScreen(
-                        vm = vm,
-                        listening = listening,
-                        partialText = partialText,
-                        onToggleMic = {
-                            if (listening) {
-                                dictation.stop()
-                            } else {
-                                val granted = ContextCompat.checkSelfPermission(
-                                    context,
-                                    Manifest.permission.RECORD_AUDIO,
-                                ) == PackageManager.PERMISSION_GRANTED
-                                if (granted) {
-                                    runCatching { dictation.start() }
-                                        .onFailure { vm.notifyError("Could not start dictation: ${it.javaClass.simpleName}") }
+                // One holder keyed by destination. Showing Settings disposes the
+                // chat, and Compose throws a disposed composition's state away with
+                // it; the holder sets that state aside under its key and hands it
+                // back when the chat returns, so a trip to Settings is no longer a
+                // reset.
+                val holder = rememberSaveableStateHolder()
+                holder.SaveableStateProvider(if (showSettings) "settings" else "chat") {
+                    if (showSettings) {
+                        // Back leaves settings rather than the app. The screen is a
+                        // destination and the chat is the app's body, so the gesture
+                        // that closes a layer should land on the chat, not finish.
+                        BackHandler(enabled = showSettings) { showSettings = false }
+                        SettingsScreen(
+                            initialBaseUrl = vm.baseUrl,
+                            initialToken = vm.token,
+                            statusLine = vm.statusLine,
+                            versionLabel = "Pi Remote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                            sessionLabel = vm.attachedLabel.ifBlank { vm.sessionTitle },
+                            appearance = vm.appearance,
+                            onAppearanceChange = vm::updateAppearance,
+                            theme = vm.theme,
+                            onThemeChange = vm::updateTheme,
+                            updateStatus = updateStatus,
+                            onCheckUpdates = checkForUpdates,
+                            onInstallUpdate = installUpdate,
+                            onPairLink = { pendingPairLink.value = it },
+                            onSave = { url, token ->
+                                vm.saveSettings(url, token)
+                                showSettings = false
+                            },
+                            onTest = vm::testConnection,
+                            lastCrash = vm.lastCrash,
+                            quarantined = vm.quarantinedData,
+                            onClearCrashState = vm::clearCrashState,
+                            onBack = { showSettings = false },
+                        )
+                    } else {
+                        ChatScreen(
+                            vm = vm,
+                            listening = listening,
+                            partialText = partialText,
+                            onToggleMic = {
+                                if (listening) {
+                                    dictation.stop()
                                 } else {
-                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    val granted = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.RECORD_AUDIO,
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (granted) {
+                                        runCatching { dictation.start() }
+                                            .onFailure { vm.notifyError("Could not start dictation: ${it.javaClass.simpleName}") }
+                                    } else {
+                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
                                 }
-                            }
-                        },
-                        onOpenSettings = { showSettings = true },
-                    )
+                            },
+                            onOpenSettings = { showSettings = true },
+                        )
+                    }
                 }
             }
         }
