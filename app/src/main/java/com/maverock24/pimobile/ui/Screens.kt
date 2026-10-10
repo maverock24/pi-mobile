@@ -103,6 +103,11 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -831,7 +836,7 @@ private fun DeckCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(IntrinsicSize.Min)
-                            .clickable(enabled = openable, onClick = onToggle)
+                            .clickable(enabled = openable, role = Role.Button, onClick = onToggle)
                             .tactile(enabled = openable)
                             .padding(
                                 start = AnswerStyle.promptPadding,
@@ -916,7 +921,9 @@ private fun ViewModeSwitch(
                 onClick = { onChange(value) },
                 shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
                 label = { Text(label, style = MaterialTheme.typography.bodyMedium) },
-                modifier = Modifier.tactile(),
+                modifier = Modifier.tactile().semantics {
+                    stateDescription = if (mode == value) "Selected" else "Not selected"
+                },
             )
         }
     }
@@ -982,7 +989,7 @@ private fun PinRow(pin: Pin, onClick: () -> Unit) {
         color = MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         shape = RoundedCornerShape(AnswerStyle.promptRadius),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).tactile(),
+        modifier = Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).tactile(),
     ) {
         Column(modifier = Modifier.padding(AnswerStyle.promptPadding)) {
             Text(
@@ -1227,7 +1234,7 @@ private fun SearchResultRow(hit: SearchHit, openable: Boolean, onOpen: () -> Uni
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
-            .clickable(enabled = openable, onClick = onOpen)
+            .clickable(enabled = openable, role = Role.Button, onClick = onOpen)
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         Text(
@@ -1276,7 +1283,7 @@ private fun TurnPrompt(turn: ChatTurn, expanded: Boolean, onToggle: () -> Unit) 
             .clip(shape)
             .background(scheme.surfaceVariant)
             .border(1.dp, scheme.outline, shape)
-            .clickable(enabled = openable, onClick = onToggle)
+            .clickable(enabled = openable, role = Role.Button, onClick = onToggle)
             .tactile(enabled = openable)
             .padding(
                 start = AnswerStyle.promptPadding,
@@ -1487,7 +1494,18 @@ private fun TurnBody(
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 AnswerView(
                     text = liveText,
-                    modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                    // The answer is still arriving, so it is marked a live region
+                    // while the run goes: TalkBack reads each update instead of
+                    // waiting for the person to move focus onto it.
+                    modifier = Modifier
+                        .widthIn(max = AnswerStyle.measure)
+                        .then(
+                            if (working) {
+                                Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                            } else {
+                                Modifier
+                            },
+                        ),
                 )
                 AnswerActions(
                     text = liveText,
@@ -1649,7 +1667,7 @@ private fun CommandPalette(
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(AnswerStyle.promptRadius))
-                    .clickable { onPick(command) }
+                    .clickable(role = Role.Button) { onPick(command) }
                     .tactile()
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -2018,6 +2036,9 @@ fun SettingsScreen(
                             onClick = { onAppearanceChange(value) },
                             shape = SegmentedButtonDefaults.itemShape(index = index, count = appearances.size),
                             label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                            modifier = Modifier.semantics {
+                                stateDescription = if (appearance == value) "Selected" else "Not selected"
+                            },
                         )
                     }
                 }
@@ -2037,6 +2058,9 @@ fun SettingsScreen(
                             shape = SegmentedButtonDefaults.itemShape(index = index, count = themes.size),
                             icon = { ThemeSwatch(palette) },
                             label = { Text(palette.label, style = MaterialTheme.typography.labelMedium) },
+                            modifier = Modifier.semantics {
+                                stateDescription = if (theme == name) "Selected" else "Not selected"
+                            },
                         )
                     }
                 }
@@ -2258,7 +2282,7 @@ private fun SettingsSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onToggle)
+                .clickable(role = Role.Button, onClick = onToggle)
                 .tactile()
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
