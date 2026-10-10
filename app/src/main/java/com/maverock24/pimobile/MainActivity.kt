@@ -26,6 +26,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.maverock24.pimobile.net.Pairing
 import com.maverock24.pimobile.ui.ChatScreen
 import com.maverock24.pimobile.ui.ChatViewModel
+import com.maverock24.pimobile.ui.NoticeAction
 import com.maverock24.pimobile.ui.PiRemoteTheme
 import com.maverock24.pimobile.ui.SettingsScreen
 import com.maverock24.pimobile.ui.UpdateStatus
@@ -82,9 +83,13 @@ class MainActivity : ComponentActivity() {
                                     // Offering the update is a message with its own
                                     // Install action, so the dismiss and the install
                                     // are two controls and closing it never installs.
-                                    vm.notifyActionable("Update ${info.versionName} ready", "Install") {
-                                        installUpdate(info)
-                                    }
+                                    // The action travels as a value, not a lambda, so
+                                    // it survives this composition being replaced.
+                                    vm.notifyActionable(
+                                        "Update ${info.versionName} ready",
+                                        "Install",
+                                        NoticeAction.InstallUpdate(info),
+                                    )
                                     UpdateStatus.Available(info)
                                 } else {
                                     // A null result means the installed build is the
@@ -110,7 +115,8 @@ class MainActivity : ComponentActivity() {
                                     vm.notifyActionable(
                                         "Allow installs for Pi Remote, then install again",
                                         "Install",
-                                    ) { installUpdate(info) }
+                                        NoticeAction.InstallUpdate(info),
+                                    )
                                 } else {
                                     // A null result means the installer opened. A
                                     // message means it did not, and a failure that
@@ -291,6 +297,11 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onOpenSettings = { showSettings = true },
+                            onNoticeAction = { action ->
+                                when (action) {
+                                    is NoticeAction.InstallUpdate -> installUpdate(action.info)
+                                }
+                            },
                         )
                     }
                 }

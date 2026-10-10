@@ -255,6 +255,10 @@ fun ChatScreen(
     partialText: String,
     onToggleMic: () -> Unit,
     onOpenSettings: () -> Unit,
+    // A notice's action is a value, because the notice outlives the composition
+    // that raised it; this composition maps the value to the behaviour it has
+    // now, so the action still runs after the screen is recreated.
+    onNoticeAction: (NoticeAction) -> Unit,
 ) {
     val turns = vm.turns
     val pending = vm.pendingQuestion
@@ -444,7 +448,7 @@ fun ChatScreen(
             // confirmations. One render site is the whole of it, so nothing can
             // stack a second message on top of this one.
             vm.notices.forEach { n ->
-                NoticeBar(text = n.text, onDismiss = { vm.dismissNotice(n.id) }, isError = n.kind == NoticeKind.Error, actionLabel = n.actionLabel, onAction = n.action)
+                NoticeBar(text = n.text, onDismiss = { vm.dismissNotice(n.id) }, isError = n.kind == NoticeKind.Error, actionLabel = n.actionLabel, onAction = n.action?.let { action -> { onNoticeAction(action) } })
             }
 
             if (searchOpen) {
