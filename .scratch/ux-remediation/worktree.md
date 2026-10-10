@@ -671,3 +671,47 @@ the notice channel and the back/48 dp work, into the wave-1 checklist, the wave-
 and the final release pass. The other chains are shorter: the notification line is five
 (T11 -> T13 -> T14 -> T39 -> T40), and the composer/insets line is seven
 (T1 -> T2 -> T3 -> T4 -> T17 -> T37 -> T40).
+
+---
+
+## Post-review tasks
+
+Found by the wave-1 code review. T16a is already fixed and committed; the other three are carried
+into the wave named on each, so a finding cannot be lost by being only in a report.
+
+### T16a. Keep the recovery message and live errors through a history load
+
+- **Wave**: 1 (fix, after review). **Phase**: 2.
+- **Touches**: `app/src/main/java/com/maverock24/pimobile/ui/ChatViewModel.kt`.
+- **Change**: `reloadHistory` ended with `clearNotices()` to retire the session-move line, which took the message `recoverFromStartupCrash` had just posted, and any error still waiting to be read, with it inside a second. The session-move notice now keeps its id and only that id is dismissed; `clearNotices()` also clears the tracked id, because nothing is left to clear.
+- **Check**: `assembleDebug` success, and `grep -n "clearNotices()" ChatViewModel.kt` shows only `forgetSession` and `clearCrashState`.
+- **Blocked by**: T16.
+- **Commit subject**: `Clear only the session line when its transcript arrives`
+- **Status**: done (`b7e7761`)
+
+### T17a. Back closes the palette before an open pin
+
+- **Wave**: 2. **Phase**: 3.
+- **Touches**: `app/src/main/java/com/maverock24/pimobile/ui/Screens.kt`.
+- **Change**: the pin's `BackHandler` is registered after the palette's, so the dispatcher serves it first and back closes the pin rather than the palette, which is the reverse of D3's order. Gate the pin's handler on the palette being closed, or register the palette's later than the content.
+- **Check**: `grep -n "BackHandler" Screens.kt`, then read the `enabled` conditions to confirm the palette wins while both are open.
+- **Blocked by**: T17.
+- **Commit subject**: `Close the command palette first when both are open`
+
+### T25a. A notice action survives a recreated screen
+
+- **Wave**: 2. **Phase**: 12.
+- **Touches**: `app/src/main/java/com/maverock24/pimobile/MainActivity.kt`, `app/src/main/java/com/maverock24/pimobile/ui/ChatViewModel.kt`.
+- **Change**: an actionable notice's `action` closure captures the composition that posted it, so after a rotation the "Allow installs for Pi Remote" entry's Install runs on a cancelled scope and holds the destroyed Activity. Re-post the entry when the composition is recreated, or carry the action as a value the screens map to behaviour instead of a captured lambda.
+- **Check**: `assembleDebug` success, and on the phone: rotate with that entry on screen and tap Install.
+- **Blocked by**: T25.
+- **Commit subject**: `Make a notice action survive a recreated screen`
+
+### T38a. The luminance check reads the palette from the source
+
+- **Wave**: 3. **Phase**: 18.
+- **Touches**: `scripts/luminance.py`.
+- **Change**: the script hardcodes the hex values, so its docstring's claim that a change here follows a change there is false, and an `AnswerStyle.kt` regression goes unnoticed. Parse the palettes out of `AnswerStyle.kt` and check what is actually declared.
+- **Check**: `python3 scripts/luminance.py` exits 0; then set one palette hex in `AnswerStyle.kt` to a failing value, confirm exit 1, and restore it.
+- **Blocked by**: T38.
+- **Commit subject**: `Read the palette out of the source it checks`
