@@ -452,6 +452,7 @@ fun ChatScreen(
                 // still read and send what it saved before.
                 PinsView(
                     vm = vm,
+                    paletteVisible = paletteVisible,
                     onConfirm = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
@@ -933,15 +934,17 @@ private fun ViewModeSwitch(
 @Composable
 private fun PinsView(
     vm: ChatViewModel,
+    paletteVisible: Boolean,
     onConfirm: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val pins = vm.pins
     var openedId by rememberSaveable { mutableStateOf<String?>(null) }
-    // An open pin is a layer over the list, so back returns to the list. This is
-    // registered after the chat's handlers, which puts it ahead of them while a
-    // pin is open.
-    BackHandler(enabled = openedId != null) { openedId = null }
+    // An open pin is a layer over the list, so back returns to the list. It is
+    // registered after the chat's handlers, which normally puts it ahead of
+    // them; while the command palette is up, though, D3 puts the palette first,
+    // so the pin stands down until the palette is gone.
+    BackHandler(enabled = openedId != null && !paletteVisible) { openedId = null }
     val opened = pins.firstOrNull { it.id == openedId }
 
     if (opened != null) {
