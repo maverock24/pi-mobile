@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -210,6 +211,10 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (showSettings) {
+                    // Back leaves settings rather than the app. The screen is a
+                    // destination and the chat is the app's body, so the gesture
+                    // that closes a layer should land on the chat, not finish.
+                    BackHandler(enabled = showSettings) { showSettings = false }
                     SettingsScreen(
                         initialBaseUrl = vm.baseUrl,
                         initialToken = vm.token,
