@@ -423,7 +423,7 @@ fun ChatScreen(
                     text = vm.statusLine,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 )
@@ -468,12 +468,39 @@ fun ChatScreen(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else if (turns.isEmpty() && pending == null) {
+                // With nothing on the transcript the screen should say which of
+                // the three situations it is in, because the fix differs: pair,
+                // retry, or wait. Showing the same "no results yet" for all three
+                // leaves a first-run user with no way forward.
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = if (vm.busy) "thinking…" else "no results yet",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        when {
+                            vm.token.isBlank() -> {
+                                Text(
+                                    text = "Not paired yet",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Button(onClick = onOpenSettings) { Text("Open Settings") }
+                            }
+                            !vm.connected -> {
+                                Text(
+                                    text = vm.statusLine.ifBlank { "Not connected" },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Button(onClick = vm::ensureConnected) { Text("Retry") }
+                            }
+                            else -> Text(
+                                text = if (vm.busy) "thinking…" else "no results yet",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             } else if (vm.viewMode == "deck") {
                 // The same transcript as cards. The deck and the transcript read
