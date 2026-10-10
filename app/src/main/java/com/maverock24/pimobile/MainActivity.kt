@@ -273,6 +273,7 @@ class MainActivity : ComponentActivity() {
                             lastCrash = vm.lastCrash,
                             quarantined = vm.quarantinedData,
                             onClearCrashState = vm::clearCrashState,
+                            onNotifyConfirmation = vm::notifyConfirmation,
                             onBack = { showSettings = false },
                         )
                     } else {

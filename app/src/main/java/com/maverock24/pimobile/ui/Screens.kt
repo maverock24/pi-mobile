@@ -1886,10 +1886,15 @@ fun SettingsScreen(
     lastCrash: String?,
     quarantined: Boolean,
     onClearCrashState: () -> Unit,
+    onNotifyConfirmation: (String) -> Unit,
     onBack: () -> Unit,
 ) {
     var baseUrl by rememberSaveable { mutableStateOf(initialBaseUrl) }
     var token by rememberSaveable { mutableStateOf(initialToken) }
+
+    // A copied command reports through the same channel as every other message,
+    // so the confirmation lands in the chat's one message area rather than here.
+    val onCopied: () -> Unit = { onNotifyConfirmation("Copied") }
 
     // One section is open at a time, as in the media app, so the list stays a set
     // of statements about the current setup rather than a wall of controls.
@@ -1967,9 +1972,14 @@ fun SettingsScreen(
                     Text("Scan the pairing QR", style = MaterialTheme.typography.bodyLarge)
                 }
                 Text(
-                    text = "On the laptop run /pair in the pi session that serves the bridge; a window " +
-                        "with the QR opens. Scanning it fills in the address and the token below and " +
-                        "pairs straight away. The camera is used to read that one code.",
+                    text = "On the laptop, in the pi session that serves the bridge, run:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LaptopCommand(command = "/pair", onCopied = onCopied)
+                Text(
+                    text = "A window with the QR opens. Scanning it fills in the address and the " +
+                        "token below and pairs straight away. The camera is used to read that one code.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2025,10 +2035,11 @@ fun SettingsScreen(
                     placeholder = { Text("paste the token") },
                 )
                 Text(
-                    text = "On the laptop: cat ~/.config/pi-remote/token",
+                    text = "On the laptop:",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                LaptopCommand(command = "cat ~/.config/pi-remote/token", onCopied = onCopied)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val label = MaterialTheme.typography.bodyLarge
                     val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
@@ -2299,6 +2310,51 @@ private fun SectionLabel(text: String) {
 }
 
 /**
+ * One command the user runs on the laptop, in a row that copies it on tap. The
+ * pairing command and the token path are the only instructions the app gives for
+ * the other machine, and a thumb cannot select them out of a paragraph, so each
+ * is its own target. The row reports the copy through the chat's message channel.
+ */
+@Composable
+private fun LaptopCommand(
+    command: String,
+    onCopied: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button) {
+                clipboard.setText(AnnotatedString(command))
+                onCopied()
+            }
+            .tactile(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = command,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                imageVector = CopyIcon,
+                contentDescription = "Copy $command",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+/**
  * One collapsible section: a trigger row that always states the current value,
  * and a bordered panel that holds the controls. It mirrors the media app's
  * divide-y list, so the two apps read the same way.
@@ -2348,7 +2404,7 @@ private fun SettingsSection(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
