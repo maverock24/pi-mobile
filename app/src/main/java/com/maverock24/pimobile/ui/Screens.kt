@@ -1573,7 +1573,13 @@ private fun AnsweredQuestion(question: String, answer: String?, modifier: Modifi
 }
 
 @Composable
-private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = false) {
+private fun NoticeBar(
+    text: String,
+    onDismiss: () -> Unit,
+    isError: Boolean = false,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+) {
     // The text colour is passed with the fill rather than left to the container,
     // so it can never fall back to a default that does not match this theme.
     val container = if (isError) {
@@ -1602,7 +1608,13 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit, isError: Boolean = fa
                 style = MaterialTheme.typography.bodySmall,
                 color = onContainer,
             )
-            TextButton(onClick = onDismiss, modifier = Modifier.tactile()) { Text("OK") }
+            // The action and the dismiss are two controls, not one: a dismiss
+            // must never fire the action. Sharing the button is how the update
+            // banner used to start an install on a tap meant to close it.
+            if (actionLabel != null && onAction != null) {
+                TextButton(onClick = onAction, modifier = Modifier.tactile()) { Text(actionLabel) }
+            }
+            TextButton(onClick = onDismiss, modifier = Modifier.tactile()) { Text("Dismiss") }
         }
     }
 }
