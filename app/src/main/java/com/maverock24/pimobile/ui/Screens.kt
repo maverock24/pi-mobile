@@ -1886,15 +1886,10 @@ fun SettingsScreen(
     lastCrash: String?,
     quarantined: Boolean,
     onClearCrashState: () -> Unit,
-    onNotifyConfirmation: (String) -> Unit,
     onBack: () -> Unit,
 ) {
     var baseUrl by rememberSaveable { mutableStateOf(initialBaseUrl) }
     var token by rememberSaveable { mutableStateOf(initialToken) }
-
-    // A copied command reports through the same channel as every other message,
-    // so the confirmation lands in the chat's one message area rather than here.
-    val onCopied: () -> Unit = { onNotifyConfirmation("Copied") }
 
     // One section is open at a time, as in the media app, so the list stays a set
     // of statements about the current setup rather than a wall of controls.
@@ -1976,7 +1971,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                LaptopCommand(command = "/pair", onCopied = onCopied)
+                LaptopCommand(command = "/pair")
                 Text(
                     text = "A window with the QR opens. Scanning it fills in the address and the " +
                         "token below and pairs straight away. The camera is used to read that one code.",
@@ -2039,7 +2034,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                LaptopCommand(command = "cat ~/.config/pi-remote/token", onCopied = onCopied)
+                LaptopCommand(command = "cat ~/.config/pi-remote/token")
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val label = MaterialTheme.typography.bodyLarge
                     val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
@@ -2313,14 +2308,16 @@ private fun SectionLabel(text: String) {
  * One command the user runs on the laptop, in a row that copies it on tap. The
  * pairing command and the token path are the only instructions the app gives for
  * the other machine, and a thumb cannot select them out of a paragraph, so each
- * is its own target. The row reports the copy through the chat's message channel.
+ * is its own target. A copy is acknowledged on the row itself, because the
+ * chat's message channel is not on screen while Settings is.
  */
 @Composable
-private fun LaptopCommand(
-    command: String,
-    onCopied: () -> Unit,
-) {
+private fun LaptopCommand(command: String) {
     val clipboard = LocalClipboardManager.current
+    // The acknowledgement lives here, not in the chat's channel: the chat is not
+    // composed while Settings is open, and a confirmation there clears itself
+    // after two seconds, so "Copied" posted to it would never reach the eye.
+    var copied by remember { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(12.dp),
@@ -2329,9 +2326,9 @@ private fun LaptopCommand(
             .fillMaxWidth()
             .clickable(role = Role.Button) {
                 clipboard.setText(AnnotatedString(command))
-                onCopied()
+                copied = true
             }
-            .tactile(),
+            .tactile(haptics = true),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -2344,6 +2341,14 @@ private fun LaptopCommand(
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f),
             )
+            if (copied) {
+                Text(
+                    text = "Copied",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+            }
             Icon(
                 imageVector = CopyIcon,
                 contentDescription = "Copy $command",
