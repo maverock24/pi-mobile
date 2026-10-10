@@ -490,11 +490,17 @@ fun ChatScreen(
                                 Button(onClick = onOpenSettings) { Text("Open Settings") }
                             }
                             !vm.connected -> {
-                                Text(
-                                    text = vm.statusLine.ifBlank { "Not connected" },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                // The status line already sits above this box when
+                                // it has anything to say, so rendering it again here
+                                // would show the same string twice. Only the blank
+                                // case needs a fallback; the action is the point.
+                                if (vm.statusLine.isBlank()) {
+                                    Text(
+                                        text = "Not connected",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                                 Button(onClick = vm::ensureConnected) { Text("Retry") }
                             }
                             else -> Text(
