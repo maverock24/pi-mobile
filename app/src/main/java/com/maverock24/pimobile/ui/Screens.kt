@@ -247,6 +247,7 @@ fun ChatScreen(
     bootNotice: String?,
     onToggleMic: () -> Unit,
     onOpenSettings: () -> Unit,
+    onInstallUpdate: () -> Unit,
     onDismissNotice: () -> Unit,
     onDismissBootNotice: () -> Unit,
 ) {
@@ -433,7 +434,14 @@ fun ChatScreen(
                 )
             }
             if (notice != null) {
-                NoticeBar(text = notice, onDismiss = onDismissNotice)
+                // The update banner's one action is Install, separate from
+                // Dismiss, so closing it can never start an install.
+                NoticeBar(
+                    text = notice,
+                    onDismiss = onDismissNotice,
+                    actionLabel = "Install",
+                    onAction = onInstallUpdate,
+                )
             }
             // A launch that died before it came up left data unread, and the
             // transcript on screen is then missing what the phone still holds.

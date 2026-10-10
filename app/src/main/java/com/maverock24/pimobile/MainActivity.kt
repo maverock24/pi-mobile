@@ -60,6 +60,9 @@ class MainActivity : ComponentActivity() {
                 var listening by remember { mutableStateOf(false) }
                 var partialText by remember { mutableStateOf("") }
                 var notice by remember { mutableStateOf<String?>(null) }
+                // A dismissed update banner stays dismissed until the next check,
+                // so the Install action cannot be reached by a tap meant to close it.
+                var updateDismissed by rememberSaveable { mutableStateOf(false) }
                 var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Checking) }
 
                 // One check and one install, in one place. The chat banner and the
@@ -68,6 +71,8 @@ class MainActivity : ComponentActivity() {
                 val checkForUpdates: () -> Unit = {
                     scope.launch {
                         updateStatus = UpdateStatus.Checking
+                        // A fresh check is a fresh chance to offer the update.
+                        updateDismissed = false
                         updateStatus = runCatching { UpdateChecker.check(BuildConfig.VERSION_CODE) }.fold(
                             onSuccess = { info ->
                                 if (info != null) {
@@ -214,9 +219,9 @@ class MainActivity : ComponentActivity() {
                         vm = vm,
                         listening = listening,
                         partialText = partialText,
-                        notice = (updateStatus as? UpdateStatus.Available)?.let {
-                            "Update ${it.info.versionName} ready — tap to install"
-                        },
+                        notice = (updateStatus as? UpdateStatus.Available)
+                            ?.takeUnless { updateDismissed }
+                            ?.let { "Update ${it.info.versionName} ready — tap to install" },
                         bootNotice = vm.bootNotice,
                         onToggleMic = {
                             if (listening) {
@@ -235,12 +240,11 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onOpenSettings = { showSettings = true },
-                        onDismissNotice = {
-                            val available = updateStatus as? UpdateStatus.Available
-                            if (available != null) {
-                                installUpdate(available.info)
-                            }
+                        // Install is the banner's action, never its dismiss.
+                        onInstallUpdate = {
+                            (updateStatus as? UpdateStatus.Available)?.let { installUpdate(it.info) }
                         },
+                        onDismissNotice = { updateDismissed = true },
                         onDismissBootNotice = vm::dismissBootNotice,
                     )
                 }
