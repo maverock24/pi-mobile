@@ -744,7 +744,7 @@ private fun TurnDeck(
     var openTurn by rememberSaveable { mutableStateOf<String?>(null) }
     // The older card the thumb is on, held by turn id: a turn arriving above it
     // must not swap the card underneath, which is what a page number would do.
-    var heldTurn by remember { mutableStateOf<String?>(null) }
+    var heldTurn by rememberSaveable { mutableStateOf<String?>(null) }
 
     val keys = remember(ordered.map { it.id }, pending?.id) {
         buildList {
@@ -1898,7 +1898,7 @@ fun SettingsScreen(
 
     // Clearing the stored data takes the token with it, so it asks twice rather
     // than doing it under a thumb that was reaching for something else.
-    var confirmingClear by remember { mutableStateOf(false) }
+    var confirmingClear by rememberSaveable { mutableStateOf(false) }
 
     // Pairing lives here rather than in the chat screen because it is setup work: the
     // scanner reads the QR /pair drew, and both routes end in the same link parser.
