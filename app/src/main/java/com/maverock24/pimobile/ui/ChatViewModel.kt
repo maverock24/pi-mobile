@@ -20,6 +20,7 @@ import com.maverock24.pimobile.data.mergeTranscript
 import com.maverock24.pimobile.net.BridgeException
 import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
+import com.maverock24.pimobile.notify.Notifier
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -241,6 +242,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val crashLog = CrashLog(app)
     private val client = PiRemoteClient { store.baseUrl to store.token }
     private val main = Handler(Looper.getMainLooper())
+    private val notifier = Notifier(getApplication())
 
     /**
      * The pinned prompts and answers, newest first. It is loaded once at start
@@ -1422,12 +1424,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val type = event.optString("type")
         val data = event.optJSONObject("data") ?: JSONObject()
         when (type) {
-            "question" -> applyQuestion(data.optJSONObject("pending"))
+            "question" -> {
+                applyQuestion(data.optJSONObject("pending"))
+                // A question blocks the run until it is answered, and the answer
+                // is not always given from the phone, so say so from the shade.
+                pendingQuestion?.let { notifier.postQuestion(it.title) }
+            }
             "state" -> applyState(data)
             "prompt_accepted", "agent_start", "turn_start" -> busy = true
             "agent_settled" -> {
                 busy = false
-                commitRun()
+                // The run settled while the app was not in front, so its answer
+                // is worth reading without opening the app. The notifier stays
+                // quiet while the transcript is on screen.
+                commitRun()?.lineSequence()?.firstOrNull()?.let { notifier.postSettled(it) }
                 refreshState()
             }
             "agent_end" -> {
@@ -1496,8 +1506,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Shows the last answer of the finished run, if it was not tool narration. */
-    private fun commitRun() {
+    /** Commits the finished run's answer and returns it, or null when there is none new. */
+    private fun commitRun(): String? {
         val answer = runCandidates.lastOrNull { !it.second && it.first.isNotBlank() }?.first?.trim()
         runCandidates.clear()
         activeAssistant = null
@@ -1505,14 +1515,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // answer below. Clearing it here is what keeps the two from both showing.
         liveAnswer = null
         if (answer.isNullOrBlank()) {
-            return
+            return null
         }
         // Connecting mid-run can load the same answer with the history fetch.
         val lastCommitted = messages.lastOrNull { it.role == "assistant" }?.text?.trim()
         if (answer == lastCommitted) {
-            return
+            return null
         }
         messages.add(ChatMessage(id = "answer-${UUID.randomUUID()}", role = "assistant", text = answer))
+        return answer
     }
 
     /** True when the message exists mainly to call tools. */

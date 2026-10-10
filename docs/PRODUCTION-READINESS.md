@@ -52,6 +52,14 @@ agent clients on phones actually ship — [Happy Coder](https://github.com/slopu
 | 0.11 | Share target | The natural gesture is "share this page/photo into pi" from any app | App appears in the Android share sheet; shared text or image arrives as a prompt; verified from Chrome and Photos | S |
 | 0.12 | Onboarding | Nothing explains Tailscale, the bridge, or what the token is | Three screens: install Tailscale, run the bridge, pair; ends with a live health check that must pass | S |
 
+**Progress on 0.3 (ux-remediation).** The notification channel and two triggers ship: a question
+pending, and a run finished. There is no foreground service, so a run that finishes while the phone
+is pocketed still produces nothing, which is the case 0.2 was written for; what this effort ships is
+a step towards 0.3, not the item. The run-failed trigger is deferred because no bridge event carries
+it: `agent_end` sends only `messageCount` (`bridge/extensions/pi-remote.ts:1641`), and the app
+discards `tool_execution_end`'s `isError` (`ChatViewModel.kt:1502`). Tier 0.2, 0.3 and 0.4 stay
+open.
+
 ## Tier 1 — finishing touches that make it feel complete
 
 | # | Item | Why | Acceptance criteria | Effort |
