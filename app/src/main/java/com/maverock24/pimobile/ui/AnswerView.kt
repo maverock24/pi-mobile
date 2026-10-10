@@ -40,6 +40,8 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -99,13 +101,18 @@ fun AnswerView(
         ) {
             blocks.forEach { block ->
                 when (block) {
+                    // A heading is a navigation landmark, so it carries the
+                    // semantic rather than only the visual weight: TalkBack can
+                    // then jump between headings instead of reading every line.
                     is AnswerBlock.Heading -> Text(
                         text = inlineText(block.text, linkColor, chipColor),
                         fontWeight = FontWeight.Bold,
                         fontSize = AnswerStyle.headingSize,
                         lineHeight = AnswerStyle.headingSize * 1.3,
                         color = scheme.onBackground,
-                        modifier = Modifier.padding(top = AnswerStyle.headingGap),
+                        modifier = Modifier
+                            .padding(top = AnswerStyle.headingGap)
+                            .semantics { heading() },
                     )
 
                     is AnswerBlock.Paragraph -> Text(
