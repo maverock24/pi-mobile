@@ -59,23 +59,29 @@ class MainActivity : ComponentActivity() {
                 var showSettings by rememberSaveable { mutableStateOf(false) }
                 var listening by remember { mutableStateOf(false) }
                 var partialText by remember { mutableStateOf("") }
-                var notice by remember { mutableStateOf<String?>(null) }
-                // A dismissed update banner stays dismissed until the next check,
-                // so the Install action cannot be reached by a tap meant to close it.
-                var updateDismissed by rememberSaveable { mutableStateOf(false) }
                 var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Checking) }
 
-                // One check and one install, in one place. The chat banner and the
-                // settings section both read the status this writes, so the two
-                // never disagree about whether a newer build exists.
+                // Declared before its own body so the retry action carried by the
+                // install message can call back into it. Assigned before either
+                // lambda can run, so the lateinit is set the moment it is read.
+                lateinit var installUpdate: (UpdateChecker.Info) -> Unit
+
+                // One check and one install, in one place. The settings section
+                // reads the status this writes and the chat's Install entry is
+                // raised from the same check, so the two never disagree about
+                // whether a newer build exists.
                 val checkForUpdates: () -> Unit = {
                     scope.launch {
                         updateStatus = UpdateStatus.Checking
-                        // A fresh check is a fresh chance to offer the update.
-                        updateDismissed = false
                         updateStatus = runCatching { UpdateChecker.check(BuildConfig.VERSION_CODE) }.fold(
                             onSuccess = { info ->
                                 if (info != null) {
+                                    // Offering the update is a message with its own
+                                    // Install action, so the dismiss and the install
+                                    // are two controls and closing it never installs.
+                                    vm.notifyActionable("Update ${info.versionName} ready", "Install") {
+                                        installUpdate(info)
+                                    }
                                     UpdateStatus.Available(info)
                                 } else {
                                     // A null result means the installed build is the
@@ -90,15 +96,29 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                val installUpdate: (UpdateChecker.Info) -> Unit = { info ->
+                installUpdate = { info ->
                     scope.launch {
                         runCatching { UpdateChecker.download(context, info) }
                             .onSuccess { file ->
                                 if (UpdateChecker.needsInstallPermission(context)) {
                                     UpdateChecker.requestInstallPermission(context)
-                                    notice = "Allow installs for Pi Remote, then install again"
+                                    // The retry is the action on the message that
+                                    // explains why the first attempt stopped.
+                                    vm.notifyActionable(
+                                        "Allow installs for Pi Remote, then install again",
+                                        "Install",
+                                    ) { installUpdate(info) }
                                 } else {
-                                    notice = UpdateChecker.install(context, file) ?: "Installer launched"
+                                    // A null result means the installer opened. A
+                                    // message means it did not, and a failure that
+                                    // clears itself after two seconds is a failure
+                                    // the user may never read.
+                                    val failure = UpdateChecker.install(context, file)
+                                    if (failure == null) {
+                                        vm.notifyConfirmation("Installer launched")
+                                    } else {
+                                        vm.notifyError(failure)
+                                    }
                                 }
                             }
                             .onFailure { error ->
@@ -116,7 +136,7 @@ class MainActivity : ComponentActivity() {
                             vm.appendToDraft(text)
                         },
                         onListeningChanged = { listening = it },
-                        onError = { notice = it },
+                        onError = { vm.notifyError(it) },
                     )
                 }
 
@@ -126,7 +146,7 @@ class MainActivity : ComponentActivity() {
                     if (granted) {
                         dictation.start()
                     } else {
-                        notice = "Microphone permission is required for dictation"
+                        vm.notifyError("Microphone permission is required for dictation")
                     }
                 }
 
@@ -144,18 +164,18 @@ class MainActivity : ComponentActivity() {
                     pendingPairLink.value = null // a code is spent once, not per recomposition
                     val invite = Pairing.parse(link)
                     if (invite == null) {
-                        notice = "That link is not a pairing code"
+                        vm.notifyError("That link is not a pairing code")
                         return@LaunchedEffect
                     }
-                    notice = "Pairing…"
+                    vm.notifyConfirmation("Pairing…")
                     runCatching { Pairing.exchange(invite, android.os.Build.MODEL ?: "phone") }
                         .onSuccess { paired ->
                             vm.applyPairing(paired.baseUrl, paired.token)
                             vm.connect()
-                            notice = "Paired as ${paired.device}"
+                            vm.notifyConfirmation("Paired as ${paired.device}")
                             showSettings = false // pairing is setup work; go back to the chat
                         }
-                        .onFailure { notice = "Pairing failed: ${it.message}" }
+                        .onFailure { vm.notifyError("Pairing failed: ${it.message}") }
                 }
 
                 DisposableEffect(Unit) {
@@ -229,7 +249,7 @@ class MainActivity : ComponentActivity() {
                                 ) == PackageManager.PERMISSION_GRANTED
                                 if (granted) {
                                     runCatching { dictation.start() }
-                                        .onFailure { notice = "Could not start dictation: ${it.javaClass.simpleName}" }
+                                        .onFailure { vm.notifyError("Could not start dictation: ${it.javaClass.simpleName}") }
                                 } else {
                                     permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 }
