@@ -54,12 +54,45 @@ this checklist asks you to judge by eye).
     it; a confirmation such as `Copied text added to prompt` clears itself after about two seconds.
     The connection status line and the saved-copy line sit outside this area and stay one line each.
 
+## Wave 2: structure
+
+1. **The composer's two rows.** Open the chat and start a run. The composer now has two button rows
+   under the field: the first holds the action button and, while the run is live, `Stop` beside it;
+   the second scrolls sideways and holds `Auto-paste`, `Mic` and `Clear`. Scroll the second row:
+   neither the action nor `Stop` moves. The action reads `Send` when idle, `Steer` while the run is
+   live (and still steers the text into the running turn), and `Search` while search is open.
+2. **The pickers are one segmented control, and it says what is selected.** Switch Transcript, Cards
+   and Pins with the segmented control above the composer; in Settings, Appearance and Theme use the
+   same control. With TalkBack on, each segment is announced as a button and the active one is
+   announced as selected.
+3. **The answer streams and its headings are jumps.** With TalkBack on, drive a run whose answer
+   arrives over several seconds: the answer is read as it streams rather than only after it stops.
+   In a long answer that has headings, swipe by heading to move from one heading to the next.
+4. **The empty state names its situation.** Launch with nothing saved: the empty chat says
+   `Not paired yet` and offers `Open Settings`. Pair to a bridge that cannot be reached: it shows
+   the failure text and `Retry`, and `Retry` reconnects. With a working connection and no turns yet,
+   it shows the thinking or no-results text rather than a pair or retry prompt.
+5. **The connection hint leads and is not cut.** Cause a connection failure (wrong bridge address, or
+   the bridge stopped). The chat's status line starts with the fix the app suggests, then the failed
+   state, the address and the detail, and it wraps to a second line instead of ellipsising the fix
+   away. The same string appears in Settings and wraps there.
+6. **The pin, the search and the half-typed prompt survive Settings.** Open a pin, open search and
+   type a query, and type half a prompt in the composer. Go to Settings and come back: the pin is
+   still open, the query is still in the search field, and the half-typed prompt is still in the
+   composer.
+7. **Settings folds its prose and copies its commands.** Open each Settings section: its subtitle is
+   one line and the explanation appears only once the section is open. Under Pairing, tap the `/pair`
+   row; under Connection, tap the `cat ~/.config/pi-remote/token` row. Each tap puts the command on
+   the clipboard, shows `Copied` in the chat's message area, and pasting the clipboard gives exactly
+   that command.
+
 ## fontScale 1.0 and 2.0
 
-Run checks 1 to 11 at the phone's default font scale, then set the display font to its largest
-setting and run them again. Record any line that clips, overlaps or is cut off. The three fixed-size
-spots this pass is expected to catch (the 24 dp waiting slot, the 20 dp bullet column, the app bar's
-two single-line texts) belong to wave 2, so a clip there is recorded rather than fixed here.
+Run the wave 1 and wave 2 checks at the phone's default font scale, then set the display font to its
+largest setting and run them again. Wave 2 fixed the three fixed-size spots that used to clip here
+(the 24 dp waiting slot, the 20 dp bullet column, the app bar's two single-line texts), so at
+`fontScale` 2.0 nothing should clip, overlap or be cut off. A clip is now a failure to fix, not a
+line to record.
 
 Result: _pending, completed with wave 3._
 
