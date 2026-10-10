@@ -9,6 +9,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.maverock24.pimobile.PiRemoteApp
+import com.maverock24.pimobile.data.CrashLog
 import com.maverock24.pimobile.data.Pin
 import com.maverock24.pimobile.data.PinsStore
 import com.maverock24.pimobile.data.SettingsStore
@@ -214,6 +216,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val store = SettingsStore(app)
     private val pinsStore = PinsStore(app)
     private val transcriptStore = TranscriptStore(app)
+    private val crashLog = CrashLog(app)
     private val client = PiRemoteClient { store.baseUrl to store.token }
     private val main = Handler(Looper.getMainLooper())
 
@@ -224,12 +227,33 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      */
     val pins = mutableStateListOf<Pin>()
 
+    /**
+     * A line about how the last launch ended, shown once on the chat screen. It
+     * is set only when that launch died while coming up, because that is the one
+     * case the user has to hear about: what is on screen is not what the phone
+     * was holding.
+     */
+    var bootNotice by mutableStateOf<String?>(null)
+        private set
+
+    /** The trace of the most recent crash, or null when nothing has crashed. */
+    var lastCrash by mutableStateOf<String?>(null)
+        private set
+
+    /** True when a launch set data aside and it is still on disk. */
+    var quarantinedData by mutableStateOf(false)
+        private set
+
     init {
-        pins.addAll(pinsStore.load())
-        // The pinned session's transcript goes up from the cache before the
-        // bridge is asked for anything, so a phone that cannot reach it still
-        // shows the record it saved instead of an empty screen.
-        safeLaunch { restoreCache(store.sessionId.takeIf { it.isNotBlank() }) }
+        if (!PiRemoteApp.startupSafeMode) {
+            pins.addAll(runCatching { pinsStore.load() }.getOrElse { emptyList() })
+            // The pinned session's transcript goes up from the cache before the
+            // bridge is asked for anything, so a phone that cannot reach it still
+            // shows the record it saved instead of an empty screen.
+            safeLaunch { restoreCache(store.sessionId.takeIf { it.isNotBlank() }) }
+        }
+        lastCrash = crashLog.lastCrash()
+        quarantinedData = pinsStore.hasQuarantined() || transcriptStore.hasQuarantined()
     }
 
     val messages = mutableStateListOf<ChatMessage>()
@@ -349,6 +373,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var commandsLoaded = false
     private var commandsInFlight = false
 
+    /** True once this launch has done what a startup crash asks for. */
+    private var startupRecoveryDone = false
+
     /**
      * A quiet line for the palette when the bridge has no command endpoint at
      * all, which is what an older build is. It is only ever drawn inside the
@@ -449,6 +476,45 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * its own session, and until it does the screen must not keep claiming the
      * one it was talking to before.
      */
+    /**
+     * Leave behind whatever the last launch died on.
+     *
+     * The transcript cache and the pins are the only stored state the app reads
+     * before it can draw, so both are moved aside rather than read again, and
+     * they stay on disk: a bad launch should cost a start, not the record. A
+     * second startup crash in a row says the files were not what it choked on,
+     * so the bridge attachment goes as well, because pairing again costs a QR
+     * code and leaving it is the only way the app can fail to open again.
+     */
+    private fun recoverFromStartupCrash() {
+        if (!PiRemoteApp.startupSafeMode || startupRecoveryDone) return
+        startupRecoveryDone = true
+        val movedTranscripts = transcriptStore.quarantineAll()
+        val movedPins = pinsStore.quarantine()
+        val droppedAttachment = PiRemoteApp.startupCrashCount >= 2
+        if (droppedAttachment) {
+            store.forgetAttachment()
+            forgetSession()
+        }
+        quarantinedData = pinsStore.hasQuarantined() || transcriptStore.hasQuarantined()
+        bootNotice = when {
+            droppedAttachment ->
+                "The last launches crashed while starting, so the saved transcript, the pins and " +
+                    "the bridge token were left behind to get the app open. Settings > " +
+                    "Troubleshooting has the trace."
+            movedTranscripts > 0 || movedPins ->
+                "The last launch crashed while starting, so the saved transcript and pins were set " +
+                    "aside. Settings > Troubleshooting has the trace."
+            else ->
+                "The last launch crashed while starting. Settings > Troubleshooting has the trace."
+        }
+    }
+
+    /**
+     * Drop what named the old attachment. A new bridge or a new pairing reports
+     * its own session, and until it does the screen must not keep claiming the
+     * one it was talking to before.
+     */
     private fun forgetSession() {
         attachedSessionId = null
         store.sessionId = ""
@@ -467,6 +533,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun connect() {
         disconnect()
+        recoverFromStartupCrash()
         if (!store.isConfigured) {
             statusLine = "Add the bridge token in Settings"
             return
@@ -1169,6 +1236,38 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissError() {
         lastError = null
+    }
+
+    /** Take the line about the last launch off the chat screen. */
+    fun dismissBootNotice() {
+        bootNotice = null
+    }
+
+    /**
+     * Forget everything a bad launch could be reading: the trace, the data a
+     * launch set aside, the saved transcript, the pins and the attachment. The
+     * appearance and the view stay, because they are choices and not state.
+     *
+     * Nothing here touches the laptop. The transcript is a cache and is rebuilt
+     * from the bridge, and the pins are the only copy on the phone, which is why
+     * the settings screen asks before calling this.
+     */
+    fun clearCrashState() {
+        disconnect()
+        transcriptStore.clear()
+        pinsStore.clear()
+        crashLog.clearLastCrash()
+        pins.clear()
+        messages.clear()
+        showingSavedCopy = false
+        pendingQuestion = null
+        store.forgetAttachment()
+        forgetSession()
+        lastCrash = null
+        quarantinedData = false
+        bootNotice = null
+        lastError = null
+        statusLine = "Add the bridge token in Settings"
     }
 
     /**

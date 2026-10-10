@@ -47,6 +47,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Delete
@@ -98,6 +99,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -242,9 +244,11 @@ fun ChatScreen(
     listening: Boolean,
     partialText: String,
     notice: String?,
+    bootNotice: String?,
     onToggleMic: () -> Unit,
     onOpenSettings: () -> Unit,
     onDismissNotice: () -> Unit,
+    onDismissBootNotice: () -> Unit,
 ) {
     val turns = vm.turns
     val pending = vm.pendingQuestion
@@ -430,6 +434,12 @@ fun ChatScreen(
             }
             if (notice != null) {
                 NoticeBar(text = notice, onDismiss = onDismissNotice)
+            }
+            // A launch that died before it came up left data unread, and the
+            // transcript on screen is then missing what the phone still holds.
+            // Saying so once is the difference between a record and a lie.
+            if (bootNotice != null) {
+                NoticeBar(text = bootNotice, onDismiss = onDismissBootNotice)
             }
             vm.lastError?.let { error ->
                 NoticeBar(text = error, onDismiss = vm::dismissError, isError = true)
@@ -1818,6 +1828,9 @@ fun SettingsScreen(
     onPairLink: (String) -> Unit,
     onSave: (String, String) -> Unit,
     onTest: () -> Unit,
+    lastCrash: String?,
+    quarantined: Boolean,
+    onClearCrashState: () -> Unit,
     onBack: () -> Unit,
 ) {
     var baseUrl by rememberSaveable { mutableStateOf(initialBaseUrl) }
@@ -1827,6 +1840,10 @@ fun SettingsScreen(
     // of statements about the current setup rather than a wall of controls.
     var openSection by rememberSaveable { mutableStateOf<String?>(null) }
     val toggle: (String) -> Unit = { name -> openSection = if (openSection == name) null else name }
+
+    // Clearing the stored data takes the token with it, so it asks twice rather
+    // than doing it under a thumb that was reaching for something else.
+    var confirmingClear by remember { mutableStateOf(false) }
 
     // Pairing lives here rather than in the chat screen because it is setup work: the
     // scanner reads the QR /pair drew, and both routes end in the same link parser.
@@ -2079,6 +2096,91 @@ fun SettingsScreen(
                         text = if (updateStatus == UpdateStatus.Checking) "Checking…" else "Check for updates",
                         style = MaterialTheme.typography.bodyLarge,
                     )
+                }
+            }
+
+            SettingsSection(
+                title = "Troubleshooting",
+                subtitle = when {
+                    lastCrash != null -> "The last launch crashed"
+                    quarantined -> "Data was set aside to get the app open"
+                    else -> "No crashes recorded"
+                },
+                icon = Icons.Filled.Build,
+                expanded = openSection == "troubleshooting",
+                onToggle = { toggle("troubleshooting") },
+            ) {
+                Text(
+                    text = "The app records the trace of a crash and whether the launch that " +
+                        "died had come up yet. A launch that died while starting leaves the saved " +
+                        "transcript and the pins unread and moves them aside, so state left behind " +
+                        "by one bad start cannot stop the app opening again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (quarantined) {
+                    Text(
+                        text = "A transcript or a pin list is still set aside. Clearing below " +
+                            "deletes it, and the pins with it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                lastCrash?.let { trace ->
+                    SectionLabel("Last crash")
+                    StatusCard {
+                        Text(
+                            text = trace,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    Text(
+                        text = "The text selects, so it can be copied out of here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (confirmingClear) {
+                    Text(
+                        text = "This forgets the bridge token, the session it was attached to, " +
+                            "the pins and the saved transcript, and deletes the trace and " +
+                            "anything set aside. The laptop is not touched.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val label = MaterialTheme.typography.bodyLarge
+                        val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
+                        Button(
+                            onClick = {
+                                // The fields above hold their own copy of what is
+                                // being forgotten, so they are emptied with it.
+                                baseUrl = ""
+                                token = ""
+                                confirmingClear = false
+                                onClearCrashState()
+                            },
+                            modifier = size.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                        ) { Text("Clear it", style = label) }
+                        OutlinedButton(
+                            onClick = { confirmingClear = false },
+                            modifier = size.tactile(depth = AnswerStyle.keyDepth),
+                        ) { Text("Cancel", style = label) }
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { confirmingClear = true },
+                        modifier = Modifier.fillMaxWidth()
+                            .heightIn(min = AnswerStyle.buttonHeight)
+                            .tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                    ) {
+                        Text(
+                            text = "Clear the saved data and the trace",
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
                 }
             }
 

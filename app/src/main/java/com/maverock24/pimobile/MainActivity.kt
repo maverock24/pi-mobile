@@ -204,6 +204,9 @@ class MainActivity : ComponentActivity() {
                             showSettings = false
                         },
                         onTest = vm::testConnection,
+                        lastCrash = vm.lastCrash,
+                        quarantined = vm.quarantinedData,
+                        onClearCrashState = vm::clearCrashState,
                         onBack = { showSettings = false },
                     )
                 } else {
@@ -214,6 +217,7 @@ class MainActivity : ComponentActivity() {
                         notice = (updateStatus as? UpdateStatus.Available)?.let {
                             "Update ${it.info.versionName} ready — tap to install"
                         },
+                        bootNotice = vm.bootNotice,
                         onToggleMic = {
                             if (listening) {
                                 dictation.stop()
@@ -237,6 +241,7 @@ class MainActivity : ComponentActivity() {
                                 installUpdate(available.info)
                             }
                         },
+                        onDismissBootNotice = vm::dismissBootNotice,
                     )
                 }
             }

@@ -31,6 +31,13 @@ data class Pin(
 class PinsStore(context: Context) {
 
     private val file = File(context.filesDir, "pins.json")
+
+    /**
+     * Where the pins go when a launch died rather than deleting them: a bad
+     * start should cost the use of the pins, not the pins themselves.
+     */
+    private val quarantinedFile = File(context.filesDir, "pins.json.bad")
+
     private val lock = Any()
 
     /** Every pin, in the order it was written. A corrupt or missing file is empty. */
@@ -40,18 +47,43 @@ class PinsStore(context: Context) {
             if (text.isBlank()) return emptyList()
             return runCatching {
                 val array = JSONArray(text)
-                (0 until array.length()).mapNotNull { index ->
-                    val json = array.optJSONObject(index) ?: return@mapNotNull null
-                    val id = json.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    Pin(
+                // Two pins with one id would be two list rows with one key, which
+                // Compose refuses with an exception at layout time, so a repeated
+                // id keeps its first entry only.
+                val byId = LinkedHashMap<String, Pin>()
+                for (index in 0 until array.length()) {
+                    val json = array.optJSONObject(index) ?: continue
+                    val id = json.optString("id").takeIf { it.isNotBlank() } ?: continue
+                    if (byId.containsKey(id)) continue
+                    byId[id] = Pin(
                         id = id,
                         title = json.optString("title"),
                         prompt = json.optString("prompt"),
                         answer = json.optString("answer"),
                     )
                 }
+                byId.values.toList()
             }.getOrElse { emptyList() }
         }
+    }
+
+    /**
+     * Move the written pins aside so nothing reads them again, without deleting
+     * them. Called by a launch that follows one which died while coming up, so
+     * the pins cannot be what the next launch chokes on either. Returns true when
+     * a file was moved.
+     */
+    fun quarantine(): Boolean = synchronized(lock) {
+        runCatching { file.exists() && file.renameTo(quarantinedFile) }.getOrDefault(false)
+    }
+
+    /** True when a launch set the pins aside and they are still on disk. */
+    fun hasQuarantined(): Boolean = runCatching { quarantinedFile.exists() }.getOrDefault(false)
+
+    /** Delete the pins, both the live file and any copy a bad launch set aside. */
+    fun clear() = synchronized(lock) {
+        runCatching { file.delete() }
+        runCatching { quarantinedFile.delete() }
     }
 
     /** Write the whole list. The write is atomic and never leaves a partial file. */

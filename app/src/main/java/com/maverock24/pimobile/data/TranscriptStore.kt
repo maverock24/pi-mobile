@@ -70,10 +70,15 @@ class TranscriptStore(context: Context) {
             if (text.isNullOrBlank()) return emptyList()
             return runCatching {
                 val array = JSONArray(text)
-                (0 until array.length()).mapNotNull { index ->
-                    val json = array.optJSONObject(index) ?: return@mapNotNull null
-                    val id = json.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    TranscriptEntry(
+                // A repeated id would give two turns one key, which Compose refuses
+                // with an exception at layout time, so a repeated id keeps its
+                // first entry only.
+                val byId = LinkedHashMap<String, TranscriptEntry>()
+                for (index in 0 until array.length()) {
+                    val json = array.optJSONObject(index) ?: continue
+                    val id = json.optString("id").takeIf { it.isNotBlank() } ?: continue
+                    if (byId.containsKey(id)) continue
+                    byId[id] = TranscriptEntry(
                         id = id,
                         role = json.optString("role"),
                         text = json.optString("text"),
@@ -82,7 +87,42 @@ class TranscriptStore(context: Context) {
                         answer = json.optText("answer"),
                     )
                 }
+                byId.values.toList()
             }.getOrElse { emptyList() }
+        }
+    }
+
+    /**
+     * Move every cached transcript aside so nothing reads them again, without
+     * deleting them. Called by a launch that follows one which died while coming
+     * up, since a cached transcript is the largest thing the app reads before it
+     * can draw. Returns how many files were moved.
+     */
+    fun quarantineAll(): Int = synchronized(lock) {
+        val files = runCatching { dir.listFiles() }.getOrNull() ?: return 0
+        var moved = 0
+        for (candidate in files) {
+            // Only the real caches: a half-written `.tmp` is left for the next
+            // save to clean up, since nothing reads it anyway.
+            if (!isQuarantinable(candidate.name)) continue
+            val aside = File(dir, "${candidate.name}.bad")
+            if (runCatching { candidate.renameTo(aside) }.getOrDefault(false)) moved += 1
+        }
+        moved
+    }
+
+    /** True when a launch set a transcript aside and any of it is still on disk. */
+    fun hasQuarantined(): Boolean = runCatching {
+        dir.listFiles()?.any { isQuarantinedTranscript(it.name) } == true
+    }.getOrDefault(false)
+
+    /** Delete every transcript, the live ones and any a bad launch set aside. */
+    fun clear() = synchronized(lock) {
+        val files = runCatching { dir.listFiles() }.getOrNull() ?: return
+        for (candidate in files) {
+            if (isCachedTranscript(candidate.name) || isQuarantinedTranscript(candidate.name)) {
+                runCatching { candidate.delete() }
+            }
         }
     }
 
@@ -113,7 +153,7 @@ class TranscriptStore(context: Context) {
     /** The file the app uses for [sessionId], with anything unsafe for a name folded to `_`. */
     private fun fileFor(sessionId: String): File {
         val safe = sessionId.map { if (it.isLetterOrDigit() || it == '-' || it == '_' || it == '.') it else '_' }
-        return File(dir, "transcript-${safe.joinToString("")}.json")
+        return File(dir, "$PREFIX${safe.joinToString("")}.json")
     }
 
     /**
@@ -168,12 +208,29 @@ class TranscriptStore(context: Context) {
         for (candidate in files) {
             val name = candidate.name
             if (name in keepNames) continue
-            if (name.startsWith("transcript-") && (name.endsWith(".json") || name.endsWith(".json.tmp"))) {
+            // A quarantined copy is not a cache any more and is kept until the
+            // settings screen is asked to clear it.
+            if (isCachedTranscript(name)) {
                 runCatching { candidate.delete() }
             }
         }
     }
+
+    /** A live transcript cache, as [save] and [load] name it. */
+    private fun isCachedTranscript(name: String): Boolean =
+        name.startsWith(PREFIX) && (name.endsWith(".json") || name.endsWith(".json.tmp"))
+
+    /** A file [quarantineAll] moves aside: a real cache, not a half-written one. */
+    private fun isQuarantinable(name: String): Boolean =
+        name.startsWith(PREFIX) && name.endsWith(".json")
+
+    /** A transcript a bad launch moved aside, which nothing reads. */
+    private fun isQuarantinedTranscript(name: String): Boolean =
+        name.startsWith(PREFIX) && name.endsWith(".json.bad")
 }
+
+/** The file name every cache starts with, so a session's file is recognisable. */
+private const val PREFIX = "transcript-"
 
 /**
  * A string field, or null when it is missing, null or blank. Kept local so the

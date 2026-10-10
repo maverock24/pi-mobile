@@ -90,4 +90,19 @@ class SettingsStore(context: Context) {
 
     val isConfigured: Boolean
         get() = token.isNotBlank()
+
+    /**
+     * Forget the bridge and the session it served, leaving the cosmetic choices
+     * alone. This is the recovery path: after a launch that died, the token and
+     * the pinned session are what the next launch would otherwise pick straight
+     * back up.
+     */
+    fun forgetAttachment() {
+        prefs.edit()
+            .remove("baseUrl")
+            .remove("token")
+            .remove("sessionId")
+            .remove("sessionName")
+            .apply()
+    }
 }
