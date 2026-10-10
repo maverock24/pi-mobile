@@ -3,6 +3,7 @@ package com.maverock24.pimobile
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -154,6 +155,27 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(Unit) {
                     vm.connect()
                     checkForUpdates()
+                }
+
+                // The channel is created at launch and posting is gated on the
+                // permission, so ask once, when the app has something to post:
+                // the flag keeps the prompt from returning after the user has
+                // already answered it. Nothing to ask below API 33, where the
+                // permission does not exist.
+                var notificationPermissionAsked by rememberSaveable { mutableStateOf(false) }
+                val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission(),
+                ) { }
+                LaunchedEffect(Unit) {
+                    if (Build.VERSION.SDK_INT < 33) return@LaunchedEffect
+                    val granted = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (!granted && !notificationPermissionAsked) {
+                        notificationPermissionAsked = true
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
                 }
 
                 // QR pairing: the camera hands the app pi-remote://pair?…, we spend the
