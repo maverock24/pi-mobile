@@ -68,6 +68,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -894,32 +897,27 @@ private fun DeckCard(
 }
 
 /**
- * The switch between the transcript and the deck: two buttons that name the
- * views, the one in use bearing the mark the appearance buttons use. It sits in
- * a row of its own so it never lands on the composer.
+ * The switch between the transcript, the deck and the pins: one segmented row,
+ * the view in use drawn as the chosen segment. It sits in a row of its own so it
+ * never lands on the composer.
  */
 @Composable
 private fun ViewModeSwitch(
     mode: String,
     onChange: (String) -> Unit,
 ) {
-    Row(
+    val modes = listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins")
+    SingleChoiceSegmentedButtonRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins").forEach { (value, label) ->
-            TextButton(onClick = { onChange(value) }, modifier = Modifier.tactile()) {
-                Text(
-                    text = if (mode == value) "• $label" else label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (mode == value) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
+        modes.forEachIndexed { index, (value, label) ->
+            SegmentedButton(
+                selected = mode == value,
+                onClick = { onChange(value) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
+                label = { Text(label, style = MaterialTheme.typography.bodyMedium) },
+                modifier = Modifier.tactile(),
+            )
         }
     }
 }
@@ -2012,13 +2010,14 @@ fun SettingsScreen(
                 onToggle = { toggle("appearance") },
             ) {
                 SectionLabel("Appearance")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("dark" to "Dark", "light" to "Light", "system" to "System").forEach { (value, label) ->
-                        SegmentButton(
-                            label = label,
-                            active = appearance == value,
-                            modifier = Modifier.weight(1f),
+                val appearances = listOf("dark" to "Dark", "light" to "Light", "system" to "System")
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    appearances.forEachIndexed { index, (value, label) ->
+                        SegmentedButton(
+                            selected = appearance == value,
                             onClick = { onAppearanceChange(value) },
+                            shape = SegmentedButtonDefaults.itemShape(index = index, count = appearances.size),
+                            label = { Text(label, style = MaterialTheme.typography.labelMedium) },
                         )
                     }
                 }
@@ -2029,14 +2028,15 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AnswerStyle.themes.forEach { (name, palette) ->
-                        SegmentButton(
-                            label = palette.label,
-                            active = theme == name,
-                            modifier = Modifier.weight(1f),
-                            swatch = { ThemeSwatch(palette) },
+                val themes = AnswerStyle.themes.entries.toList()
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    themes.forEachIndexed { index, (name, palette) ->
+                        SegmentedButton(
+                            selected = theme == name,
                             onClick = { onThemeChange(name) },
+                            shape = SegmentedButtonDefaults.itemShape(index = index, count = themes.size),
+                            icon = { ThemeSwatch(palette) },
+                            label = { Text(palette.label, style = MaterialTheme.typography.labelMedium) },
                         )
                     }
                 }
@@ -2326,49 +2326,6 @@ private fun SettingsSection(
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    }
-}
-
-/**
- * A small bordered button for a set of mutually exclusive choices, in the media
- * app's segmented style: the active one is tinted with the accent and drawn in
- * the accent colour.
- */
-@Composable
-private fun SegmentButton(
-    label: String,
-    active: Boolean,
-    modifier: Modifier = Modifier,
-    swatch: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(10.dp)
-    val accent = MaterialTheme.colorScheme.primary
-    Box(
-        modifier = modifier
-            .heightIn(min = 48.dp)
-            .clip(shape)
-            .background(if (active) accent.copy(alpha = 0.12f) else Color.Transparent)
-            .border(1.dp, if (active) accent else MaterialTheme.colorScheme.outline, shape)
-            .clickable(onClick = onClick)
-            .tactile(shape = shape)
-            .padding(horizontal = 6.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            swatch?.invoke()
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
     }
 }
 
