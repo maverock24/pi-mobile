@@ -19,10 +19,11 @@ this checklist asks you to judge by eye).
    the chat connects. Then pair again with the manual base URL and token fields: saving returns to
    the chat and the status line reports the connection. A bad link says it is not a pairing code
    rather than doing nothing.
-3. **Send a prompt and read the answer.** Type a prompt and press the action button; while idle it
-   reads `Send`. While the run is live it reads `Steer`, and pressing it steers the text into the
-   running turn instead of starting a second one. The answer streams into the transcript, and the
-   working accent line on the app bar runs only while the run is live.
+3. **Send a prompt and read the answer.** Type a prompt and press the action button; it reads
+   `Send`. While a run is live it still reads `Send`, and pressing it steers the text into the
+   running turn rather than starting a second one; the label that reads `Steer` is wave 2 (T17).
+   The answer streams into the transcript, and the working accent line on the app bar runs only while
+   the run is live.
 4. **Answer a question from the phone.** Drive a question from the laptop and answer it from the
    question card. The answer lands as a confirmation in the message area.
 5. **Search a session and jump to a hit.** Open search, type a term that matches an older turn, and
