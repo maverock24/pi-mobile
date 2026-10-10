@@ -518,7 +518,7 @@ fun ChatScreen(
                 partialText = partialText,
                 listening = listening,
                 busy = vm.busy,
-                actionLabel = if (searchOpen) "Search" else "Send",
+                actionLabel = if (searchOpen) "Search" else if (vm.busy) "Steer" else "Send",
                 // Search runs on whatever is typed, connected or not, while a
                 // prompt still needs a live bridge.
                 actionEnabled = if (searchOpen) {
@@ -1738,13 +1738,44 @@ private fun Composer(
             placeholder = { Text(placeholder) },
         )
         Spacer(modifier = Modifier.height(8.dp))
+        val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
+        val label = MaterialTheme.typography.bodyLarge
+        // Two rows, and the split is the point: the action and the escape are the
+        // two controls a run needs within reach, so neither of them sits in a row
+        // that scrolls. The action leads, so Stop appearing beside it cannot move
+        // it sideways.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            // One button, two jobs: it reads what it will do. Sending is the same
+            // as before, while searching runs the search on this same text, so a
+            // search can never leave as a prompt.
+            Button(
+                onClick = onAction,
+                enabled = actionEnabled,
+                modifier = buttonModifier.tactile(haptics = true, enabled = actionEnabled, depth = AnswerStyle.keyDepth),
+            ) {
+                Text(actionLabel, style = label)
+            }
+            if (busy) {
+                OutlinedButton(
+                    onClick = onStop,
+                    modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                ) {
+                    Text("Stop", style = label)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        // The rest of the composer's controls, in a row that scrolls so a narrow
+        // screen can still reach them without crowding the action above.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         ) {
-            val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
-            val label = MaterialTheme.typography.bodyLarge
             // The clipboard capture toggle. It shows its own state: filled and
             // reading "Auto-paste on" when a copy will be collected, outlined and
             // reading "Auto-paste" when it will not. It sits in the composer row
@@ -1770,30 +1801,12 @@ private fun Composer(
             ) {
                 Text(if (listening) "Mic on" else "Mic", style = label)
             }
-            // One button, two jobs: it reads what it will do. Sending is the same
-            // as before, while searching runs the search on this same text, so a
-            // search can never leave as a prompt.
-            Button(
-                onClick = onAction,
-                enabled = actionEnabled,
-                modifier = buttonModifier.tactile(haptics = true, enabled = actionEnabled, depth = AnswerStyle.keyDepth),
-            ) {
-                Text(actionLabel, style = label)
-            }
             OutlinedButton(
                 onClick = onClear,
                 enabled = text.isNotBlank(),
                 modifier = buttonModifier.tactile(enabled = text.isNotBlank(), depth = AnswerStyle.keyDepth),
             ) {
                 Text("Clear", style = label)
-            }
-            if (busy) {
-                OutlinedButton(
-                    onClick = onStop,
-                    modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
-                ) {
-                    Text("Stop", style = label)
-                }
             }
         }
     }
