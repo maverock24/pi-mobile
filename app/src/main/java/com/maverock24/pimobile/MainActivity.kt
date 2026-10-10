@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -25,6 +26,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.maverock24.pimobile.net.Pairing
 import com.maverock24.pimobile.ui.ChatScreen
 import com.maverock24.pimobile.ui.ChatViewModel
+import com.maverock24.pimobile.ui.NoticeAction
 import com.maverock24.pimobile.ui.PiRemoteTheme
 import com.maverock24.pimobile.ui.SettingsScreen
 import com.maverock24.pimobile.ui.UpdateStatus
@@ -81,9 +83,13 @@ class MainActivity : ComponentActivity() {
                                     // Offering the update is a message with its own
                                     // Install action, so the dismiss and the install
                                     // are two controls and closing it never installs.
-                                    vm.notifyActionable("Update ${info.versionName} ready", "Install") {
-                                        installUpdate(info)
-                                    }
+                                    // The action travels as a value, not a lambda, so
+                                    // it survives this composition being replaced.
+                                    vm.notifyActionable(
+                                        "Update ${info.versionName} ready",
+                                        "Install",
+                                        NoticeAction.InstallUpdate(info),
+                                    )
                                     UpdateStatus.Available(info)
                                 } else {
                                     // A null result means the installed build is the
@@ -109,7 +115,8 @@ class MainActivity : ComponentActivity() {
                                     vm.notifyActionable(
                                         "Allow installs for Pi Remote, then install again",
                                         "Install",
-                                    ) { installUpdate(info) }
+                                        NoticeAction.InstallUpdate(info),
+                                    )
                                 } else {
                                     // A null result means the installer opened. A
                                     // message means it did not, and a failure that
@@ -232,6 +239,14 @@ class MainActivity : ComponentActivity() {
                     onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
                 }
 
+                // The holder is keyed to the chat alone. Showing Settings disposes
+                // the chat, and Compose throws a disposed composition's state away
+                // with it; the holder sets that state aside under its key and hands
+                // it back when the chat returns, so a trip to Settings is no longer
+                // a reset. Settings composes without a key on purpose: its editors
+                // are seeded from the view model on every entry, and a saved field
+                // would re-seed them with a stale token after a pairing.
+                val holder = rememberSaveableStateHolder()
                 if (showSettings) {
                     // Back leaves settings rather than the app. The screen is a
                     // destination and the chat is the app's body, so the gesture
@@ -262,28 +277,35 @@ class MainActivity : ComponentActivity() {
                         onBack = { showSettings = false },
                     )
                 } else {
-                    ChatScreen(
-                        vm = vm,
-                        listening = listening,
-                        partialText = partialText,
-                        onToggleMic = {
-                            if (listening) {
-                                dictation.stop()
-                            } else {
-                                val granted = ContextCompat.checkSelfPermission(
-                                    context,
-                                    Manifest.permission.RECORD_AUDIO,
-                                ) == PackageManager.PERMISSION_GRANTED
-                                if (granted) {
-                                    runCatching { dictation.start() }
-                                        .onFailure { vm.notifyError("Could not start dictation: ${it.javaClass.simpleName}") }
+                    holder.SaveableStateProvider("chat") {
+                        ChatScreen(
+                            vm = vm,
+                            listening = listening,
+                            partialText = partialText,
+                            onToggleMic = {
+                                if (listening) {
+                                    dictation.stop()
                                 } else {
-                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    val granted = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.RECORD_AUDIO,
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (granted) {
+                                        runCatching { dictation.start() }
+                                            .onFailure { vm.notifyError("Could not start dictation: ${it.javaClass.simpleName}") }
+                                    } else {
+                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
                                 }
-                            }
-                        },
-                        onOpenSettings = { showSettings = true },
-                    )
+                            },
+                            onOpenSettings = { showSettings = true },
+                            onNoticeAction = { action ->
+                                when (action) {
+                                    is NoticeAction.InstallUpdate -> installUpdate(action.info)
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }

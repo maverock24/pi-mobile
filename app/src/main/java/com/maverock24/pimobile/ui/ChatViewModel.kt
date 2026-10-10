@@ -21,6 +21,7 @@ import com.maverock24.pimobile.net.BridgeException
 import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
 import com.maverock24.pimobile.notify.Notifier
+import com.maverock24.pimobile.update.UpdateChecker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -221,17 +222,30 @@ data class RequestOutcome(val id: Long, val ok: Boolean)
 enum class NoticeKind { Error, Actionable, Confirmation }
 
 /**
- * One transient message and what it offers. [action] carries its own label so a
- * bar can never read "OK" while it installs an APK; a notice with no action is
- * only dismissable. [id] names the entry so a dismissal removes that one rather
- * than whatever happens to be newest.
+ * What an actionable [Notice] offers, as a value rather than a closure. A
+ * notice lives in the view model and outlives the composition that raised it,
+ * so a lambda captured at post time would run on the scope that died with the
+ * old screen and hold the destroyed activity with it. The screen keeps the
+ * behaviour and looks it up by this value, so the action still runs after the
+ * screen is recreated.
+ */
+sealed interface NoticeAction {
+    /** Install [info], the release the notice is about. */
+    data class InstallUpdate(val info: UpdateChecker.Info) : NoticeAction
+}
+
+/**
+ * One transient message and what it offers. [actionLabel] and [action] travel
+ * together so a bar can never read "OK" while it installs an APK; a notice with
+ * no action is only dismissable. [id] names the entry so a dismissal removes
+ * that one rather than whatever happens to be newest.
  */
 data class Notice(
     val id: Long,
     val kind: NoticeKind,
     val text: String,
     val actionLabel: String? = null,
-    val action: (() -> Unit)? = null,
+    val action: NoticeAction? = null,
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -331,7 +345,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    fun notifyActionable(text: String, actionLabel: String? = null, action: (() -> Unit)? = null): Long {
+    fun notifyActionable(text: String, actionLabel: String? = null, action: NoticeAction? = null): Long {
         val id = ++noticeSeq
         notices = reorder(
             notices.filterNot { it.kind == NoticeKind.Actionable } +
