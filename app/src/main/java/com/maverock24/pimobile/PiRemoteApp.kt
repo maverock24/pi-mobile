@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -77,7 +76,6 @@ class PiRemoteApp : Application() {
      * has to exist before anything posts to it.
      */
     private fun createRunChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val channel = NotificationChannel(
             CHANNEL_RUNS,
             "pi runs",
