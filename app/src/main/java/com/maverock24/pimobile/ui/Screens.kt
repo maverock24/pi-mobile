@@ -960,7 +960,7 @@ private fun ViewModeSwitch(
                 onClick = { onChange(value) },
                 shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
                 label = { Text(label, style = MaterialTheme.typography.bodyMedium) },
-                modifier = Modifier.tactile(),
+                modifier = Modifier.weight(1f).tactile(),
             )
         }
     }
@@ -2079,6 +2079,7 @@ fun SettingsScreen(
                             onClick = { onAppearanceChange(value) },
                             shape = SegmentedButtonDefaults.itemShape(index = index, count = appearances.size),
                             label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
@@ -2098,6 +2099,7 @@ fun SettingsScreen(
                             shape = SegmentedButtonDefaults.itemShape(index = index, count = themes.size),
                             icon = { ThemeSwatch(palette) },
                             label = { Text(palette.label, style = MaterialTheme.typography.labelMedium) },
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
