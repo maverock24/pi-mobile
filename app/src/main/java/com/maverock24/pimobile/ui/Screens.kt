@@ -92,6 +92,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
@@ -2437,9 +2438,12 @@ private fun VersionCard(
     onInstall: (() -> Unit)?,
 ) {
     // The amber and green are deliberately not theme colours: they mean the same
-    // thing under every palette, and the media app uses the same pair.
+    // thing under every palette, and the media app uses the same pair. On the
+    // 16% tint the fill already reads in the dark schemes, but the light tint
+    // needs a darker shade of the same hue for the label to clear AA.
     val amber = Color(0xFFF0A83C)
     val green = Color(0xFF46C97E)
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(12.dp),
@@ -2482,6 +2486,11 @@ private fun VersionCard(
                     Pill(
                         text = if (available) "Update available" else "Up to date",
                         color = if (available) amber else green,
+                        textColor = if (available) {
+                            if (dark) amber else Color(0xFF6E4400)
+                        } else {
+                            if (dark) green else Color(0xFF0F6234)
+                        },
                     )
                 }
             }
@@ -2501,7 +2510,7 @@ private fun VersionCard(
 
 /** A rounded status pill, e.g. "Update available". */
 @Composable
-private fun Pill(text: String, color: Color) {
+private fun Pill(text: String, color: Color, textColor: Color = color) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(percent = 50))
@@ -2511,7 +2520,7 @@ private fun Pill(text: String, color: Color) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = color,
+            color = textColor,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
