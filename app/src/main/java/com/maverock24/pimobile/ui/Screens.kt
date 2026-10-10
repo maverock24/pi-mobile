@@ -107,7 +107,6 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -955,9 +954,7 @@ private fun ViewModeSwitch(
                 onClick = { onChange(value) },
                 shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
                 label = { Text(label, style = MaterialTheme.typography.bodyMedium) },
-                modifier = Modifier.tactile().semantics {
-                    stateDescription = if (mode == value) "Selected" else "Not selected"
-                },
+                modifier = Modifier.tactile(),
             )
         }
     }
@@ -2076,9 +2073,6 @@ fun SettingsScreen(
                             onClick = { onAppearanceChange(value) },
                             shape = SegmentedButtonDefaults.itemShape(index = index, count = appearances.size),
                             label = { Text(label, style = MaterialTheme.typography.labelMedium) },
-                            modifier = Modifier.semantics {
-                                stateDescription = if (appearance == value) "Selected" else "Not selected"
-                            },
                         )
                     }
                 }
@@ -2098,9 +2092,6 @@ fun SettingsScreen(
                             shape = SegmentedButtonDefaults.itemShape(index = index, count = themes.size),
                             icon = { ThemeSwatch(palette) },
                             label = { Text(palette.label, style = MaterialTheme.typography.labelMedium) },
-                            modifier = Modifier.semantics {
-                                stateDescription = if (theme == name) "Selected" else "Not selected"
-                            },
                         )
                     }
                 }
