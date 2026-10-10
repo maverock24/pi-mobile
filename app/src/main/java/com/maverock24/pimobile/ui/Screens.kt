@@ -244,13 +244,8 @@ fun ChatScreen(
     vm: ChatViewModel,
     listening: Boolean,
     partialText: String,
-    notice: String?,
-    bootNotice: String?,
     onToggleMic: () -> Unit,
     onOpenSettings: () -> Unit,
-    onInstallUpdate: () -> Unit,
-    onDismissNotice: () -> Unit,
-    onDismissBootNotice: () -> Unit,
 ) {
     val turns = vm.turns
     val pending = vm.pendingQuestion
@@ -271,17 +266,6 @@ fun ChatScreen(
     // arguments even though the draft still starts with a slash. It reopens once
     // the slash is gone, or if the affordance is tapped again.
     var paletteDismissed by rememberSaveable { mutableStateOf(false) }
-    // A copy or share says it worked in the notice bar, the same bar the rest of
-    // the app's notices use. It clears itself, because a confirmation is only
-    // useful while the action is still fresh, and it is kept apart from the
-    // update notice above so one cannot wipe the other.
-    var actionNotice by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(actionNotice) {
-        if (actionNotice != null) {
-            delay(2000)
-            actionNotice = null
-        }
-    }
     // Compose does not hand the app the text a selection picked, so the only way
     // to move selected text into the composer is the clipboard. The user selects
     // with the normal handles and taps Copy in the system toolbar; that copy is
@@ -297,7 +281,7 @@ fun ChatScreen(
             val picked = readClipText(manager)
             if (!picked.isNullOrBlank()) {
                 vm.captureToDraft(picked)
-                actionNotice = "Copied text added to prompt"
+                vm.notifyConfirmation("Copied text added to prompt")
             }
         }
         manager?.addPrimaryClipChangedListener(listener)
@@ -434,36 +418,12 @@ fun ChatScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
-            if (notice != null) {
-                // The update banner's one action is Install, separate from
-                // Dismiss, so closing it can never start an install.
-                NoticeBar(
-                    text = notice,
-                    onDismiss = onDismissNotice,
-                    actionLabel = "Install",
-                    onAction = onInstallUpdate,
-                )
-            }
-            // A launch that died before it came up left data unread, and the
-            // transcript on screen is then missing what the phone still holds.
-            // Saying so once is the difference between a record and a lie.
-            if (bootNotice != null) {
-                NoticeBar(text = bootNotice, onDismiss = onDismissBootNotice)
-            }
             // The view model's notice channel draws here, in the order it keeps
             // its entries: the error, the actionable entry, then the
-            // confirmations.
+            // confirmations. One render site is the whole of it, so nothing can
+            // stack a second message on top of this one.
             vm.notices.forEach { n ->
-                NoticeBar(
-                    text = n.text,
-                    onDismiss = { vm.dismissNotice(n.id) },
-                    isError = n.kind == NoticeKind.Error,
-                    actionLabel = n.actionLabel,
-                    onAction = n.action,
-                )
-            }
-            actionNotice?.let { line ->
-                NoticeBar(text = line, onDismiss = { actionNotice = null })
+                NoticeBar(text = n.text, onDismiss = { vm.dismissNotice(n.id) }, isError = n.kind == NoticeKind.Error, actionLabel = n.actionLabel, onAction = n.action)
             }
 
             if (searchOpen) {
@@ -482,7 +442,7 @@ fun ChatScreen(
                 // still read and send what it saved before.
                 PinsView(
                     vm = vm,
-                    onConfirm = { actionNotice = it },
+                    onConfirm = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else if (turns.isEmpty() && pending == null) {
@@ -499,13 +459,13 @@ fun ChatScreen(
                 // two ways rather than two lists kept in step.
                 TurnDeck(
                     vm = vm,
-                    onAnswerConfirmed = { actionNotice = it },
+                    onAnswerConfirmed = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else {
                 Transcript(
                     vm = vm,
-                    onAnswerConfirmed = { actionNotice = it },
+                    onAnswerConfirmed = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }

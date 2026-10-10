@@ -219,10 +219,6 @@ class MainActivity : ComponentActivity() {
                         vm = vm,
                         listening = listening,
                         partialText = partialText,
-                        notice = (updateStatus as? UpdateStatus.Available)
-                            ?.takeUnless { updateDismissed }
-                            ?.let { "Update ${it.info.versionName} ready — tap to install" },
-                        bootNotice = null,
                         onToggleMic = {
                             if (listening) {
                                 dictation.stop()
@@ -240,12 +236,6 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onOpenSettings = { showSettings = true },
-                        // Install is the banner's action, never its dismiss.
-                        onInstallUpdate = {
-                            (updateStatus as? UpdateStatus.Available)?.let { installUpdate(it.info) }
-                        },
-                        onDismissNotice = { updateDismissed = true },
-                        onDismissBootNotice = {},
                     )
                 }
             }
