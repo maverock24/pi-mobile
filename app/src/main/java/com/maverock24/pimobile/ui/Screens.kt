@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -314,6 +315,15 @@ fun ChatScreen(
     LaunchedEffect(paletteVisible) {
         if (paletteVisible) vm.loadCommands()
     }
+
+    // System back closes one layer at a time. The palette and search are
+    // mutually exclusive modes of the composer, so at most one of these is ever
+    // enabled; with neither, back keeps the platform default and leaves the app.
+    BackHandler(enabled = paletteVisible) {
+        paletteOpen = false
+        paletteDismissed = true
+    }
+    BackHandler(enabled = searchOpen) { searchOpen = false }
 
     // The outcome of a request the user started: confirm when the bridge took
     // it, reject when it failed. Only these two paths and never a background
@@ -928,6 +938,10 @@ private fun PinsView(
 ) {
     val pins = vm.pins
     var openedId by rememberSaveable { mutableStateOf<String?>(null) }
+    // An open pin is a layer over the list, so back returns to the list. This is
+    // registered after the chat's handlers, which puts it ahead of them while a
+    // pin is open.
+    BackHandler(enabled = openedId != null) { openedId = null }
     val opened = pins.firstOrNull { it.id == openedId }
 
     if (opened != null) {
@@ -1211,6 +1225,7 @@ private fun SearchResultRow(hit: SearchHit, openable: Boolean, onOpen: () -> Uni
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clickable(enabled = openable, onClick = onOpen)
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
@@ -1631,6 +1646,7 @@ private fun CommandPalette(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(AnswerStyle.promptRadius))
                     .clickable { onPick(command) }
                     .tactile()
