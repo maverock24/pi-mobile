@@ -222,7 +222,7 @@ class MainActivity : ComponentActivity() {
                         notice = (updateStatus as? UpdateStatus.Available)
                             ?.takeUnless { updateDismissed }
                             ?.let { "Update ${it.info.versionName} ready — tap to install" },
-                        bootNotice = vm.bootNotice,
+                        bootNotice = null,
                         onToggleMic = {
                             if (listening) {
                                 dictation.stop()
@@ -245,7 +245,7 @@ class MainActivity : ComponentActivity() {
                             (updateStatus as? UpdateStatus.Available)?.let { installUpdate(it.info) }
                         },
                         onDismissNotice = { updateDismissed = true },
-                        onDismissBootNotice = vm::dismissBootNotice,
+                        onDismissBootNotice = {},
                     )
                 }
             }

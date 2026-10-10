@@ -450,22 +450,20 @@ fun ChatScreen(
             if (bootNotice != null) {
                 NoticeBar(text = bootNotice, onDismiss = onDismissBootNotice)
             }
-            vm.lastError?.let { error ->
-                NoticeBar(text = error, onDismiss = vm::dismissError, isError = true)
+            // The view model's notice channel draws here, in the order it keeps
+            // its entries: the error, the actionable entry, then the
+            // confirmations.
+            vm.notices.forEach { n ->
+                NoticeBar(
+                    text = n.text,
+                    onDismiss = { vm.dismissNotice(n.id) },
+                    isError = n.kind == NoticeKind.Error,
+                    actionLabel = n.actionLabel,
+                    onAction = n.action,
+                )
             }
             actionNotice?.let { line ->
                 NoticeBar(text = line, onDismiss = { actionNotice = null })
-            }
-
-            // A handover is named here, in one line, rather than a bar with an
-            // attach button: the move has already happened, and this says so.
-            vm.sessionNotice?.let { line ->
-                Text(
-                    text = line,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                )
             }
 
             if (searchOpen) {
@@ -1205,15 +1203,9 @@ private fun SearchPanel(
 ) {
     Column(modifier = modifier) {
         // The field is the composer now, so the panel is only the outcome: the
-        // error, the wait, the empty answer, and the matches themselves.
-        vm.searchError?.let { error ->
-            Text(
-                text = error,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-        }
+        // wait, the empty answer, and the matches themselves. A refusal is a
+        // message, and the notice channel owns those, so there is no error line
+        // here to duplicate it.
         val results = vm.searchResults
         // Search reads the whole session; the screen only holds a window of it.
         // A hit whose turn is outside that window has nothing here to open, so
@@ -1227,7 +1219,7 @@ private fun SearchPanel(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            results.isEmpty() && query.isNotBlank() && vm.searchError == null ->
+            results.isEmpty() && query.isNotBlank() && !vm.searchFailed ->
                 Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     Text(
                         text = "no matches",

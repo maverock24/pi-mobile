@@ -211,6 +211,28 @@ fun turnsOf(messages: List<ChatMessage>): List<ChatTurn> {
  */
 data class RequestOutcome(val id: Long, val ok: Boolean)
 
+/**
+ * Which of the three message channels a [Notice] belongs to. A kind is not a
+ * priority the input sorts by: the screen draws errors first, then actionables,
+ * then confirmations, because a failure outranks a nudge and a nudge outranks a
+ * receipt.
+ */
+enum class NoticeKind { Error, Actionable, Confirmation }
+
+/**
+ * One transient message and what it offers. [action] carries its own label so a
+ * bar can never read "OK" while it installs an APK; a notice with no action is
+ * only dismissable. [id] names the entry so a dismissal removes that one rather
+ * than whatever happens to be newest.
+ */
+data class Notice(
+    val id: Long,
+    val kind: NoticeKind,
+    val text: String,
+    val actionLabel: String? = null,
+    val action: (() -> Unit)? = null,
+)
+
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = SettingsStore(app)
@@ -226,15 +248,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * restart. Pins name no session, so they outlive the one that made them.
      */
     val pins = mutableStateListOf<Pin>()
-
-    /**
-     * A line about how the last launch ended, shown once on the chat screen. It
-     * is set only when that launch died while coming up, because that is the one
-     * case the user has to hear about: what is on screen is not what the phone
-     * was holding.
-     */
-    var bootNotice by mutableStateOf<String?>(null)
-        private set
 
     /** The trace of the most recent crash, or null when nothing has crashed. */
     var lastCrash by mutableStateOf<String?>(null)
@@ -296,8 +309,61 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var statusLine by mutableStateOf("")
         private set
-    var lastError by mutableStateOf<String?>(null)
+
+    /**
+     * Every transient message, drawn in read order: an error, then the
+     * actionable entry, then the confirmations. One channel rather than seven
+     * independent lines, so two messages cannot stack and none is
+     * undismissable. A new error or actionable replaces its own kind; a
+     * confirmation expires on its own.
+     */
+    var notices by mutableStateOf<List<Notice>>(emptyList())
         private set
+
+    /** The id the next notice takes; a dismissal names one entry by it. */
+    private var noticeSeq = 0L
+
+    fun notifyError(text: String) {
+        notices = reorder(
+            notices.filterNot { it.kind == NoticeKind.Error } + Notice(++noticeSeq, NoticeKind.Error, text),
+        )
+    }
+
+    fun notifyActionable(text: String, actionLabel: String? = null, action: (() -> Unit)? = null) {
+        notices = reorder(
+            notices.filterNot { it.kind == NoticeKind.Actionable } +
+                Notice(++noticeSeq, NoticeKind.Actionable, text, actionLabel, action),
+        )
+    }
+
+    /**
+     * A receipt for something the user just did. It clears itself after two
+     * seconds because it only matters while the action is fresh; three at most
+     * are kept, so a run of them cannot fill the screen.
+     */
+    fun notifyConfirmation(text: String) {
+        val id = ++noticeSeq
+        val kept = notices.filter { it.kind == NoticeKind.Confirmation }.takeLast(2)
+        notices = reorder(
+            notices.filterNot { it.kind == NoticeKind.Confirmation } +
+                kept + Notice(id, NoticeKind.Confirmation, text),
+        )
+        viewModelScope.launch {
+            delay(2000)
+            dismissNotice(id)
+        }
+    }
+
+    fun dismissNotice(id: Long) {
+        notices = notices.filterNot { it.id == id }
+    }
+
+    fun clearNotices() {
+        notices = emptyList()
+    }
+
+    private fun reorder(list: List<Notice>) = list.sortedBy { it.kind.ordinal }
+
     var pendingQuestion by mutableStateOf<PendingQuestion?>(null)
         private set
     var appearance by mutableStateOf(store.appearance)
@@ -328,14 +394,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Full-session search: what the bridge matched, whether a request is in
-     * flight, and what the bridge said if it refused. The results are newest
-     * first, as the bridge sends them.
+     * flight, and whether the bridge refused. The refusal's text goes to the
+     * notice channel, so this is only the panel's gate against saying "no
+     * matches" for a query that failed. The results are newest first, as the
+     * bridge sends them.
      */
     var searchResults by mutableStateOf<List<SearchHit>>(emptyList())
         private set
     var searching by mutableStateOf(false)
         private set
-    var searchError by mutableStateOf<String?>(null)
+    var searchFailed by mutableStateOf(false)
         private set
 
     /**
@@ -390,14 +458,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * reads it back from [SettingsStore] instead of adopting whatever serves.
      */
     var attachedSessionId by mutableStateOf(store.sessionId.takeIf { it.isNotBlank() })
-        private set
-
-    /**
-     * One plain line naming the session the screen just moved to and why, or
-     * null. It replaces the bar that used to stop the composer and ask before a
-     * move. The move is automatic now, and this is only the record of it.
-     */
-    var sessionNotice by mutableStateOf<String?>(null)
         private set
 
     /**
@@ -497,17 +557,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             forgetSession()
         }
         quarantinedData = pinsStore.hasQuarantined() || transcriptStore.hasQuarantined()
-        bootNotice = when {
-            droppedAttachment ->
-                "The last launches crashed while starting, so the saved transcript, the pins and " +
-                    "the bridge token were left behind to get the app open. Settings > " +
-                    "Troubleshooting has the trace."
-            movedTranscripts > 0 || movedPins ->
-                "The last launch crashed while starting, so the saved transcript and pins were set " +
-                    "aside. Settings > Troubleshooting has the trace."
-            else ->
-                "The last launch crashed while starting. Settings > Troubleshooting has the trace."
-        }
+        notifyActionable(
+            when {
+                droppedAttachment ->
+                    "The last launches crashed while starting, so the saved transcript, the pins and " +
+                        "the bridge token were left behind to get the app open. Settings > " +
+                        "Troubleshooting has the trace."
+                movedTranscripts > 0 || movedPins ->
+                    "The last launch crashed while starting, so the saved transcript and pins were set " +
+                        "aside. Settings > Troubleshooting has the trace."
+                else ->
+                    "The last launch crashed while starting. Settings > Troubleshooting has the trace."
+            },
+        )
     }
 
     /**
@@ -522,7 +584,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         sessionTitle = NO_SESSION
         sessionName = null
         sessionCwd = null
-        sessionNotice = null
+        clearNotices()
         // The commands named a bridge that is no longer attached, so they go
         // with it rather than sitting under the next one's name.
         commands = emptyList()
@@ -721,7 +783,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         liveAnswer = null
         if (moved) {
             val label = sessionLabel(cwd, name).ifBlank { "a new session" }
-            sessionNotice = "The bridge moved to $label; this screen follows it"
+            notifyActionable("The bridge moved to $label; this screen follows it")
         }
         // The moved-to session's own cache goes up before its history is fetched,
         // so the move is instant and an unreachable bridge still shows what was
@@ -746,7 +808,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         .filter { it.isNotBlank() }
                         .joinToString(" · ")
                 }
-                .onFailure { lastError = "state: ${Diagnostics.describe(it, store.baseUrl)}" }
+                .onFailure { notifyError("state: ${Diagnostics.describe(it, store.baseUrl)}") }
         }
     }
 
@@ -755,7 +817,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             var limit = HISTORY_LIMIT
             while (true) {
                 val payload = runCatching { client.history(limit) }.getOrElse { error ->
-                    lastError = "history: ${Diagnostics.describe(error, store.baseUrl)}"
+                    notifyError("history: ${Diagnostics.describe(error, store.baseUrl)}")
                     return@safeLaunch
                 }
                 val array = payload.optJSONArray("messages") ?: JSONArray()
@@ -822,9 +884,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // so what is on screen is no longer only the saved copy.
                 showingSavedCopy = false
                 // The line naming the session the app moved to has been read by the
-                // time its transcript is here, so it goes. A notice that never
-                // leaves is noise rather than information.
-                sessionNotice = null
+                // time its transcript is here, so it goes, along with anything
+                // older still on screen. A notice that never leaves is noise
+                // rather than information.
+                clearNotices()
                 return@safeLaunch
             }
         }
@@ -842,7 +905,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Throwable) {
-                lastError = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+                notifyError(error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName)
             }
         }
     }
@@ -973,11 +1036,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (text.isEmpty()) {
             searchResults = emptyList()
             searching = false
-            searchError = null
+            searchFailed = false
             return
         }
         searching = true
-        searchError = null
+        searchFailed = false
         safeLaunch {
             runCatching { client.search(text) }
                 .onSuccess { payload ->
@@ -1011,13 +1074,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 .onFailure { error ->
                     if (seq != searchSeq) return@onFailure
                     searching = false
+                    searchFailed = true
                     // A 404 is what an older bridge answers for a path it does not
                     // know, and the running bridge stays old until it is reloaded.
-                    searchError = if (error is BridgeException && error.code == 404) {
-                        "this bridge has no search yet; reload it on the laptop"
-                    } else {
-                        Diagnostics.describe(error, store.baseUrl)
-                    }
+                    notifyError(
+                        if (error is BridgeException && error.code == 404) {
+                            "this bridge has no search yet; reload it on the laptop"
+                        } else {
+                            Diagnostics.describe(error, store.baseUrl)
+                        },
+                    )
                 }
         }
     }
@@ -1027,7 +1093,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         searchSeq++
         searchResults = emptyList()
         searching = false
-        searchError = null
+        searchFailed = false
     }
 
     /**
@@ -1202,7 +1268,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         if (draft.isBlank()) draft = trimmed
                         handleWrongSession()
                     } else {
-                        lastError = "prompt: ${Diagnostics.describe(error, store.baseUrl)}"
+                        notifyError("prompt: ${Diagnostics.describe(error, store.baseUrl)}")
                     }
                     outcome = RequestOutcome(++outcomeSeq, ok = false)
                 }
@@ -1217,7 +1283,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (wrongSession(error)) {
                         handleWrongSession()
                     } else {
-                        lastError = error.message
+                        error.message?.let { notifyError(it) }
                     }
                 }
         }
@@ -1232,15 +1298,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 .onSuccess { statusLine = "$statusLine · HTTP OK" }
                 .onFailure { statusLine = "$statusLine · ${Diagnostics.describe(it, store.baseUrl)}" }
         }
-    }
-
-    fun dismissError() {
-        lastError = null
-    }
-
-    /** Take the line about the last launch off the chat screen. */
-    fun dismissBootNotice() {
-        bootNotice = null
     }
 
     /**
@@ -1265,8 +1322,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         forgetSession()
         lastCrash = null
         quarantinedData = false
-        bootNotice = null
-        lastError = null
+        clearNotices()
         statusLine = "Add the bridge token in Settings"
     }
 
@@ -1331,7 +1387,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (wrongSession(error)) {
                         handleWrongSession()
                     } else {
-                        lastError = "answer: ${Diagnostics.describe(error, store.baseUrl)}"
+                        notifyError("answer: ${Diagnostics.describe(error, store.baseUrl)}")
                     }
                     outcome = RequestOutcome(++outcomeSeq, ok = false)
                 }
@@ -1356,7 +1412,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (wrongSession(error)) {
                         handleWrongSession()
                     } else {
-                        lastError = "cancel: ${Diagnostics.describe(error, store.baseUrl)}"
+                        notifyError("cancel: ${Diagnostics.describe(error, store.baseUrl)}")
                     }
                 }
         }
