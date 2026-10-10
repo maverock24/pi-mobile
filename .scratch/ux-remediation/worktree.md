@@ -307,6 +307,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   `actionEnabled` and the haptics unchanged (`:547-551`).
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q '"Steer"' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt && test "$(grep -c 'horizontalScroll' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt)" -eq 1`
 - **Blocked by**: T4.
+- **Status**: done (2da5ddb)
 - **Commit subject**: Fix the composer's first row and label its action Send or Steer
 
 ### T18. One segmented control for pick-one-of-N
@@ -320,6 +321,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   control; `ThemeSwatch` becomes the segment's `icon`.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'SingleChoiceSegmentedButtonRow' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt && ! grep -q '• ' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt && ! grep -q 'private fun SegmentButton' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt`
 - **Blocked by**: none.
+- **Status**: done (29fc86e)
 - **Commit subject**: Replace the view and theme pickers with one segmented control
 
 ### T19. Roles, selection and a live streaming answer
@@ -335,6 +337,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   (`Modifier.semantics { liveRegion = LiveRegionMode.Polite }`).
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline :app:lintDebug && grep -q 'Role.Button' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt && grep -q 'stateDescription' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt && grep -q 'liveRegion' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt`
 - **Blocked by**: T18.
+- **Status**: done (0d6cf8f)
 - **Risk**: a live region can be chatty; the human judges the cadence in T40.
 - **Commit subject**: Give the clickable rows roles, selection and a live answer
 
@@ -346,6 +349,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   is present as `heading()` inside `semantics { }` in ui 1.7.5.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'liveRegion' app/src/main/java/com/maverock24/pimobile/ui/AnswerView.kt && grep -q 'heading()' app/src/main/java/com/maverock24/pimobile/ui/AnswerView.kt`
 - **Blocked by**: none.
+- **Status**: done (4116a1c)
 - **Commit subject**: Mark answer headings for TalkBack
 
 ### T21. The waiting slot and the app bar survive fontScale 2.0
@@ -358,6 +362,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   (64 dp) at fontScale 2.0, stop forcing `maxLines` and let the bar size itself.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'heightIn(min = 24.dp)' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt`
 - **Blocked by**: none.
+- **Status**: done (75c649a)
 - **Limitation carried**: the exact clip behaviour is device-only (Q26), confirmed by the human in T40.
 - **Commit subject**: Let the waiting slot and the app bar survive fontScale 2.0
 
@@ -370,6 +375,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   clipping.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && ! grep -q 'width(AnswerStyle.bulletIndent)' app/src/main/java/com/maverock24/pimobile/ui/AnswerView.kt`
 - **Blocked by**: T20.
+- **Status**: done (0a98f12)
 - **Commit subject**: Let the bullet column grow with its glyph
 
 ### T23. The hint leads the connection string
@@ -381,6 +387,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   longer eats it. The settings screen keeps the one string and already wraps.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'hint(error)' app/src/main/java/com/maverock24/pimobile/net/Diagnostics.kt`
 - **Blocked by**: none.
+- **Status**: done (a807157)
 - **Commit subject**: Put the fix first in the connection hint
 
 ### T24. The empty state names its situation
@@ -395,6 +402,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   `turns.isEmpty() && pending == null && vm.connected` keeps today's `"thinking…"` / `"no results yet"`.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'maxLines = 2' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt && grep -q 'Retry' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt`
 - **Blocked by**: T23.
+- **Status**: done (02d0730)
 - **Commit subject**: Name the empty state's three situations
 
 ### T25. The keyed state holder
@@ -406,6 +414,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   `holder.SaveableStateProvider(if (showSettings) "settings" else "chat") { ... }`.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'rememberSaveableStateHolder' app/src/main/java/com/maverock24/pimobile/MainActivity.kt && grep -q 'SaveableStateProvider' app/src/main/java/com/maverock24/pimobile/MainActivity.kt`
 - **Blocked by**: none.
+- **Status**: done (8ea7f65)
 - **Commit subject**: Keep the chat's state across the trip to settings
 
 ### T26. Two states become saveable
@@ -416,6 +425,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   fifteen states in Q39/Q40 are already saveable.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug`
 - **Blocked by**: none.
+- **Status**: done (41c1423)
 - **Commit subject**: Save the held turn and the clear confirmation
 
 ### T27. Settings prose folds, commands copy on tap
@@ -429,6 +439,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   so D3's chain stays palette, search, pin, settings.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'ClipboardManager' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt`
 - **Blocked by**: T3.
+- **Status**: done (e12f7e9)
 - **Commit subject**: Fold settings prose and copy the laptop commands on tap
 
 ### T28. The wave 2 phone checklist
@@ -442,6 +453,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   copied command.
 - **Check**: `test "$(grep -c 'Wave 2' docs/UX-REMEDIATION-CHECKLIST.md)" -ge 1`
 - **Blocked by**: T16, T27.
+- **Status**: done (f16496b)
 - **Commit subject**: Write the wave 2 phone checklist
 
 ---
@@ -696,6 +708,7 @@ into the wave named on each, so a finding cannot be lost by being only in a repo
 - **Change**: the pin's `BackHandler` is registered after the palette's, so the dispatcher serves it first and back closes the pin rather than the palette, which is the reverse of D3's order. Gate the pin's handler on the palette being closed, or register the palette's later than the content.
 - **Check**: `grep -n "BackHandler" Screens.kt`, then read the `enabled` conditions to confirm the palette wins while both are open.
 - **Blocked by**: T17.
+- **Status**: done (e33af44)
 - **Commit subject**: `Close the command palette first when both are open`
 
 ### T25a. A notice action survives a recreated screen
@@ -705,6 +718,7 @@ into the wave named on each, so a finding cannot be lost by being only in a repo
 - **Change**: an actionable notice's `action` closure captures the composition that posted it, so after a rotation the "Allow installs for Pi Remote" entry's Install runs on a cancelled scope and holds the destroyed Activity. Re-post the entry when the composition is recreated, or carry the action as a value the screens map to behaviour instead of a captured lambda.
 - **Check**: `assembleDebug` success, and on the phone: rotate with that entry on screen and tap Install.
 - **Blocked by**: T25.
+- **Status**: done (cec2d6b)
 - **Commit subject**: `Make a notice action survive a recreated screen`
 
 ### T38a. The luminance check reads the palette from the source
@@ -724,3 +738,4 @@ into the wave named on each, so a finding cannot be lost by being only in a repo
 - **Check**: on the phone at `fontScale` 2.0, the bar shows both the title and the session subtitle whole, with no clipped descenders and no action pushed off.
 - **Blocked by**: T21.
 - **Commit subject**: `Make the app bar carry its two lines at a large font scale`
+- **Status**: done (5cac18b)
