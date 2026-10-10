@@ -715,3 +715,12 @@ into the wave named on each, so a finding cannot be lost by being only in a repo
 - **Check**: `python3 scripts/luminance.py` exits 0; then set one palette hex in `AnswerStyle.kt` to a failing value, confirm exit 1, and restore it.
 - **Blocked by**: T38.
 - **Commit subject**: `Read the palette out of the source it checks`
+
+### T21a. Make the app bar carry its two lines at a large font scale
+
+- **Wave**: 3. **Phase**: 19.
+- **Touches**: `app/src/main/java/com/maverock24/pimobile/ui/Screens.kt`.
+- **Change**: T21 raised the title to `maxLines = 2` and dropped the subtitle's cap, but Material3's small `TopAppBar` is `heightIn(max = TopAppBarSmallTokens.ContainerHeight = 64.dp)` with `clipToBounds()` (`AppBarKt$SingleRowTopAppBar`), so the extra lines render inside the same 64 dp and are cut off rather than growing the bar. The font-scale part of T21 is therefore not real. The fix is to replace the fixed-height bar (a plain `Column` bar, or a `TopAppBar` whose content is not height-capped) so the two lines can size themselves.
+- **Check**: on the phone at `fontScale` 2.0, the bar shows both the title and the session subtitle whole, with no clipped descenders and no action pushed off.
+- **Blocked by**: T21.
+- **Commit subject**: `Make the app bar carry its two lines at a large font scale`

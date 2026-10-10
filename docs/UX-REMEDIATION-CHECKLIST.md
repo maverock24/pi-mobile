@@ -83,16 +83,19 @@ this checklist asks you to judge by eye).
 7. **Settings folds its prose and copies its commands.** Open each Settings section: its subtitle is
    one line and the explanation appears only once the section is open. Under Pairing, tap the `/pair`
    row; under Connection, tap the `cat ~/.config/pi-remote/token` row. Each tap puts the command on
-   the clipboard, shows `Copied` in the chat's message area, and pasting the clipboard gives exactly
-   that command.
+   the clipboard, shows a `Copied` acknowledgement on the row itself, and pasting the clipboard gives
+   exactly that command.
 
 ## fontScale 1.0 and 2.0
 
 Run the wave 1 and wave 2 checks at the phone's default font scale, then set the display font to its
-largest setting and run them again. Wave 2 fixed the three fixed-size spots that used to clip here
-(the 24 dp waiting slot, the 20 dp bullet column, the app bar's two single-line texts), so at
-`fontScale` 2.0 nothing should clip, overlap or be cut off. A clip is now a failure to fix, not a
-line to record.
+largest setting and run them again. Wave 2 fixed two of the three fixed-size spots that used to clip
+here: the 24 dp waiting slot and the 20 dp bullet column. The third, the app bar's two lines, is a
+known clip rather than a fix: Material3's small `TopAppBar` caps its container at 64 dp and clips, so
+`maxLines = 2` renders more lines inside that height and cuts them off. Carrying both lines means
+replacing the fixed-height bar, recorded as T21a in wave 3. Beyond that known app-bar clip, nothing
+should clip, overlap or be cut off at `fontScale` 2.0; a clip there is a failure to fix, not a line to
+record.
 
 Result: _pending, completed with wave 3._
 
