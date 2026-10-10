@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -150,12 +151,15 @@ fun AnswerView(
                                 verticalAlignment = Alignment.Top,
                                 modifier = Modifier.padding(start = AnswerStyle.bulletIndent * item.level),
                             ) {
+                                // The marker column is a floor, not a cap: a two-digit
+                                // ordered marker is wider than one body glyph at a large
+                                // font scale, and a fixed width would clip it.
                                 Text(
                                     text = if (block.ordered && !item.marker) "$counter." else "•",
                                     color = if (block.ordered && !item.marker) linkColor else scheme.onSurfaceVariant,
                                     fontSize = AnswerStyle.bodySize,
                                     lineHeight = AnswerStyle.bodyLineHeight,
-                                    modifier = Modifier.width(AnswerStyle.bulletIndent),
+                                    modifier = Modifier.widthIn(min = AnswerStyle.bulletIndent),
                                 )
                                 Text(
                                     text = inlineText(item.text, linkColor, chipColor),
