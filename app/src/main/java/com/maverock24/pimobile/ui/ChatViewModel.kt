@@ -331,11 +331,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    fun notifyActionable(text: String, actionLabel: String? = null, action: (() -> Unit)? = null) {
+    fun notifyActionable(text: String, actionLabel: String? = null, action: (() -> Unit)? = null): Long {
+        val id = ++noticeSeq
         notices = reorder(
             notices.filterNot { it.kind == NoticeKind.Actionable } +
-                Notice(++noticeSeq, NoticeKind.Actionable, text, actionLabel, action),
+                Notice(id, NoticeKind.Actionable, text, actionLabel, action),
         )
+        return id
     }
 
     /**
@@ -362,9 +364,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearNotices() {
         notices = emptyList()
+        // Nothing is on screen, so the one entry tracked by id is gone with it.
+        sessionMoveNoticeId = null
     }
 
     private fun reorder(list: List<Notice>) = list.sortedBy { it.kind.ordinal }
+
+    /**
+     * The line naming a session the bridge moved to. It is the one message that
+     * stops being useful exactly when its transcript arrives, so it is cleared
+     * then, and only it: an error, or what a crash recovery left behind, stays
+     * until it is dismissed.
+     */
+    private var sessionMoveNoticeId: Long? = null
 
     var pendingQuestion by mutableStateOf<PendingQuestion?>(null)
         private set
@@ -785,7 +797,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         liveAnswer = null
         if (moved) {
             val label = sessionLabel(cwd, name).ifBlank { "a new session" }
-            notifyActionable("The bridge moved to $label; this screen follows it")
+            sessionMoveNoticeId = notifyActionable("The bridge moved to $label; this screen follows it")
         }
         // The moved-to session's own cache goes up before its history is fetched,
         // so the move is instant and an unreachable bridge still shows what was
@@ -885,11 +897,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // A fetch has now confirmed the transcript against the bridge,
                 // so what is on screen is no longer only the saved copy.
                 showingSavedCopy = false
-                // The line naming the session the app moved to has been read by the
-                // time its transcript is here, so it goes, along with anything
-                // older still on screen. A notice that never leaves is noise
-                // rather than information.
-                clearNotices()
+                // The line naming the session the app moved to has been read by
+                // the time its transcript is here, so that one line goes. Nothing
+                // else does: this used to clear the whole channel, which took the
+                // message a crash recovery had just left, and any live error,
+                // with it before either could be read.
+                sessionMoveNoticeId?.let(::dismissNotice)
+                sessionMoveNoticeId = null
                 return@safeLaunch
             }
         }
