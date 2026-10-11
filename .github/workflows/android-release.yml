@@ -22,6 +22,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Reject suppressions of internal Compose APIs
+        run: |
+          set -euo pipefail
+          # A previous change silenced the compiler's warning that an internal Compose
+          # API's behaviour is "UNSPECIFIED and WON'T BE PRESERVED". That warning is
+          # the point, so a suppression of it fails the build rather than shipping.
+          if grep -rnE '@file:Suppress.*(INVISIBLE_REFERENCE|INVISIBLE_MEMBER)' app/src/main; then
+            echo "::error::app/src/main suppresses INVISIBLE_REFERENCE/INVISIBLE_MEMBER, which hides a call into an internal Compose API."
+            exit 1
+          fi
+          echo "No INVISIBLE_REFERENCE/INVISIBLE_MEMBER suppression under app/src/main."
+
       - name: Setup Java
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
@@ -35,6 +47,11 @@ jobs:
           # The 'tools' package no longer exists in the SDK repo; only install
           # platform-tools and let Gradle fetch platforms/build-tools.
           packages: 'platform-tools'
+
+      - name: Lint debug
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon lintDebug
 
       - name: Prepare signing keystore
         env:
