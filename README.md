@@ -198,6 +198,24 @@ An optional second path exists if this repository ever goes private again: the b
 carries `GET /api/release/latest.json` and `GET /api/release/apk` behind the device
 token, fed by `pi-remote-release-sync`. The app does not use it today.
 
+### The bridge needs a reload, not just the app
+
+The app's half arrives with the APK. The bridge's half does not: it is a pi
+extension, and a running pi keeps the copy it loaded at startup, so a change under
+`bridge/` reaches the phone only when the process serving it reloads, with
+`/reload`.
+
+Reload **the pane that owns the bridge**, which is the one whose status line
+shows `!!!PI-Remote connected!!!`. The lease is what names it:
+
+    cat ~/.config/pi-remote/owner-*.json    # owner pid, and the cwd it runs in
+
+Reloading any other pane does nothing, and that is a confusing way to spend an
+evening: the app keeps talking to the process that still holds the address, so a
+bridge fix looks broken while it sits on disk unloaded. Ownership moves, when
+someone runs `/pi-remote` in another pane or the owner restarts, so check the
+lease rather than trusting which pane you are sitting in.
+
 ## Building the app (optional)
 
 Only needed if you are changing the Android app. A normal setup downloads the published
