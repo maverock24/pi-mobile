@@ -102,6 +102,13 @@ object AnswerStyle {
     /** Space above it, on top of the list's own gap, so a prompt starts a block. */
     val promptGap = 8.dp
 
+    /**
+     * Room above and below the accent bar inside the row that carries it. The bar
+     * is shorter than the text beside it, so it is inset a hairline less than the
+     * text's own padding and its ends then line up with the text's line box.
+     */
+    val accentBarInset = promptPadding - 2.dp
+
     /** Indent step for one bullet level. */
     val bulletIndent = 20.dp
 
@@ -117,6 +124,38 @@ object AnswerStyle {
 
     /** Space between two answers in the stream. */
     val answerGap = 26.dp
+
+    // The screens outside the answer view repeat the same handful of numbers for
+    // their pads and gaps. Naming each repeated value here means a row asks for
+    // the token instead of copying the number, so two rows that should match
+    // cannot drift apart. A size used once stays at its call site.
+
+    /** Gap between two controls standing side by side. */
+    val controlGap = 8.dp
+
+    /** Gap between lines stacked inside one card. */
+    val lineGap = 10.dp
+
+    /** Room around the content of a compact row, such as a list row or a banner. */
+    val rowInset = 10.dp
+
+    /** Room around the content of a card or panel. */
+    val panelPadding = 12.dp
+
+    /** Room around the content of the roomier settings cards. */
+    val cardPadding = 14.dp
+
+    /** Horizontal inset of a full-width screen row. */
+    val screenPadding = 16.dp
+
+    /** The spacer between one settings section and the next. */
+    val sectionGap = 12.dp
+
+    /** The chevron that marks a collapsed prompt, in the deck and the transcript alike. */
+    val chevronSize = 22.dp
+
+    /** An answer action icon. */
+    val iconSize = 18.dp
 
     /**
      * 54 characters at 14sp. Average glyph advance for UI sans is about 0.53em,
