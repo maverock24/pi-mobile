@@ -715,11 +715,19 @@ export default function (pi: ExtensionAPI) {
 			return { ...base, commands: [] };
 		}
 		try {
-			const commands = pi.getCommands().map((command) => ({
-				name: command.name,
-				description: command.description ?? "",
-				source: command.source,
-			}));
+			// The list itself is carried whole, so it is trimmed row by row instead
+			// of through shrink() at the call site. shrink() caps every array at 40,
+			// and a machine with more commands than that, which is normal once skills
+			// are counted, would lose the tail silently. Skills sort last, so what is
+			// lost is most of them. A name and its source are short; a description
+			// long enough to matter is cut by the same string rule as everything else.
+			const commands = pi.getCommands().map((command) =>
+				shrink({
+					name: command.name,
+					description: command.description ?? "",
+					source: command.source,
+				}),
+			);
 			return { ...base, commands };
 		} catch {
 			// A session caught between states answers with none rather than a 500;
@@ -1038,7 +1046,10 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (req.method === "GET" && url.pathname === "/api/commands") {
-			sendJson(res, 200, shrink(commandsPayload()));
+			// Carried whole on purpose. shrink() would cut the list at 40 rows, and
+			// the commands past that are the skills, so the phone would never see
+			// them. commandsPayload trims each row instead.
+			sendJson(res, 200, commandsPayload());
 			return;
 		}
 
