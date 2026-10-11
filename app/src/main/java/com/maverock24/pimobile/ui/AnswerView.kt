@@ -1,5 +1,7 @@
 package com.maverock24.pimobile.ui
 
+import android.content.Context
+import android.provider.Settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -40,6 +42,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -342,18 +345,30 @@ private fun TableBlock(block: AnswerBlock.Table) {
 internal const val SWEEP_PERIOD_MS = 1300
 
 /**
+ * The system animator duration scale: zero when the user has switched
+ * animations off. It is read from the platform because Compose's ui 1.7.5
+ * exposes no LocalMotionDurationScale, and the frame clock the sweep runs on is
+ * not subject to the scale, so the value has to be honoured by hand.
+ */
+private fun animatorDurationScale(context: Context): Float =
+    Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+
+/**
  * A value that rises from 0 to 1 over [periodMillis] and starts again, for as
  * long as this is composed.
  *
- * It is advanced by the frame clock directly rather than by an animation spec.
- * The frames this screen already gets for its press animations are enough to
- * move the value, so the sweep cannot be left standing by an animation the
- * runtime decides not to run.
+ * It is advanced by the frame clock directly rather than by an animation spec,
+ * because the sweep is one continuous phase both bars share; the frame clock
+ * ignores the system animation scale, so that scale is read once and, when it
+ * is zero, the value is left standing rather than advanced.
  */
 @Composable
 internal fun rememberSweep(periodMillis: Int): State<Float> {
     val progress = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(periodMillis) {
+    val context = LocalContext.current
+    val scale = remember(context) { animatorDurationScale(context) }
+    LaunchedEffect(periodMillis, scale) {
+        if (scale == 0f) return@LaunchedEffect
         val period = periodMillis * 1_000_000L
         var start = 0L
         withFrameNanos { start = it }
