@@ -122,3 +122,13 @@ and the address fallback. The smallest shippable slice, independent of the block
 toggle, is 3 plus making the loopback twin opt-in behind an env flag
 (`PI_REMOTE_NO_LOOPBACK` already exists, `:940`); 2 follows on its own, and 1 ships when
 the tailnet cert toggle is enabled.
+
+## Constraint from the human, 2026-10-11
+
+"i would not like to weaken defence but i also would like to simplify."
+
+So take only the options whose security cost is nil. Everything in section 4,
+and anything in section 3 that trades a protection for fewer taps, stays. The
+test: does it remove a manual step while leaving the protocol underneath
+untouched, or does it remove a check, a secret, or an exchange? The first is in
+scope, the second is not.
