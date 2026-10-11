@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher foreground: the pi glyph, three round-capped strokes rather than a
+     filled silhouette, so it stays legible on any launcher mask. The 108 dp
+     viewport is the adaptive icon's; the glyph sits inside the central safe
+     zone, so no mask or parallax clips it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:strokeColor="#FF7AA2F7"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:pathData="M38,40 L70,40 M45,40 L45,68 M63,40 L63,68" />
+</vector>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The adaptive launcher icon's backdrop. It is the app's own night-sky navy
+     so the icon reads as the app rather than as a generic tile. -->
+<resources>
+    <color name="ic_launcher_background">#070D18</color>
+</resources>
