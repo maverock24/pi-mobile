@@ -183,13 +183,30 @@ data class SessionCommand(
  */
 fun turnsOf(messages: List<ChatMessage>): List<ChatTurn> {
     val turns = ArrayList<ChatTurn>()
+    // A turn's id is the key its rows carry in the transcript and in the deck's
+    // pager, and Compose refuses two rows that share one at layout time. The
+    // bridge's ids are unique, but a repeated prompt id, or a lead-N that names
+    // a real id, would still give two turns one key. Each turn takes the first
+    // id that is free: the first turn with a base keeps it, and a later turn
+    // with that base is served a numbered one. The first keeps the plain id on
+    // purpose, because a search hit names the prompt's own id to jump to.
+    val usedIds = HashSet<String>()
+    fun takeId(base: String): String {
+        var candidate = base
+        var suffix = 1
+        while (!usedIds.add(candidate)) {
+            suffix++
+            candidate = "$base#$suffix"
+        }
+        return candidate
+    }
     var prompt: ChatMessage? = null
     val answers = ArrayList<ChatMessage>()
     for (message in messages) {
         when (message.role) {
             "user" -> {
                 if (prompt != null || answers.isNotEmpty()) {
-                    turns.add(ChatTurn(prompt?.id ?: "lead-${turns.size}", prompt?.text, ArrayList(answers)))
+                    turns.add(ChatTurn(takeId(prompt?.id ?: "lead-${turns.size}"), prompt?.text, ArrayList(answers)))
                     answers.clear()
                 }
                 prompt = message
@@ -201,7 +218,7 @@ fun turnsOf(messages: List<ChatMessage>): List<ChatTurn> {
         }
     }
     if (prompt != null || answers.isNotEmpty()) {
-        turns.add(ChatTurn(prompt?.id ?: "lead-${turns.size}", prompt?.text, ArrayList(answers)))
+        turns.add(ChatTurn(takeId(prompt?.id ?: "lead-${turns.size}"), prompt?.text, ArrayList(answers)))
     }
     return turns
 }
@@ -1086,11 +1103,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val array = payload.optJSONArray("results") ?: JSONArray()
                     val hits = ArrayList<SearchHit>()
+                    // Two hits with one entry id would be two rows with one key,
+                    // which Compose refuses at layout time. A repeated id keeps
+                    // its first hit and drops the later one. A hit that names no
+                    // entry takes a per-position id, and the set is what stops
+                    // that id from meeting a real entry id of the same name.
+                    val seenIds = HashSet<String>()
                     for (index in 0 until array.length()) {
                         val hit = array.optJSONObject(index) ?: continue
+                        val entryId = hit.optString("entryId").ifBlank { "hit-$index" }
+                        if (!seenIds.add(entryId)) continue
                         hits.add(
                             SearchHit(
-                                entryId = hit.optString("entryId").ifBlank { "hit-$index" },
+                                entryId = entryId,
                                 role = hit.optString("role"),
                                 snippet = hit.optString("snippet"),
                                 prompt = hit.string("prompt"),
