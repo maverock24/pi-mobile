@@ -200,10 +200,11 @@ token, fed by `pi-remote-release-sync`. The app does not use it today.
 
 ### The bridge needs a reload, not just the app
 
-The app's half arrives with the APK. The bridge's half does not: it is a pi
-extension, and a running pi keeps the copy it loaded at startup, so a change under
-`bridge/` reaches the phone only when the process serving it reloads, with
-`/reload`.
+The app's half arrives with the APK. The bridge's half does not, and it takes two
+steps in this order: `bridge/install.sh` copies `bridge/` into `~/.pi/agent`, and
+then `/reload` loads that copy. A running pi keeps the copy it loaded at startup,
+and `/reload` reads the installed file rather than the repo, so skipping the
+install makes a reload look like it did nothing.
 
 Reload **the pane that owns the bridge**, which is the one whose status line
 shows `!!!PI-Remote connected!!!`. The lease is what names it:
