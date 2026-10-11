@@ -290,18 +290,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var quarantinedData by mutableStateOf(false)
         private set
 
-    init {
-        if (!PiRemoteApp.startupSafeMode) {
-            pins.addAll(runCatching { pinsStore.load() }.getOrElse { emptyList() })
-            // The pinned session's transcript goes up from the cache before the
-            // bridge is asked for anything, so a phone that cannot reach it still
-            // shows the record it saved instead of an empty screen.
-            safeLaunch { restoreCache(store.sessionId.takeIf { it.isNotBlank() }) }
-        }
-        lastCrash = crashLog.lastCrash()
-        quarantinedData = pinsStore.hasQuarantined() || transcriptStore.hasQuarantined()
-    }
-
+    // Kotlin initialises properties in declaration order, and reading a
+    // mutableStateOf property through its delegate throws while that delegate is
+    // still null. So nothing the init block runs inline may read state declared
+    // after it. These three are the state the startup restore reads, so they are
+    // declared above the init as well as the restore itself being posted below.
+    /** The transcript on screen, in the order it arrived. */
     val messages = mutableStateListOf<ChatMessage>()
 
     /**
@@ -311,6 +305,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      */
     var showingSavedCopy by mutableStateOf(false)
         private set
+
+    /**
+     * The session this app is pinned to. Requests carry it, so the bridge
+     * refuses one that arrives after the bridge changed hands, and a restart
+     * reads it back from [SettingsStore] instead of adopting whatever serves.
+     */
+    var attachedSessionId by mutableStateOf(store.sessionId.takeIf { it.isNotBlank() })
+        private set
+
+    init {
+        if (!PiRemoteApp.startupSafeMode) {
+            pins.addAll(runCatching { pinsStore.load() }.getOrElse { emptyList() })
+            // The pinned session's transcript goes up from the cache before the
+            // bridge is asked for anything, so a phone that cannot reach it still
+            // shows the record it saved instead of an empty screen. The start is
+            // posted rather than launched here: viewModelScope is
+            // Dispatchers.Main.immediate, so a launch from the constructor would
+            // run the body inline, before the rest of the class exists. Posting
+            // moves it past the end of construction, so a later declaration order
+            // cannot bring the crash back.
+            main.post { safeLaunch { restoreCache(store.sessionId.takeIf { it.isNotBlank() }) } }
+        }
+        lastCrash = crashLog.lastCrash()
+        quarantinedData = pinsStore.hasQuarantined() || transcriptStore.hasQuarantined()
+    }
 
     /** Composer text. Lives here so dictation and the UI share one source. */
     var draft by mutableStateOf("")
@@ -495,14 +514,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * palette, never on the screen at rest, so nothing shouts unasked.
      */
     var commandsNote by mutableStateOf<String?>(null)
-        private set
-
-    /**
-     * The session this app is pinned to. Requests carry it, so the bridge
-     * refuses one that arrives after the bridge changed hands, and a restart
-     * reads it back from [SettingsStore] instead of adopting whatever serves.
-     */
-    var attachedSessionId by mutableStateOf(store.sessionId.takeIf { it.isNotBlank() })
         private set
 
     /**
