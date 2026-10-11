@@ -3,63 +3,132 @@
 
 A palette claim is only a claim until it is measured, and the raised secondary
 and error roles plus the ten update-pill pairs are exactly the ones the review
-found failing. The hexes are recomputed here from the same values AnswerStyle.kt
-paints with, so a later edit that undoes the raise fails the check instead of
-shipping quietly. The method is WCAG 2.1 sRGB relative luminance: the channels
-are linearised, weighted into a luminance, and compared as
-(lighter + 0.05) / (darker + 0.05). AA is 4.5:1, and every pair here is small
-text, so the large-text exemption does not apply.
+found failing. The values are read out of AnswerStyle.kt, the file that paints
+with them, so an edit there that undoes the raise fails this check instead of
+shipping quietly; a copy kept here would drift and turn this into a report. The
+method is WCAG 2.1 sRGB relative luminance: the channels are linearised,
+weighted into a luminance, and compared as (lighter + 0.05) / (darker + 0.05).
+AA is 4.5:1, and every pair here is small text, so the large-text exemption does
+not apply.
 """
 
+import re
 import sys
+from pathlib import Path
 
-# The scheme values, copied from AnswerStyle.kt. A change there is a change
-# here, which is what makes this a check rather than a report.
-SCHEMES = {
-    "Midnight": {"background": "#070D18", "surface": "#0B1422", "surfaceVariant": "#121926"},
-    "Indigo": {"background": "#080D16", "surface": "#0E1420", "surfaceVariant": "#151A23"},
-    "Amber": {"background": "#150F0A", "surface": "#1E1610", "surfaceVariant": "#201C18"},
-    "Forest": {"background": "#0A1510", "surface": "#101E18", "surfaceVariant": "#18201D"},
-    "Light": {"background": "#F6F7FA", "surface": "#F6F7FA", "surfaceVariant": "#F1F3F7"},
-}
+SOURCE = (
+    Path(__file__).resolve().parent.parent
+    / "app/src/main/java/com/maverock24/pimobile/ui/AnswerStyle.kt"
+)
 
-# The two update pills. A pill is the fill at 16% alpha over the scheme's
-# surface, with an explicit text colour; amber and green are the fills, and the
-# light scheme needs a darker text because amber on its pale surface is 1.71:1.
-AMBER = "#F0A83C"
-GREEN = "#46C97E"
-
-# (scheme, label, fg, tint, base, alpha, required). fg is the text, tint is the
-# fill a pill's background is composited from (None means the pair is painted
-# opaque), base is the surface the tint goes over, and alpha is the tint's.
-# required rows must clear AA; the flag is carried so a pair that is knowingly
-# exempt can still be printed without failing the run.
-ROWS = [
-    # The four roles D4 raises: onSurfaceVariant and error, each on the two
-    # surfaces the app paints them over.
-    ("Midnight", "onSurfaceVariant on background", "#7E94A9", None, "#070D18", 1.0, True),
-    ("Midnight", "onSurfaceVariant on surfaceVariant", "#7E94A9", None, "#121926", 1.0, True),
-    ("Midnight", "error on background", "#E35F5F", None, "#070D18", 1.0, True),
-    ("Midnight", "error on surfaceVariant", "#E35F5F", None, "#121926", 1.0, True),
-    ("Indigo", "onSurfaceVariant on background", "#7E8CA9", None, "#080D16", 1.0, True),
-    ("Indigo", "onSurfaceVariant on surfaceVariant", "#7E8CA9", None, "#151A23", 1.0, True),
-    ("Indigo", "error on background", "#E35F5F", None, "#080D16", 1.0, True),
-    ("Indigo", "error on surfaceVariant", "#E35F5F", None, "#151A23", 1.0, True),
-    # The ten pill pairs, one available and one up to date per scheme. The four
-    # dark schemes share the pair; only Light moves off the fill as its text.
-    ("Midnight", "available pill", AMBER, AMBER, "#0B1422", 0.16, True),
-    ("Midnight", "up to date pill", GREEN, GREEN, "#0B1422", 0.16, True),
-    ("Indigo", "available pill", AMBER, AMBER, "#0E1420", 0.16, True),
-    ("Indigo", "up to date pill", GREEN, GREEN, "#0E1420", 0.16, True),
-    ("Amber", "available pill", AMBER, AMBER, "#1E1610", 0.16, True),
-    ("Amber", "up to date pill", GREEN, GREEN, "#1E1610", 0.16, True),
-    ("Forest", "available pill", AMBER, AMBER, "#101E18", 0.16, True),
-    ("Forest", "up to date pill", GREEN, GREEN, "#101E18", 0.16, True),
-    ("Light", "available pill", "#6E4400", AMBER, "#F6F7FA", 0.16, True),
-    ("Light", "up to date pill", "#0F6234", GREEN, "#F6F7FA", 0.16, True),
+# The raised role pairs: which role, and the surface its colour lands on. D4
+# scopes the raise to Midnight and Indigo; Amber, Forest and Light keep their
+# own secondary and error, whose remaining miss is a recorded limitation.
+RAISED = [
+    ("Midnight", "onSurfaceVariant", "background"),
+    ("Midnight", "onSurfaceVariant", "surfaceVariant"),
+    ("Midnight", "error", "background"),
+    ("Midnight", "error", "surfaceVariant"),
+    ("Indigo", "onSurfaceVariant", "background"),
+    ("Indigo", "onSurfaceVariant", "surfaceVariant"),
+    ("Indigo", "error", "background"),
+    ("Indigo", "error", "surfaceVariant"),
 ]
 
+# Every scheme the pill rows cover, in the order AnswerStyle declares them. The
+# four dark schemes share a pair; only Light takes the light pair.
+SCHEME_ORDER = ["Midnight", "Indigo", "Amber", "Forest", "Light"]
+
+# Every scheme must state these roles, or the check has nothing to measure.
+ROLES = ("background", "surface", "surfaceVariant", "onSurfaceVariant", "error")
+
+# A pill paints its label on its fill at this alpha over the scheme's surface.
+PILL_ALPHA = 0.16
+
 AA = 4.5
+
+
+def call_body(source: str, open_paren: int) -> str:
+    """The text between the '(' at open_paren and the ')' that closes it."""
+    depth = 0
+    for index in range(open_paren, len(source)):
+        if source[index] == "(":
+            depth += 1
+        elif source[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return source[open_paren + 1 : index]
+    raise ValueError("unbalanced parentheses: the source is not the file expected")
+
+
+def to_hex(compressed: str) -> str:
+    """The 8-digit ARGB literal Compose writes, as #RRGGBB with alpha dropped."""
+    return "#" + compressed[-6:].upper()
+
+
+def roles_in(body: str) -> dict:
+    """The named colour roles a colorScheme(...) call states, as hex strings."""
+    return {
+        match.group(1): to_hex(match.group(2))
+        for match in re.finditer(r"(\w+)\s*=\s*Color\(0x([0-9A-Fa-f]{8})\)", body)
+    }
+
+
+def parse_palettes(source: str) -> dict:
+    """Each theme's roles, keyed by the label its AnswerTheme carries."""
+    palettes = {}
+    for match in re.finditer(r"\bdarkColorScheme\s*\(", source):
+        names = re.findall(r"val\s+(\w+)\s*=\s*AnswerTheme\s*\(", source[: match.start()])
+        if not names:
+            raise ValueError("a darkColorScheme is not inside an AnswerTheme")
+        palettes[names[-1].capitalize()] = roles_in(call_body(source, match.end() - 1))
+
+    light = re.search(r"\blightColorScheme\s*\(", source)
+    if light is None:
+        raise ValueError("no lightColorScheme in AnswerStyle.kt")
+    palettes["Light"] = roles_in(call_body(source, light.end() - 1))
+
+    for scheme, roles in palettes.items():
+        missing = [role for role in ROLES if role not in roles]
+        if missing:
+            raise ValueError(f"{scheme} declares no {', '.join(missing)}")
+    return palettes
+
+
+def parse_pills(source: str, name: str) -> dict:
+    """The two PillPairs of a PillColors literal: fill and label, by meaning."""
+    match = re.search(rf"val\s+{name}\s*=\s*PillColors\s*\(", source)
+    if match is None:
+        raise ValueError(f"{name} is not declared in AnswerStyle.kt")
+    pairs = re.findall(
+        r"PillPair\(\s*Color\(0x([0-9A-Fa-f]{8})\)\s*,\s*Color\(0x([0-9A-Fa-f]{8})\)\s*\)",
+        call_body(source, match.end() - 1),
+    )
+    if len(pairs) != 2:
+        raise ValueError(f"{name} does not hold two PillPairs")
+    return {
+        "available": {"fill": to_hex(pairs[0][0]), "text": to_hex(pairs[0][1])},
+        "upToDate": {"fill": to_hex(pairs[1][0]), "text": to_hex(pairs[1][1])},
+    }
+
+
+def build_rows(source: str) -> list:
+    """(scheme, label, fg, tint, base, alpha, required) for every pair checked."""
+    palettes = parse_palettes(source)
+    dark_pills = parse_pills(source, "darkPills")
+    light_pills = parse_pills(source, "lightPills")
+
+    table = [
+        (scheme, f"{role} on {over}", palettes[scheme][role], None, palettes[scheme][over], 1.0, True)
+        for scheme, role, over in RAISED
+    ]
+    for scheme in SCHEME_ORDER:
+        pills = light_pills if scheme == "Light" else dark_pills
+        for label, pair in (("available pill", pills["available"]), ("up to date pill", pills["upToDate"])):
+            table.append(
+                (scheme, label, pair["text"], pair["fill"], palettes[scheme]["surface"], PILL_ALPHA, True)
+            )
+    return table
 
 
 def channels(hex_colour: str) -> tuple:
@@ -94,8 +163,9 @@ def as_hex(rgb: tuple) -> str:
 
 
 def main() -> int:
+    rows = build_rows(SOURCE.read_text(encoding="utf-8"))
     failures = []
-    for scheme, label, fg, tint, base, alpha, required in ROWS:
+    for scheme, label, fg, tint, base, alpha, required in rows:
         background = composite(tint, alpha, base) if tint is not None else base
         ratio = contrast(fg, background)
         if required and ratio < AA:
@@ -111,7 +181,7 @@ def main() -> int:
             print(f"  {scheme} {label}: {ratio:.2f}:1", file=sys.stderr)
         return 1
 
-    print(f"\n{len(ROWS)} pairs, all at or above {AA}:1")
+    print(f"\n{len(rows)} pairs, all at or above {AA}:1")
     return 0
 
 
