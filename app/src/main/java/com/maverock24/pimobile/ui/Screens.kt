@@ -22,12 +22,14 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -350,6 +352,10 @@ fun ChatScreen(
         // Transparent so the sky behind it is what shows, rather than the theme's
         // background colour painted over it.
         containerColor = Color.Transparent,
+        // Edge-to-edge draws the content under the status and navigation bars;
+        // safe drawing is what keeps the composer off the gesture bar and the
+        // app bar out of the status bar.
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 // The working accent line rides on the bar's own top edge and the
@@ -1931,6 +1937,9 @@ fun SettingsScreen(
         // Transparent for the same reason as the chat screen: the sky is drawn
         // once, behind everything, and this must not paint over it.
         containerColor = Color.Transparent,
+        // Same safe-drawing inset as the chat screen: the settings list must not
+        // run under the gesture bar either.
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
