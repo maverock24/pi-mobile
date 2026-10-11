@@ -470,6 +470,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   `height(...)` / `size(...)` sites that repeat; leave one-off sizes alone.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug`
 - **Blocked by**: T8.
+- **Status**: done (6a663c1)
 - **Commit subject**: Name the repeated spacing and sizing tokens
 
 ### T30. The screens use the tokens
@@ -497,6 +498,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   use it in `PiRemoteTheme` (`Screens.kt:120`) in T32 so the light/dark choice has one definition.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug`
 - **Blocked by**: T29.
+- **Status**: done (bb8da7f)
 - **Commit subject**: Move the update pill colours onto AnswerStyle
 
 ### T32. The version pills paint from the tokens
@@ -528,6 +530,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   advancing via `withFrameNanos` (`:350`). `LocalMotionDurationScale` is absent in ui 1.7.5 (Q16).
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'ANIMATOR_DURATION_SCALE' app/src/main/java/com/maverock24/pimobile/ui/AnswerView.kt`
 - **Blocked by**: T22.
+- **Status**: done (f1daad6)
 - **Commit subject**: Hold the working sweep when animations are off
 
 ### T34. Edge to edge
@@ -538,6 +541,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   `windowSoftInputMode="adjustResize"`; the insets handle the bars.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'enableEdgeToEdge' app/src/main/java/com/maverock24/pimobile/MainActivity.kt`
 - **Blocked by**: T17, T25.
+- **Status**: done (de7fcb5)
 - **Commit subject**: Go edge to edge
 
 ### T35. Both scaffolds pad for the safe drawing insets
@@ -548,6 +552,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   `contentWindowInsets = WindowInsets.safeDrawing`.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'safeDrawing' app/src/main/java/com/maverock24/pimobile/ui/Screens.kt`
 - **Blocked by**: T17.
+- **Status**: done (b2fce1f)
 - **Commit subject**: Pad both scaffolds with the safe drawing insets
 
 ### T36. The launcher gets an adaptive icon
@@ -564,6 +569,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   separate monochrome drawable.
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && grep -q 'android:icon' app/src/main/AndroidManifest.xml`
 - **Blocked by**: T11.
+- **Status**: done (3418049)
 - **Commit subject**: Give the launcher an adaptive icon
 
 ### T37. Press scale on the four controls that lack it
@@ -588,6 +594,7 @@ Line numbers cite `e976063`. Symbols are the stable handle if a line has moved.
   choices).
 - **Check**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --offline assembleDebug && ! grep -rq 'choices-latest.json' app/src/main`
 - **Blocked by**: T31.
+- **Status**: done (ce0e09a)
 - **Commit subject**: Point AnswerStyle at the lab file that exists
 
 ### T39. The production record and the review are corrected
@@ -728,6 +735,7 @@ into the wave named on each, so a finding cannot be lost by being only in a repo
 - **Change**: the script hardcodes the hex values, so its docstring's claim that a change here follows a change there is false, and an `AnswerStyle.kt` regression goes unnoticed. Parse the palettes out of `AnswerStyle.kt` and check what is actually declared.
 - **Check**: `python3 scripts/luminance.py` exits 0; then set one palette hex in `AnswerStyle.kt` to a failing value, confirm exit 1, and restore it.
 - **Blocked by**: T38.
+- **Status**: done (221516a)
 - **Commit subject**: `Read the palette out of the source it checks`
 
 ### T21a. Make the app bar carry its two lines at a large font scale
