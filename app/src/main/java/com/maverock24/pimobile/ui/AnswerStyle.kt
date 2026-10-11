@@ -1,8 +1,10 @@
 package com.maverock24.pimobile.ui
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
@@ -27,6 +29,16 @@ import androidx.compose.ui.unit.sp
  */
 
 /**
+ * The fill and the label colour of one update pill. They are separate because the
+ * label is painted on the fill at 16% over the scheme's surface, and a fill pale
+ * enough to read as a chip is not always dark enough to read as its own text.
+ */
+data class PillPair(val fill: Color, val text: Color)
+
+/** The two update pills, by meaning: an update is available, or it is up to date. */
+data class PillColors(val available: PillPair, val upToDate: PillPair)
+
+/**
  * One named look for the dark side of the app: the colour scheme it paints
  * with, the night sky drawn behind it, and the name the settings picker shows.
  * Light mode ignores every field of it.
@@ -34,6 +46,7 @@ import androidx.compose.ui.unit.sp
 data class AnswerTheme(
     val label: String,
     val scheme: ColorScheme,
+    val pills: PillColors,
     val skyTop: Color,
     val skyMid: Color,
     val skyBottom: Color,
@@ -174,6 +187,26 @@ object AnswerStyle {
     private val accentLight = Color(0xFF3562D6)
 
     /**
+     * The update pills under every dark palette. Each fill already reads as its
+     * own label on the 16% tint, so fill and text are the same amber or green,
+     * exactly as the version card painted them before they had a name.
+     */
+    val darkPills = PillColors(
+        PillPair(Color(0xFFF0A83C), Color(0xFFF0A83C)),
+        PillPair(Color(0xFF46C97E), Color(0xFF46C97E)),
+    )
+
+    /**
+     * The light scheme's pills. Its surface is pale, so the amber and green fill
+     * would sit near 1.7:1 as a label; each label takes a darker shade of its own
+     * hue while the fill stays the same, which is what makes the pair readable.
+     */
+    val lightPills = PillColors(
+        PillPair(Color(0xFFF0A83C), Color(0xFF6E4400)),
+        PillPair(Color(0xFF46C97E), Color(0xFF0F6234)),
+    )
+
+    /**
      * Fills every colour role Material3 can fall back on from the handful a theme
      * states, so nothing on screen paints with Material's purple baseline. The
      * baseline is what a plain notice bar, a tonal button and a text field would
@@ -258,6 +291,7 @@ object AnswerStyle {
                 error = Color(0xFFE35F5F),
             ),
         ),
+        pills = darkPills,
         skyTop = Color(0xFF091120),
         skyMid = Color(0xFF050B14),
         skyBottom = Color(0xFF040911),
@@ -283,6 +317,7 @@ object AnswerStyle {
                 error = Color(0xFFE35F5F),
             ),
         ),
+        pills = darkPills,
         skyTop = Color(0xFF0B111E),
         skyMid = Color(0xFF060B13),
         skyBottom = Color(0xFF050910),
@@ -308,6 +343,7 @@ object AnswerStyle {
                 error = Color(0xFFDD3C3C),
             ),
         ),
+        pills = darkPills,
         skyTop = Color(0xFF1C140D),
         skyMid = Color(0xFF120C08),
         skyBottom = Color(0xFF0F0906),
@@ -333,6 +369,7 @@ object AnswerStyle {
                 error = Color(0xFFDD3C3C),
             ),
         ),
+        pills = darkPills,
         skyTop = Color(0xFF0D1C16),
         skyMid = Color(0xFF08120E),
         skyBottom = Color(0xFF060F0B),
@@ -356,6 +393,20 @@ object AnswerStyle {
 
     /** The palette for a stored name; anything unknown falls back to Midnight. */
     fun theme(name: String): AnswerTheme = themes[name] ?: midnight
+
+    /**
+     * Whether a stored appearance preference means the dark side.
+     *
+     * This is the one test for it: the theme composable asks it to choose the
+     * scheme, and the settings screen asks it to choose the pills, so the two
+     * cannot disagree about which side of the app is showing.
+     */
+    @Composable
+    fun isDarkMode(mode: String): Boolean = when (mode) {
+        "dark" -> true
+        "light" -> false
+        else -> isSystemInDarkTheme()
+    }
 
     val lightScheme = deriveScheme(
         lightColorScheme(
