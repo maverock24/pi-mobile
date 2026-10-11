@@ -47,3 +47,22 @@ printf 'git revision %s\n' "$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || 
 if [[ -n "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ]]; then
 	printf 'warning: the repo has uncommitted changes; the revision above is not what was copied\n' >&2
 fi
+
+# /pair renders the QR with qrencode and shows it with an image viewer, and
+# nothing checked for either until the first pairing failed at run time. Report
+# what is missing here, while the human is installing, instead of leaving it to
+# a /pair that cannot draw a QR. This only reports; installing them is the
+# distro's job, and neither is wanted on a headless box that never pairs.
+if ! command -v qrencode >/dev/null 2>&1; then
+	printf 'note: qrencode is missing; /pair cannot build a QR until it is installed\n' >&2
+fi
+viewer=""
+for candidate in eog gwenview feh xdg-open; do
+	if command -v "$candidate" >/dev/null 2>&1; then
+		viewer="$candidate"
+		break
+	fi
+done
+if [[ -z "$viewer" ]]; then
+	printf 'note: no image viewer (tried eog, gwenview, feh, xdg-open); /pair still writes the PNG and you open it yourself\n' >&2
+fi

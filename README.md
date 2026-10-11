@@ -27,10 +27,10 @@ Pixel/phone ──Tailscale (WireGuard)──► laptop:<laptop>.<tailnet>.ts.ne
 2. Run `/reload` in the pane you want the phone to control, or restart pi. The
    extension prints `pi-remote listening on <ip>:8787`.
 
-3. Read the token (it is generated on first start):
+3. Read a device token (each phone is issued its own when it pairs):
 
    ```
-   cat ~/.config/pi-remote/token
+   cat ~/.config/pi-remote/tokens.json
    ```
 
    Endpoints, config knobs and the single-owner rule are documented in the file
@@ -62,7 +62,7 @@ Pairing fills both fields. Doing it by hand in Settings means:
 
 - Bridge URL: `http://<laptop>.<tailnet>.ts.net:8787` (the MagicDNS name — a raw tailnet
   IP is refused, see the note on cleartext below)
-- Token: the value from `~/.config/pi-remote/token`
+- Token: one device's token from `~/.config/pi-remote/tokens.json`
 
 A 401 in the status line means the token is wrong. A timeout means Tailscale is
 not connected on the phone or the bridge is not running.

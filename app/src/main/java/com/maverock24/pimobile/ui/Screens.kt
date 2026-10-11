@@ -2046,7 +2046,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                LaptopCommand(command = "cat ~/.config/pi-remote/token")
+                LaptopCommand(command = "cat ~/.config/pi-remote/tokens.json")
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val label = MaterialTheme.typography.bodyLarge
                     val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)

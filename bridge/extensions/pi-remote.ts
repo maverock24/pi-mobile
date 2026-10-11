@@ -1695,6 +1695,12 @@ export default function (pi: ExtensionAPI) {
 		// A new session clears every extension status, so the footer has to be
 		// re-armed here or a phone that is still attached goes unmentioned.
 		updateStatus();
+		// First run: no device has a token yet, so there is nothing to wait for.
+		// Mint a pairing code at boot instead of making the human run `/pair`.
+		// Once one token exists this stops.
+		if (tokens().length === 0) {
+			void autoPairFirstPhone(ctx);
+		}
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -1938,11 +1944,142 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	/**
+	 * Bind the bridge if it is not serving yet, taking the address over from a
+	 * live owner the way `/pi-remote` does, so pairing works from any pane.
+	 * Returns false after saying why the bind did not land.
+	 */
+	async function ensureServingForPair(ctx: ExtensionContext): Promise<boolean> {
+		const host = configuredHost();
+		const port = configuredPort();
+		let tookOverFrom: number | undefined;
+		if (!server) {
+			// Pairing bootstraps the bridge: there is no token yet, and the tick
+			// deliberately does nothing until one exists.
+			startTicking();
+			const lease = readLease();
+			if (
+				lease &&
+				lease.pid !== process.pid &&
+				leaseOwnerAlive(lease) &&
+				!leaseIsStale(lease, Date.now(), staleMs)
+			) {
+				tookOverFrom = lease.pid;
+			}
+			const result = await takeoverAndBind(host, port, TAKEOVER_WINDOW_MS);
+			if (!result.ok) {
+				const holder = holderFor(port, readLease());
+				ctx.ui.notify(
+					holder
+						? `${host}:${port} is held by pid ${holder.pid} (${holder.comm}), not a pi session`
+						: `could not bind ${host}:${port}`,
+					"warning",
+				);
+				return false;
+			}
+		}
+		if (!server || !boundAddress) {
+			ctx.ui.notify(`could not bind ${host}:${port}`, "warning");
+			return false;
+		}
+		// Rule 8 and the command table: a phone cannot reach loopback, so pairing
+		// refuses there even though the bridge itself keeps serving.
+		if (boundAddress.host === FALLBACK_HOST) {
+			ctx.ui.notify("the phone cannot reach 127.0.0.1", "warning");
+			return false;
+		}
+		if (tookOverFrom !== undefined) {
+			ctx.ui.notify(`took the bridge over from pid ${tookOverFrom}`, "info");
+		}
+		return true;
+	}
+
+	/**
+	 * Mint a one-time code and put the pairing QR in front of the human. The code,
+	 * its TTL, its single spend and the token it buys are the same however pairing
+	 * was started, so `/pair` and the zero-token bootstrap both come through here.
+	 */
+	function showPairingCode(ctx: ExtensionContext, label: string): void {
+		const bound = boundAddress;
+		if (!bound) return;
+		const { code, expiresAt } = mintPairCode(label);
+		const pair = pairHost();
+		// The QR must name the bound address, not the configured one; the MagicDNS
+		// name is preferred when Tailscale can be asked.
+		const qrHost = pair.source === "fallback" ? bound.host : pair.host;
+		const baseUrl = `http://${qrHost}:${bound.port}`;
+		const payload = `pi-remote://pair?v=1&u=${Buffer.from(baseUrl, "utf8").toString("base64url")}&c=${code}`;
+		const qr = spawnSync("qrencode", ["-t", "UTF8", "-m", "1", "-o", "-"], {
+			input: payload,
+			encoding: "utf8",
+		});
+		const lines = (qr.stdout || "").replace(/\n+$/, "").split("\n").filter((line) => line.length > 0);
+		const image = "/tmp/pi-remote-pair.png";
+		const png = spawnSync("qrencode", ["-s", "8", "-m", "2", "-o", image], {
+			input: payload,
+			encoding: "utf8",
+		});
+		const pngShown = !png.error && png.status === 0;
+		const opened = pngShown ? openImage(image) : { ok: false, viewer: "" };
+		// pi caps widget content at MAX_WIDGET_LINES (10) and appends
+		// "... (widget truncated)" past that. A QR for this payload needs ~23 text
+		// lines, so it only belongs in the widget when it fits beside the caption.
+		const caption = [
+			`pairing "${label}" · code valid until ${expiresAt} · single use`,
+			opened.ok
+				? `scan the QR in the ${opened.viewer} window · file: ${image}`
+				: `open ${image} on this screen to scan it`,
+		];
+		const terminalQr = lines.length > 0 && lines.length + caption.length <= 10;
+		ctx.ui.setWidget(PAIR_WIDGET_ID, terminalQr ? [...lines, "", ...caption] : caption);
+		setTimeout(() => ctx.ui.setWidget(PAIR_WIDGET_ID, undefined), PAIR_TTL_MS + 1000).unref?.();
+		audit({
+			event: "pair_shown",
+			label,
+			host: qrHost,
+			hostSource: pair.source,
+			port: bound.port,
+			terminalQr,
+			png: pngShown,
+			viewer: opened.viewer || null,
+		});
+		const fallbackNote = pair.source === "fallback" ? " · raw address: the app may refuse cleartext" : "";
+		ctx.ui.notify(
+			pngShown
+				? opened.ok
+					? `pi-remote: QR for "${label}" is in the ${opened.viewer} window (valid until ${expiresAt})${fallbackNote}`
+					: `pi-remote: QR written to ${image} — open it yourself to scan (valid until ${expiresAt})${fallbackNote}`
+				: "pi-remote: qrencode unavailable — install it, or pair manually with a token from pi-remote-token",
+			pngShown ? "info" : "warning",
+		);
+	}
+
+	/**
+	 * Put a code in front of the human on first run, so the first phone does not
+	 * wait for `/pair`. With no device tokens there is nothing for the bridge to
+	 * authenticate, and a code has to exist before the first phone can be trusted;
+	 * this mints the same code, with the same TTL and single spend, at boot. It
+	 * does nothing once a token exists, and never takes the address from a live pi
+	 * session, which only an explicit `/pair` or `/pi-remote` may do.
+	 */
+	async function autoPairFirstPhone(ctx: ExtensionContext): Promise<void> {
+		if (process.env.PI_REMOTE_DISABLE === "1" || !canServe()) return;
+		const lease = readLease();
+		if (
+			lease &&
+			lease.pid !== process.pid &&
+			leaseOwnerAlive(lease) &&
+			!leaseIsStale(lease, Date.now(), staleMs)
+		) {
+			return;
+		}
+		if (!(await ensureServingForPair(ctx))) return;
+		showPairingCode(ctx, "phone");
+	}
+
 	pi.registerCommand("pair", {
 		description: "pair the phone: show a QR carrying a one-time code (2 min, single use)",
 		handler: async (args, ctx) => {
-			const host = configuredHost();
-			const port = configuredPort();
 			const label = (args.trim() || "phone").slice(0, 40);
 			if (process.env.PI_REMOTE_DISABLE === "1") {
 				ctx.ui.notify("bridge disabled by PI_REMOTE_DISABLE", "warning");
@@ -1952,98 +2089,10 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("non-interactive session · set PI_REMOTE_ALLOW_NON_TUI=1 to serve", "warning");
 				return;
 			}
-
 			// `/pair` runs the same takeover as `/pi-remote` before minting a code, so
 			// pairing from a second pane does not fail with "run /pair there".
-			let tookOverFrom: number | undefined;
-			if (!server) {
-				// Pairing bootstraps the bridge: there is no token yet, and the tick
-				// deliberately does nothing until one exists.
-				startTicking();
-				const lease = readLease();
-				if (
-					lease &&
-					lease.pid !== process.pid &&
-					leaseOwnerAlive(lease) &&
-					!leaseIsStale(lease, Date.now(), staleMs)
-				) {
-					tookOverFrom = lease.pid;
-				}
-				const result = await takeoverAndBind(host, port, TAKEOVER_WINDOW_MS);
-				if (!result.ok) {
-					const holder = holderFor(port, readLease());
-					ctx.ui.notify(
-						holder
-							? `${host}:${port} is held by pid ${holder.pid} (${holder.comm}), not a pi session`
-							: `could not bind ${host}:${port}`,
-						"warning",
-					);
-					return;
-				}
-			}
-			if (!server || !boundAddress) {
-				ctx.ui.notify(`could not bind ${host}:${port}`, "warning");
-				return;
-			}
-			// Rule 8 and the command table: a phone cannot reach loopback, so pairing
-			// refuses there even though the bridge itself keeps serving.
-			if (boundAddress.host === FALLBACK_HOST) {
-				ctx.ui.notify("the phone cannot reach 127.0.0.1", "warning");
-				return;
-			}
-			if (tookOverFrom !== undefined) {
-				ctx.ui.notify(`took the bridge over from pid ${tookOverFrom}`, "info");
-			}
-			const { code, expiresAt } = mintPairCode(label);
-			const pair = pairHost();
-			// The QR must name the bound address, not the configured one; the MagicDNS
-			// name is preferred when Tailscale can be asked.
-			const qrHost = pair.source === "fallback" ? boundAddress.host : pair.host;
-			const baseUrl = `http://${qrHost}:${boundAddress.port}`;
-			const payload = `pi-remote://pair?v=1&u=${Buffer.from(baseUrl, "utf8").toString("base64url")}&c=${code}`;
-			const qr = spawnSync("qrencode", ["-t", "UTF8", "-m", "1", "-o", "-"], {
-				input: payload,
-				encoding: "utf8",
-			});
-			const lines = (qr.stdout || "").replace(/\n+$/, "").split("\n").filter((line) => line.length > 0);
-			const image = "/tmp/pi-remote-pair.png";
-			const png = spawnSync("qrencode", ["-s", "8", "-m", "2", "-o", image], {
-				input: payload,
-				encoding: "utf8",
-			});
-			const pngShown = !png.error && png.status === 0;
-			const opened = pngShown ? openImage(image) : { ok: false, viewer: "" };
-			// pi caps widget content at MAX_WIDGET_LINES (10) and appends
-			// "... (widget truncated)" past that. A QR for this payload needs ~23 text
-			// lines, so it only belongs in the widget when it fits beside the caption.
-			const caption = [
-				`pairing "${label}" · code valid until ${expiresAt} · single use`,
-				opened.ok
-					? `scan the QR in the ${opened.viewer} window · file: ${image}`
-					: `open ${image} on this screen to scan it`,
-			];
-			const terminalQr = lines.length > 0 && lines.length + caption.length <= 10;
-			ctx.ui.setWidget(PAIR_WIDGET_ID, terminalQr ? [...lines, "", ...caption] : caption);
-			setTimeout(() => ctx.ui.setWidget(PAIR_WIDGET_ID, undefined), PAIR_TTL_MS + 1000).unref?.();
-			audit({
-				event: "pair_shown",
-				label,
-				host: qrHost,
-				hostSource: pair.source,
-				port: boundAddress.port,
-				terminalQr,
-				png: pngShown,
-				viewer: opened.viewer || null,
-			});
-			const fallbackNote = pair.source === "fallback" ? " · raw address: the app may refuse cleartext" : "";
-			ctx.ui.notify(
-				pngShown
-					? opened.ok
-						? `pi-remote: QR for "${label}" is in the ${opened.viewer} window (valid until ${expiresAt})${fallbackNote}`
-						: `pi-remote: QR written to ${image} — open it yourself to scan (valid until ${expiresAt})${fallbackNote}`
-					: "pi-remote: qrencode unavailable — install it, or pair manually with a token from pi-remote-token",
-				pngShown ? "info" : "warning",
-			);
+			if (!(await ensureServingForPair(ctx))) return;
+			showPairingCode(ctx, label);
 		},
 	});
 }
