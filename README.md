@@ -1,13 +1,102 @@
 # Pi Remote
 
-Android client for a pi coding session running on your own machine. Prompt pi from
-your phone, dictate instead of typing, follow the agent's output live, and stop a
-run that is going the wrong way.
+## Quickstart
 
-The phone talks to a small HTTP + SSE bridge that the `pi-remote` extension runs
-*inside* the pi process, so the app drives the same session you have in front of you
-on the desktop. Everything travels over Tailscale: nothing is exposed to the
-internet, and no port is opened on the LAN.
+Android client for a pi coding session running on your own machine. Prompt pi from your
+phone, dictate instead of typing, follow the agent's output live, and stop a run that is
+going the wrong way.
+
+This is the whole path from a fresh machine to a working transcript. You do not build the
+app: a signed APK is published on every push, so the Android SDK, the JDK, the Gradle build
+and the release signing key never come up. Building is only for changing the app, and it is
+further down under [Building the app](#building-the-app-optional).
+
+### What you need
+
+- **pi**, the coding agent the phone drives. The bridge is a pi extension, so there is
+  nothing to talk to without it. Install it with
+  `npm install -g @earendil-works/pi-coding-agent`.
+- **Node.js**, version 22.19.0 or newer. pi runs on Node, and the install above needs it.
+- **Tailscale**, installed and signed in on both the laptop and the phone, on the same
+  tailnet, with MagicDNS enabled. The bridge binds only to your tailnet and the phone
+  reaches it only over Tailscale. MagicDNS matters because the app asks for the laptop by
+  name, `<laptop>.<tailnet>.ts.net`, and not by raw address.
+- **`qrencode`** and an image viewer (`eog`, `gwenview`, `feh`, or `xdg-open`). `/pair`
+  draws the pairing QR with `qrencode` and shows it in the viewer. After copying the files,
+  `bridge/install.sh` names either one if it is missing.
+
+### 1. Install the bridge
+
+The bridge is three files under `~/.pi/agent`, and the extension imports the other two, so
+all of them have to land there. One script does it:
+
+```
+git clone https://github.com/maverock24/pi-mobile.git
+cd pi-mobile
+bridge/install.sh
+```
+
+It prints where each file went, the sha256 it wrote, and the git revision it came from.
+Read the notes at the end: they name anything missing for pairing.
+
+### 2. Start pi
+
+Point the bridge at this laptop's Tailscale address, then start pi:
+
+```
+export PI_REMOTE_HOST="$(tailscale ip -4)"
+pi
+```
+
+The built-in default for `PI_REMOTE_HOST` is the author's own tailnet address. That address
+does not exist on your machine, so without this line the bind falls back to `127.0.0.1` and
+the phone cannot reach it.
+
+The first time pi starts with no phone paired yet, the bridge mints a pairing code on its
+own and puts a QR in front of you, with no `/pair` needed. It shows in the terminal or in an
+image window, and it is valid for two minutes and single use. If it expires before you scan,
+run `/pair` to show a fresh one.
+
+The phone never asks you to type the laptop's address. When it pairs, the bridge fills the
+QR with the laptop's MagicDNS name, read from `tailscale status`, and the app adopts that
+address and its device token. `PI_REMOTE_HOST` is only about which interface the laptop
+listens on, not about anything you type on the phone.
+
+### 3. Install the app
+
+Download the signed APK from the latest release and open it to install (Android will ask
+you to allow installing from the browser):
+
+https://github.com/maverock24/pi-mobile/releases/latest
+
+### 4. Pair
+
+Open **Settings > Pairing** in the app, tap **Scan the pairing QR**, and point it at the QR
+from step 2. The app reads the address and the token out of the code and saves them. If the
+code expired or was already spent, run `/pair` for a new one.
+
+### It works when
+
+- the pi pane prints `pi-remote listening on <your-tailnet-ip>:8787`;
+- the app's title bar names the pi session's folder, the status line reads `thinking…` while
+  pi works, and the transcript fills with answers once you send a prompt;
+- `Settings > Connection` shows the bridge URL and token already filled in, with no 401 (bad
+  token) or timeout (Tailscale down, or bridge not running) in the status line.
+
+## Where to go next
+
+- The full pairing walkthrough, including the manual fallback, is under [Pairing](#pairing).
+- Why it is designed this way, and what the one unauthenticated endpoint trusts, is in
+  [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
+- If you want to simplify the flow further, the current assumptions and their costs are in
+  [`docs/PAIRING-REVIEW.md`](docs/PAIRING-REVIEW.md).
+
+## How it fits together
+
+The phone talks to a small HTTP + SSE bridge that the `pi-remote` extension runs *inside*
+the pi process, so the app drives the same session you have in front of you on the desktop.
+Everything travels over Tailscale: nothing is exposed to the internet, and no port is
+opened on the LAN.
 
 ```
 Pixel/phone ──Tailscale (WireGuard)──► laptop:<laptop>.<tailnet>.ts.net:8787
@@ -15,27 +104,6 @@ Pixel/phone ──Tailscale (WireGuard)──► laptop:<laptop>.<tailnet>.ts.ne
                                           ▼
                                       pi session (the live one, same process)
 ```
-
-## Laptop side
-
-1. Copy the extension into place (already installed on the reference machine):
-
-   ```
-   ~/.pi/agent/extensions/pi-remote.ts
-   ```
-
-2. Run `/reload` in the pane you want the phone to control, or restart pi. The
-   extension prints `pi-remote listening on <ip>:8787`.
-
-3. Read a device token (each phone is issued its own when it pairs):
-
-   ```
-   cat ~/.config/pi-remote/tokens.json
-   ```
-
-   Endpoints, config knobs and the single-owner rule are documented in the file
-   header. `/remote` shows status; `/remote claim` takes the bridge over from
-   another pane; `/remote release` gives it up.
 
 ## What the app shows
 
@@ -52,22 +120,7 @@ URLs in an answer are rendered as tappable links, because reading an answer on
 the phone usually ends with going to check the source. Bold and inline code are
 rendered too, and the whole answer is selectable for copying.
 
-## Phone side
-
-Install the APK from the latest release. The app ships **no** default bridge URL: the
-laptop's address reaches the phone only through the pairing QR (below), so it is not
-readable in the source or in any published APK.
-
-Pairing fills both fields. Doing it by hand in Settings means:
-
-- Bridge URL: `http://<laptop>.<tailnet>.ts.net:8787` (the MagicDNS name — a raw tailnet
-  IP is refused, see the note on cleartext below)
-- Token: one device's token from `~/.config/pi-remote/tokens.json`
-
-A 401 in the status line means the token is wrong. A timeout means Tailscale is
-not connected on the phone or the bridge is not running.
-
-### Dictation
+## Dictation
 
 Tap **Mic** and speak. Android's recogniser restarts itself after each pause, so
 you can dictate a long prompt in several breaths; finished phrases are appended to
@@ -75,6 +128,9 @@ the composer and partial words show above it. Nothing is sent until you tap
 **Send**, so you can fix a misheard word first.
 
 ## Pairing
+
+The quickstart pairs with the QR the bridge shows at startup. This section is the
+full walkthrough, including the manual paths, for when you need them.
 
 Run `/pair` in the pi session that owns the bridge. It writes a QR to
 `/tmp/pi-remote-pair.png`, opens that file in an image viewer, and mints a one-time code
@@ -104,9 +160,9 @@ the file path in the widget. The viewer is chosen in the order `eog`, `gwenview`
 to run as root. If no window appears, open `/tmp/pi-remote-pair.png` by hand.
 
 `/pair` refuses if another pi session holds the bridge port, and says which pid does. Only a
-process that really bound the port claims ownership in `owner.json`, so a second pi session
-cannot evict the one that is serving; run `/remote claim` in the session you want the phone
-to talk to.
+process that really bound the port writes a lease under `~/.config/pi-remote`, so a second pi
+session cannot evict the one that is serving; run `/remote claim` in the session you want the
+phone to talk to.
 
 The token is not in the QR. A QR is a screenshot waiting to happen, and a deep link lands in
 the camera history, so the code is what travels: single use, two minutes, minted per pairing.
@@ -114,7 +170,11 @@ The endpoint is the only unauthenticated route on the bridge; its guards are und
 `docs/THREAT-MODEL.md`.
 
 `Settings > Connection` still takes a base URL and token by hand. That is the fallback when
-the camera will not open a custom scheme, and the only way on builds older than v0.0.27.
+the camera will not open a custom scheme, and the only way on builds older than v0.0.27. The
+address is the MagicDNS name, `http://<laptop>.<tailnet>.ts.net:8787`; a raw tailnet IP is
+refused (see the note on cleartext below). The token is one device's entry from
+`~/.config/pi-remote/tokens.json`. A 401 in the status line means the token is wrong. A
+timeout means Tailscale is not connected on the phone or the bridge is not running.
 
 ## Updates
 
@@ -138,6 +198,34 @@ An optional second path exists if this repository ever goes private again: the b
 carries `GET /api/release/latest.json` and `GET /api/release/apk` behind the device
 token, fed by `pi-remote-release-sync`. The app does not use it today.
 
+## Building the app (optional)
+
+Only needed if you are changing the Android app. A normal setup downloads the published
+APK in the [Quickstart](#quickstart) instead and never touches any of this.
+
+What a local build needs, stated honestly:
+
+- **JDK 17 or newer.** CI uses Temurin 21. You do not install Gradle: the repo has the
+  wrapper, `./gradlew`.
+- **An Android SDK** (compileSdk 35). A clone has no `local.properties` (it is gitignored),
+  so point Gradle at the SDK with `ANDROID_HOME`, or create `local.properties` with
+  `sdk.dir=<path>`.
+- **A release signing key, which a clone does not have.** `assembleRelease` signs only when
+  four `ANDROID_*` environment variables are set; otherwise it produces an unsigned APK that
+  will not install as an update. The real keystore lives only in CI secrets, so you cannot
+  reproduce the published release locally. Use a debug build for local work.
+
+```
+./gradlew assembleDebug     # debug APK, needs an Android SDK
+```
+
+Version code and name come from `ANDROID_VERSION_CODE` / `ANDROID_VERSION_NAME`
+(defaults `1` / `0.0.1`). CI uses the workflow run number, so installed builds
+compare sensibly against `latest.json`.
+
+A debug APK, with no secrets needed, is also built on demand by the
+`.github/workflows/android-debug.yml` workflow, which is `workflow_dispatch` only.
+
 ## Releases and secrets
 
 The workflow needs four repository secrets, all about the signing key:
@@ -152,16 +240,6 @@ The workflow needs four repository secrets, all about the signing key:
 Keep the original keystore file safe: Android only accepts updates signed with the
 same key. Without these secrets the build fails on purpose rather than publishing
 an unsigned APK.
-
-## Local builds
-
-```
-./gradlew assembleDebug     # debug APK, needs an Android SDK
-```
-
-Version code and name come from `ANDROID_VERSION_CODE` / `ANDROID_VERSION_NAME`
-(defaults `1` / `0.0.1`). CI uses the workflow run number, so installed builds
-compare sensibly against `latest.json`.
 
 ## Layout
 
