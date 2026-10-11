@@ -68,6 +68,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -100,6 +103,10 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -247,6 +254,10 @@ fun ChatScreen(
     partialText: String,
     onToggleMic: () -> Unit,
     onOpenSettings: () -> Unit,
+    // A notice's action is a value, because the notice outlives the composition
+    // that raised it; this composition maps the value to the behaviour it has
+    // now, so the action still runs after the screen is recreated.
+    onNoticeAction: (NoticeAction) -> Unit,
 ) {
     val turns = vm.turns
     val pending = vm.pendingQuestion
@@ -352,32 +363,35 @@ fun ChatScreen(
                 title = {
                     Column {
                         // The title names the session this screen is attached to,
-                        // not the last thing typed. It stays a title.
+                        // not the last thing typed. It stays a title. Two lines is
+                        // the cap so a long name at a large font scale is read
+                        // rather than cut mid-glyph.
                         Text(
                             text = vm.barTitle,
                             style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        // The last prompt is a subtitle, one ellipsised line that
-                        // tells you which turn you are in. It never grows past one
-                        // line, so it cannot push the bar taller than an app bar.
-                        // With no prompt yet the session label stands in, so the
-                        // line is never blank.
+                        // The last prompt is a subtitle that tells you which turn
+                        // you are in. It wraps and ellipsises rather than being
+                        // pinned to one line: at fontScale 2.0 a single forced line
+                        // is taller than the bar and the bottom of the glyphs is
+                        // clipped.
                         Text(
                             text = vm.lastPrompt?.takeIf { it.isNotBlank() } ?: vm.attachedLabel,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
                 },
                 actions = {
-                    // One fixed slot for the working signal. Whatever stands here
-                    // is smaller than the icon buttons beside it, so showing or
-                    // clearing it cannot change the bar's height.
-                    Box(modifier = Modifier.height(24.dp), contentAlignment = Alignment.Center) {
+                    // One slot for the working signal, floored at the height of the
+                    // icon buttons beside it so showing or clearing it cannot move
+                    // the bar. A floor rather than a fixed size because the waiting
+                    // label is taller than 24 dp at a large font scale, and a fixed
+                    // box would clip it.
+                    Box(modifier = Modifier.heightIn(min = 24.dp), contentAlignment = Alignment.Center) {
                         when {
                             vm.pendingQuestion != null -> Text(
                                 text = "waiting",
@@ -412,7 +426,7 @@ fun ChatScreen(
                     text = vm.statusLine,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 )
@@ -433,7 +447,7 @@ fun ChatScreen(
             // confirmations. One render site is the whole of it, so nothing can
             // stack a second message on top of this one.
             vm.notices.forEach { n ->
-                NoticeBar(text = n.text, onDismiss = { vm.dismissNotice(n.id) }, isError = n.kind == NoticeKind.Error, actionLabel = n.actionLabel, onAction = n.action)
+                NoticeBar(text = n.text, onDismiss = { vm.dismissNotice(n.id) }, isError = n.kind == NoticeKind.Error, actionLabel = n.actionLabel, onAction = n.action?.let { action -> { onNoticeAction(action) } })
             }
 
             if (searchOpen) {
@@ -452,16 +466,50 @@ fun ChatScreen(
                 // still read and send what it saved before.
                 PinsView(
                     vm = vm,
+                    paletteVisible = paletteVisible,
                     onConfirm = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else if (turns.isEmpty() && pending == null) {
+                // With nothing on the transcript the screen should say which of
+                // the three situations it is in, because the fix differs: pair,
+                // retry, or wait. Showing the same "no results yet" for all three
+                // leaves a first-run user with no way forward.
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = if (vm.busy) "thinking…" else "no results yet",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        when {
+                            vm.token.isBlank() -> {
+                                Text(
+                                    text = "Not paired yet",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Button(onClick = onOpenSettings) { Text("Open Settings") }
+                            }
+                            !vm.connected -> {
+                                // The status line already sits above this box when
+                                // it has anything to say, so rendering it again here
+                                // would show the same string twice. Only the blank
+                                // case needs a fallback; the action is the point.
+                                if (vm.statusLine.isBlank()) {
+                                    Text(
+                                        text = "Not connected",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Button(onClick = vm::ensureConnected) { Text("Retry") }
+                            }
+                            else -> Text(
+                                text = if (vm.busy) "thinking…" else "no results yet",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             } else if (vm.viewMode == "deck") {
                 // The same transcript as cards. The deck and the transcript read
@@ -518,7 +566,7 @@ fun ChatScreen(
                 partialText = partialText,
                 listening = listening,
                 busy = vm.busy,
-                actionLabel = if (searchOpen) "Search" else "Send",
+                actionLabel = if (searchOpen) "Search" else if (vm.busy) "Steer" else "Send",
                 // Search runs on whatever is typed, connected or not, while a
                 // prompt still needs a live bridge.
                 actionEnabled = if (searchOpen) {
@@ -701,7 +749,7 @@ private fun TurnDeck(
     var openTurn by rememberSaveable { mutableStateOf<String?>(null) }
     // The older card the thumb is on, held by turn id: a turn arriving above it
     // must not swap the card underneath, which is what a page number would do.
-    var heldTurn by remember { mutableStateOf<String?>(null) }
+    var heldTurn by rememberSaveable { mutableStateOf<String?>(null) }
 
     val keys = remember(ordered.map { it.id }, pending?.id) {
         buildList {
@@ -827,7 +875,7 @@ private fun DeckCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(IntrinsicSize.Min)
-                            .clickable(enabled = openable, onClick = onToggle)
+                            .clickable(enabled = openable, role = Role.Button, onClick = onToggle)
                             .tactile(enabled = openable)
                             .padding(
                                 start = AnswerStyle.promptPadding,
@@ -893,32 +941,27 @@ private fun DeckCard(
 }
 
 /**
- * The switch between the transcript and the deck: two buttons that name the
- * views, the one in use bearing the mark the appearance buttons use. It sits in
- * a row of its own so it never lands on the composer.
+ * The switch between the transcript, the deck and the pins: one segmented row,
+ * the view in use drawn as the chosen segment. It sits in a row of its own so it
+ * never lands on the composer.
  */
 @Composable
 private fun ViewModeSwitch(
     mode: String,
     onChange: (String) -> Unit,
 ) {
-    Row(
+    val modes = listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins")
+    SingleChoiceSegmentedButtonRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins").forEach { (value, label) ->
-            TextButton(onClick = { onChange(value) }, modifier = Modifier.tactile()) {
-                Text(
-                    text = if (mode == value) "• $label" else label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (mode == value) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
+        modes.forEachIndexed { index, (value, label) ->
+            SegmentedButton(
+                selected = mode == value,
+                onClick = { onChange(value) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
+                label = { Text(label, style = MaterialTheme.typography.bodyMedium) },
+                modifier = Modifier.weight(1f).tactile(),
+            )
         }
     }
 }
@@ -933,15 +976,17 @@ private fun ViewModeSwitch(
 @Composable
 private fun PinsView(
     vm: ChatViewModel,
+    paletteVisible: Boolean,
     onConfirm: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val pins = vm.pins
     var openedId by rememberSaveable { mutableStateOf<String?>(null) }
-    // An open pin is a layer over the list, so back returns to the list. This is
-    // registered after the chat's handlers, which puts it ahead of them while a
-    // pin is open.
-    BackHandler(enabled = openedId != null) { openedId = null }
+    // An open pin is a layer over the list, so back returns to the list. It is
+    // registered after the chat's handlers, which normally puts it ahead of
+    // them; while the command palette is up, though, D3 puts the palette first,
+    // so the pin stands down until the palette is gone.
+    BackHandler(enabled = openedId != null && !paletteVisible) { openedId = null }
     val opened = pins.firstOrNull { it.id == openedId }
 
     if (opened != null) {
@@ -981,7 +1026,7 @@ private fun PinRow(pin: Pin, onClick: () -> Unit) {
         color = MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         shape = RoundedCornerShape(AnswerStyle.promptRadius),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).tactile(),
+        modifier = Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).tactile(),
     ) {
         Column(modifier = Modifier.padding(AnswerStyle.promptPadding)) {
             Text(
@@ -1226,7 +1271,7 @@ private fun SearchResultRow(hit: SearchHit, openable: Boolean, onOpen: () -> Uni
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
-            .clickable(enabled = openable, onClick = onOpen)
+            .clickable(enabled = openable, role = Role.Button, onClick = onOpen)
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         Text(
@@ -1275,7 +1320,7 @@ private fun TurnPrompt(turn: ChatTurn, expanded: Boolean, onToggle: () -> Unit) 
             .clip(shape)
             .background(scheme.surfaceVariant)
             .border(1.dp, scheme.outline, shape)
-            .clickable(enabled = openable, onClick = onToggle)
+            .clickable(enabled = openable, role = Role.Button, onClick = onToggle)
             .tactile(enabled = openable)
             .padding(
                 start = AnswerStyle.promptPadding,
@@ -1486,7 +1531,18 @@ private fun TurnBody(
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 AnswerView(
                     text = liveText,
-                    modifier = Modifier.widthIn(max = AnswerStyle.measure),
+                    // The answer is still arriving, so it is marked a live region
+                    // while the run goes: TalkBack reads each update instead of
+                    // waiting for the person to move focus onto it.
+                    modifier = Modifier
+                        .widthIn(max = AnswerStyle.measure)
+                        .then(
+                            if (working) {
+                                Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                            } else {
+                                Modifier
+                            },
+                        ),
                 )
                 AnswerActions(
                     text = liveText,
@@ -1648,7 +1704,7 @@ private fun CommandPalette(
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(AnswerStyle.promptRadius))
-                    .clickable { onPick(command) }
+                    .clickable(role = Role.Button) { onPick(command) }
                     .tactile()
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1738,13 +1794,44 @@ private fun Composer(
             placeholder = { Text(placeholder) },
         )
         Spacer(modifier = Modifier.height(8.dp))
+        val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
+        val label = MaterialTheme.typography.bodyLarge
+        // Two rows, and the split is the point: the action and the escape are the
+        // two controls a run needs within reach, so neither of them sits in a row
+        // that scrolls. The action leads, so Stop appearing beside it cannot move
+        // it sideways.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            // One button, two jobs: it reads what it will do. Sending is the same
+            // as before, while searching runs the search on this same text, so a
+            // search can never leave as a prompt.
+            Button(
+                onClick = onAction,
+                enabled = actionEnabled,
+                modifier = buttonModifier.tactile(haptics = true, enabled = actionEnabled, depth = AnswerStyle.keyDepth),
+            ) {
+                Text(actionLabel, style = label)
+            }
+            if (busy) {
+                OutlinedButton(
+                    onClick = onStop,
+                    modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                ) {
+                    Text("Stop", style = label)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        // The rest of the composer's controls, in a row that scrolls so a narrow
+        // screen can still reach them without crowding the action above.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         ) {
-            val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
-            val label = MaterialTheme.typography.bodyLarge
             // The clipboard capture toggle. It shows its own state: filled and
             // reading "Auto-paste on" when a copy will be collected, outlined and
             // reading "Auto-paste" when it will not. It sits in the composer row
@@ -1770,30 +1857,12 @@ private fun Composer(
             ) {
                 Text(if (listening) "Mic on" else "Mic", style = label)
             }
-            // One button, two jobs: it reads what it will do. Sending is the same
-            // as before, while searching runs the search on this same text, so a
-            // search can never leave as a prompt.
-            Button(
-                onClick = onAction,
-                enabled = actionEnabled,
-                modifier = buttonModifier.tactile(haptics = true, enabled = actionEnabled, depth = AnswerStyle.keyDepth),
-            ) {
-                Text(actionLabel, style = label)
-            }
             OutlinedButton(
                 onClick = onClear,
                 enabled = text.isNotBlank(),
                 modifier = buttonModifier.tactile(enabled = text.isNotBlank(), depth = AnswerStyle.keyDepth),
             ) {
                 Text("Clear", style = label)
-            }
-            if (busy) {
-                OutlinedButton(
-                    onClick = onStop,
-                    modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
-                ) {
-                    Text("Stop", style = label)
-                }
             }
         }
     }
@@ -1832,7 +1901,7 @@ fun SettingsScreen(
 
     // Clearing the stored data takes the token with it, so it asks twice rather
     // than doing it under a thumb that was reaching for something else.
-    var confirmingClear by remember { mutableStateOf(false) }
+    var confirmingClear by rememberSaveable { mutableStateOf(false) }
 
     // Pairing lives here rather than in the chat screen because it is setup work: the
     // scanner reads the QR /pair drew, and both routes end in the same link parser.
@@ -1901,9 +1970,14 @@ fun SettingsScreen(
                     Text("Scan the pairing QR", style = MaterialTheme.typography.bodyLarge)
                 }
                 Text(
-                    text = "On the laptop run /pair in the pi session that serves the bridge; a window " +
-                        "with the QR opens. Scanning it fills in the address and the token below and " +
-                        "pairs straight away. The camera is used to read that one code.",
+                    text = "On the laptop, in the pi session that serves the bridge, run:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LaptopCommand(command = "/pair")
+                Text(
+                    text = "A window with the QR opens. Scanning it fills in the address and the " +
+                        "token below and pairs straight away. The camera is used to read that one code.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1959,10 +2033,11 @@ fun SettingsScreen(
                     placeholder = { Text("paste the token") },
                 )
                 Text(
-                    text = "On the laptop: cat ~/.config/pi-remote/token",
+                    text = "On the laptop:",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                LaptopCommand(command = "cat ~/.config/pi-remote/token")
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val label = MaterialTheme.typography.bodyLarge
                     val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
@@ -1996,13 +2071,15 @@ fun SettingsScreen(
                 onToggle = { toggle("appearance") },
             ) {
                 SectionLabel("Appearance")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("dark" to "Dark", "light" to "Light", "system" to "System").forEach { (value, label) ->
-                        SegmentButton(
-                            label = label,
-                            active = appearance == value,
-                            modifier = Modifier.weight(1f),
+                val appearances = listOf("dark" to "Dark", "light" to "Light", "system" to "System")
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    appearances.forEachIndexed { index, (value, label) ->
+                        SegmentedButton(
+                            selected = appearance == value,
                             onClick = { onAppearanceChange(value) },
+                            shape = SegmentedButtonDefaults.itemShape(index = index, count = appearances.size),
+                            label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
@@ -2013,14 +2090,16 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AnswerStyle.themes.forEach { (name, palette) ->
-                        SegmentButton(
-                            label = palette.label,
-                            active = theme == name,
-                            modifier = Modifier.weight(1f),
-                            swatch = { ThemeSwatch(palette) },
+                val themes = AnswerStyle.themes.entries.toList()
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    themes.forEachIndexed { index, (name, palette) ->
+                        SegmentedButton(
+                            selected = theme == name,
                             onClick = { onThemeChange(name) },
+                            shape = SegmentedButtonDefaults.itemShape(index = index, count = themes.size),
+                            icon = { ThemeSwatch(palette) },
+                            label = { Text(palette.label, style = MaterialTheme.typography.labelMedium) },
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
@@ -2225,6 +2304,61 @@ private fun SectionLabel(text: String) {
 }
 
 /**
+ * One command the user runs on the laptop, in a row that copies it on tap. The
+ * pairing command and the token path are the only instructions the app gives for
+ * the other machine, and a thumb cannot select them out of a paragraph, so each
+ * is its own target. A copy is acknowledged on the row itself, because the
+ * chat's message channel is not on screen while Settings is.
+ */
+@Composable
+private fun LaptopCommand(command: String) {
+    val clipboard = LocalClipboardManager.current
+    // The acknowledgement lives here, not in the chat's channel: the chat is not
+    // composed while Settings is open, and a confirmation there clears itself
+    // after two seconds, so "Copied" posted to it would never reach the eye.
+    var copied by remember { mutableStateOf(false) }
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button) {
+                clipboard.setText(AnnotatedString(command))
+                copied = true
+            }
+            .tactile(haptics = true),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = command,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            if (copied) {
+                Text(
+                    text = "Copied",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+            }
+            Icon(
+                imageVector = CopyIcon,
+                contentDescription = "Copy $command",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+/**
  * One collapsible section: a trigger row that always states the current value,
  * and a bordered panel that holds the controls. It mirrors the media app's
  * divide-y list, so the two apps read the same way.
@@ -2242,7 +2376,7 @@ private fun SettingsSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onToggle)
+                .clickable(role = Role.Button, onClick = onToggle)
                 .tactile()
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -2274,7 +2408,7 @@ private fun SettingsSection(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -2310,49 +2444,6 @@ private fun SettingsSection(
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    }
-}
-
-/**
- * A small bordered button for a set of mutually exclusive choices, in the media
- * app's segmented style: the active one is tinted with the accent and drawn in
- * the accent colour.
- */
-@Composable
-private fun SegmentButton(
-    label: String,
-    active: Boolean,
-    modifier: Modifier = Modifier,
-    swatch: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(10.dp)
-    val accent = MaterialTheme.colorScheme.primary
-    Box(
-        modifier = modifier
-            .heightIn(min = 48.dp)
-            .clip(shape)
-            .background(if (active) accent.copy(alpha = 0.12f) else Color.Transparent)
-            .border(1.dp, if (active) accent else MaterialTheme.colorScheme.outline, shape)
-            .clickable(onClick = onClick)
-            .tactile(shape = shape)
-            .padding(horizontal = 6.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            swatch?.invoke()
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
     }
 }
 

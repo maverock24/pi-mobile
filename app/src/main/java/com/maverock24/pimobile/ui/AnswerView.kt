@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +41,8 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -99,13 +102,18 @@ fun AnswerView(
         ) {
             blocks.forEach { block ->
                 when (block) {
+                    // A heading is a navigation landmark, so it carries the
+                    // semantic rather than only the visual weight: TalkBack can
+                    // then jump between headings instead of reading every line.
                     is AnswerBlock.Heading -> Text(
                         text = inlineText(block.text, linkColor, chipColor),
                         fontWeight = FontWeight.Bold,
                         fontSize = AnswerStyle.headingSize,
                         lineHeight = AnswerStyle.headingSize * 1.3,
                         color = scheme.onBackground,
-                        modifier = Modifier.padding(top = AnswerStyle.headingGap),
+                        modifier = Modifier
+                            .padding(top = AnswerStyle.headingGap)
+                            .semantics { heading() },
                     )
 
                     is AnswerBlock.Paragraph -> Text(
@@ -143,12 +151,15 @@ fun AnswerView(
                                 verticalAlignment = Alignment.Top,
                                 modifier = Modifier.padding(start = AnswerStyle.bulletIndent * item.level),
                             ) {
+                                // The marker column is a floor, not a cap: a two-digit
+                                // ordered marker is wider than one body glyph at a large
+                                // font scale, and a fixed width would clip it.
                                 Text(
                                     text = if (block.ordered && !item.marker) "$counter." else "•",
                                     color = if (block.ordered && !item.marker) linkColor else scheme.onSurfaceVariant,
                                     fontSize = AnswerStyle.bodySize,
                                     lineHeight = AnswerStyle.bodyLineHeight,
-                                    modifier = Modifier.width(AnswerStyle.bulletIndent),
+                                    modifier = Modifier.widthIn(min = AnswerStyle.bulletIndent),
                                 )
                                 Text(
                                     text = inlineText(item.text, linkColor, chipColor),

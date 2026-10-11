@@ -101,6 +101,10 @@ object Diagnostics {
     fun describe(error: Throwable, baseUrl: String): String {
         val raw = error.message?.takeIf { it.isNotBlank() }
         val detail = raw ?: error.javaClass.simpleName
-        return "failed · $baseUrl · $detail · ${hint(error)}"
+        // The hint is what the user can act on, so it leads the string: the chat
+        // screen renders this with a single-line ellipsis and would otherwise cut
+        // off the half that says what to fix. Settings shows the same string and
+        // lets it wrap.
+        return "${hint(error)} · failed · $baseUrl · $detail"
     }
 }

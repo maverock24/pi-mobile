@@ -75,3 +75,79 @@ machine cannot run an emulator, and the repo has no instrumentation tests.
 
 Wave 1 is code-complete on `qrspi/ux-remediation`. Waves 2 and 3 are not started. `state.md` records
 the stage as Implement. The three deferred findings are tasks, not notes.
+
+---
+
+# Review: wave 2 of ux-remediation
+
+Branch `qrspi/ux-remediation-w2`, from `f5122e8` (the wave-1 merge) to `5cac18b`. Nineteen commits.
+
+## Gate
+
+| Check | Result |
+| --- | --- |
+| `assembleDebug` | success |
+| `assembleRelease`, the CI path | success in 48s |
+| `:app:lintDebug` | 9 warnings, 0 errors: the baseline again |
+| `:app:testDebugUnitTest` | `NO-SOURCE` |
+| `python3 scripts/luminance.py` | exit 0, 18 pairs at or above 4.5:1 |
+
+## Bookkeeping
+
+Fourteen task commits, five review fixes and one record commit. Every commit carries the trailer
+`QRSPI: ux-remediation`, and all six changed paths are in the plan. Two tasks needed a file beyond
+their `Touches` list; T25a's commit body says so and T27's does not, for a one-line `MainActivity`
+wiring change. That message was deliberately not rewritten: the record's status ticks cite these
+SHAs, so rewriting history would make the record lie in order to fix a sentence.
+
+## What the code review found
+
+Six findings, and all three serious ones were consequences of changes this wave made rather than of
+what it left alone. All six are closed: five fixed here, the sixth recorded as task T21a.
+
+**1. MAJOR, fixed in `7593ecb`.** The saveable state holder wrapped both destinations, which
+preserved `SettingsScreen`'s own fields. After a QR pairing, reopening Settings showed the
+pre-pairing token field and Save wrote it back, silently unpairing the phone. D7 asked only for the
+chat's state to survive; the holder now wraps the chat alone, and Settings composes keyless so its
+editors reset as they did before.
+
+**2. MAJOR, fixed in `59c35e2`.** The copy affordance posted its acknowledgement into the chat's
+notice channel, which is not composed while Settings is on screen, and confirmations expire after
+two seconds, so "Copied" could never be read. `LaptopCommand` now holds its own acknowledgement on
+its own row and turns the haptic on.
+
+**3. MAJOR, recorded as T21a.** Material3's small `TopAppBar` caps its container at 64dp and clips,
+so `maxLines = 2` and lifting the subtitle's cap made the bar clip rather than grow: the app bar's
+half of the font-scale fix was not real. The waiting slot and the bullet column are genuine fixes.
+Replacing a fixed-height bar is its own change, so it is a wave-3 task, and the checklist no longer
+claims the app bar survives a font scale of 2.0.
+
+**4. MINOR, fixed in `785c2f0`.** `stateDescription` sat on top of the segmented control's own
+`selected`, so the selection was announced twice and hardcoded English shadowed TalkBack's localized
+text.
+
+**5. MINOR, fixed in `6559a70`.** The connection status line rendered twice for a paired but offline
+empty transcript.
+
+**6. MINOR, fixed in `929b02a`.** The segments lost `weight(1f)` in the replacement, so the pickers
+no longer spanned their row.
+
+**Verified sound by the same review:** the composer split, the `Send`/`Steer` label, the live
+region's scoping, `NoticeAction` as a value rather than a closure, roles on every clickable row,
+heading semantics, and the status-line reorder with no consumer parsing the string.
+
+## Corrections to the review itself
+
+- R16 overstated its finding. The settings prose was already folded behind sections that are
+  collapsed by default, so it was never nine open paragraphs; the real change was a subtitle's
+  `maxLines` and splitting the `/pair` paragraph around its new command row. The worker said so
+  rather than inventing work to fill the task.
+- Seven task checks could not pass as written: greps that counted an import, a tautology that passed
+  before any edit, and an instruction that contradicted the resolved library's own semantics. In each
+  case the worker verified the intent by hand instead of bending the code to a broken assertion.
+  Wave 3's tasks are told to read their check before trusting it.
+
+## Hand-off state
+
+Wave 2 is code-complete on `qrspi/ux-remediation-w2`. Wave 3 is not started: twelve tasks, plus
+T21a, plus the record corrections D11, D12 and D20. `state.md` records the stage as Implement.
