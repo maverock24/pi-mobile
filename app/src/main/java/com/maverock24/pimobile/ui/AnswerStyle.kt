@@ -1,8 +1,10 @@
 package com.maverock24.pimobile.ui
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
@@ -10,13 +12,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Design tokens for rendering answers, taken from the design lab choices saved
- * on 2026-10-04 (pi-remote-design-lab/out/choices-latest.json):
+ * Design tokens for rendering answers. The typography and layout choices are the
+ * design lab's base set (pi-remote-design-lab/design-lab.html; no choices file
+ * was ever saved for it):
  *
  *   layout document · font sans · scale compact (14 / 1.42) · rhythm tight
  *   headings hierarchy · inline chip · code bordered · lists bullets
  *   links underline · citations inline · diff inline · tools hidden
  *   think hidden · stream pulse · status shimmer · accent indigo · measure 54ch
+ *
+ * The tactile choices are the ones that were saved, at
+ * pi-remote-design-lab/out/choices-tactile-latest.json on 2026-10-05: press
+ * scale on every tappable control, a press and release tap pair, confirm and
+ * reject on an outcome, haptics only on controls that change pi's state, and
+ * platform constants alone. The answer icons and the composer follow these.
  *
  * The dark side no longer follows that accent: it now comes in four named
  * themes, Midnight first among them, each a complete palette with its own night
@@ -27,6 +36,16 @@ import androidx.compose.ui.unit.sp
  */
 
 /**
+ * The fill and the label colour of one update pill. They are separate because the
+ * label is painted on the fill at 16% over the scheme's surface, and a fill pale
+ * enough to read as a chip is not always dark enough to read as its own text.
+ */
+data class PillPair(val fill: Color, val text: Color)
+
+/** The two update pills, by meaning: an update is available, or it is up to date. */
+data class PillColors(val available: PillPair, val upToDate: PillPair)
+
+/**
  * One named look for the dark side of the app: the colour scheme it paints
  * with, the night sky drawn behind it, and the name the settings picker shows.
  * Light mode ignores every field of it.
@@ -34,6 +53,7 @@ import androidx.compose.ui.unit.sp
 data class AnswerTheme(
     val label: String,
     val scheme: ColorScheme,
+    val pills: PillColors,
     val skyTop: Color,
     val skyMid: Color,
     val skyBottom: Color,
@@ -102,6 +122,13 @@ object AnswerStyle {
     /** Space above it, on top of the list's own gap, so a prompt starts a block. */
     val promptGap = 8.dp
 
+    /**
+     * Room above and below the accent bar inside the row that carries it. The bar
+     * is shorter than the text beside it, so it is inset a hairline less than the
+     * text's own padding and its ends then line up with the text's line box.
+     */
+    val accentBarInset = promptPadding - 2.dp
+
     /** Indent step for one bullet level. */
     val bulletIndent = 20.dp
 
@@ -118,6 +145,38 @@ object AnswerStyle {
     /** Space between two answers in the stream. */
     val answerGap = 26.dp
 
+    // The screens outside the answer view repeat the same handful of numbers for
+    // their pads and gaps. Naming each repeated value here means a row asks for
+    // the token instead of copying the number, so two rows that should match
+    // cannot drift apart. A size used once stays at its call site.
+
+    /** Gap between two controls standing side by side. */
+    val controlGap = 8.dp
+
+    /** Gap between lines stacked inside one card. */
+    val lineGap = 10.dp
+
+    /** Room around the content of a compact row, such as a list row or a banner. */
+    val rowInset = 10.dp
+
+    /** Room around the content of a card or panel. */
+    val panelPadding = 12.dp
+
+    /** Room around the content of the roomier settings cards. */
+    val cardPadding = 14.dp
+
+    /** Horizontal inset of a full-width screen row. */
+    val screenPadding = 16.dp
+
+    /** The spacer between one settings section and the next. */
+    val sectionGap = 12.dp
+
+    /** The chevron that marks a collapsed prompt, in the deck and the transcript alike. */
+    val chevronSize = 22.dp
+
+    /** An answer action icon. */
+    val iconSize = 18.dp
+
     /**
      * 54 characters at 14sp. Average glyph advance for UI sans is about 0.53em,
      * so 54 * 14 * 0.53 ≈ 400dp. Wider screens (landscape, tablets) get a
@@ -133,6 +192,26 @@ object AnswerStyle {
      */
     private val accentDark = Color(0xFF0AD6FF)
     private val accentLight = Color(0xFF3562D6)
+
+    /**
+     * The update pills under every dark palette. Each fill already reads as its
+     * own label on the 16% tint, so fill and text are the same amber or green,
+     * exactly as the version card painted them before they had a name.
+     */
+    val darkPills = PillColors(
+        PillPair(Color(0xFFF0A83C), Color(0xFFF0A83C)),
+        PillPair(Color(0xFF46C97E), Color(0xFF46C97E)),
+    )
+
+    /**
+     * The light scheme's pills. Its surface is pale, so the amber and green fill
+     * would sit near 1.7:1 as a label; each label takes a darker shade of its own
+     * hue while the fill stays the same, which is what makes the pair readable.
+     */
+    val lightPills = PillColors(
+        PillPair(Color(0xFFF0A83C), Color(0xFF6E4400)),
+        PillPair(Color(0xFF46C97E), Color(0xFF0F6234)),
+    )
 
     /**
      * Fills every colour role Material3 can fall back on from the handful a theme
@@ -219,6 +298,7 @@ object AnswerStyle {
                 error = Color(0xFFE35F5F),
             ),
         ),
+        pills = darkPills,
         skyTop = Color(0xFF091120),
         skyMid = Color(0xFF050B14),
         skyBottom = Color(0xFF040911),
@@ -244,6 +324,7 @@ object AnswerStyle {
                 error = Color(0xFFE35F5F),
             ),
         ),
+        pills = darkPills,
         skyTop = Color(0xFF0B111E),
         skyMid = Color(0xFF060B13),
         skyBottom = Color(0xFF050910),
@@ -269,6 +350,7 @@ object AnswerStyle {
                 error = Color(0xFFDD3C3C),
             ),
         ),
+        pills = darkPills,
         skyTop = Color(0xFF1C140D),
         skyMid = Color(0xFF120C08),
         skyBottom = Color(0xFF0F0906),
@@ -294,6 +376,7 @@ object AnswerStyle {
                 error = Color(0xFFDD3C3C),
             ),
         ),
+        pills = darkPills,
         skyTop = Color(0xFF0D1C16),
         skyMid = Color(0xFF08120E),
         skyBottom = Color(0xFF060F0B),
@@ -317,6 +400,20 @@ object AnswerStyle {
 
     /** The palette for a stored name; anything unknown falls back to Midnight. */
     fun theme(name: String): AnswerTheme = themes[name] ?: midnight
+
+    /**
+     * Whether a stored appearance preference means the dark side.
+     *
+     * This is the one test for it: the theme composable asks it to choose the
+     * scheme, and the settings screen asks it to choose the pills, so the two
+     * cannot disagree about which side of the app is showing.
+     */
+    @Composable
+    fun isDarkMode(mode: String): Boolean = when (mode) {
+        "dark" -> true
+        "light" -> false
+        else -> isSystemInDarkTheme()
+    }
 
     val lightScheme = deriveScheme(
         lightColorScheme(

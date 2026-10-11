@@ -22,12 +22,14 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -350,6 +352,10 @@ fun ChatScreen(
         // Transparent so the sky behind it is what shows, rather than the theme's
         // background colour painted over it.
         containerColor = Color.Transparent,
+        // Edge-to-edge draws the content under the status and navigation bars;
+        // safe drawing is what keeps the composer off the gesture bar and the
+        // app bar out of the status bar.
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 // The working accent line rides on the bar's own top edge and the
@@ -428,7 +434,7 @@ fun ChatScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
                 )
             }
             // The transcript under that line can be the copy saved on this phone
@@ -439,7 +445,7 @@ fun ChatScreen(
                     text = "Showing the transcript saved on this phone",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
                 )
             }
             // The view model's notice channel draws here, in the order it keeps
@@ -672,7 +678,7 @@ private fun Transcript(
     // keep their full height instead of living inside a scroll box of their own.
     LazyColumn(
         state = listState,
-        modifier = modifier.padding(horizontal = 16.dp),
+        modifier = modifier.padding(horizontal = AnswerStyle.screenPadding),
         verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
     ) {
         turns.forEach { turn ->
@@ -809,7 +815,7 @@ private fun TurnDeck(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(AnswerStyle.screenPadding),
             ) {
                 QuestionCard(
                     pending = pending,
@@ -861,7 +867,7 @@ private fun DeckCard(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = AnswerStyle.promptGap),
+            .padding(horizontal = AnswerStyle.screenPadding, vertical = AnswerStyle.promptGap),
     ) {
         Surface(
             color = scheme.surfaceVariant,
@@ -880,8 +886,8 @@ private fun DeckCard(
                             .padding(
                                 start = AnswerStyle.promptPadding,
                                 end = AnswerStyle.promptPadding,
-                                top = AnswerStyle.promptPadding - 2.dp,
-                                bottom = AnswerStyle.promptPadding - 2.dp,
+                                top = AnswerStyle.accentBarInset,
+                                bottom = AnswerStyle.accentBarInset,
                             ),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -902,12 +908,12 @@ private fun DeckCard(
                             modifier = Modifier.weight(1f),
                         )
                         if (openable) {
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(AnswerStyle.controlGap))
                             Icon(
                                 imageVector = Icons.Filled.KeyboardArrowDown,
                                 contentDescription = if (expanded) "Hide answer" else "Show answer",
                                 tint = scheme.primary,
-                                modifier = Modifier.size(22.dp).rotate(chevron),
+                                modifier = Modifier.size(AnswerStyle.chevronSize).rotate(chevron),
                             )
                         }
                     }
@@ -952,7 +958,7 @@ private fun ViewModeSwitch(
 ) {
     val modes = listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins")
     SingleChoiceSegmentedButtonRow(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.panelPadding),
     ) {
         modes.forEachIndexed { index, (value, label) ->
             SegmentedButton(
@@ -1008,7 +1014,7 @@ private fun PinsView(
         }
     } else {
         LazyColumn(
-            modifier = modifier.padding(horizontal = 16.dp),
+            modifier = modifier.padding(horizontal = AnswerStyle.screenPadding),
             verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
         ) {
             items(pins, key = { it.id }) { pin ->
@@ -1071,7 +1077,7 @@ private fun PinDetail(
 
     Column(modifier = modifier.verticalScroll(rememberScrollState())) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.controlGap, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack, modifier = Modifier.tactile()) {
@@ -1086,7 +1092,7 @@ private fun PinDetail(
         }
 
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier = Modifier.padding(horizontal = AnswerStyle.screenPadding),
             verticalArrangement = Arrangement.spacedBy(AnswerStyle.answerGap),
         ) {
             if (editing) {
@@ -1097,7 +1103,7 @@ private fun PinDetail(
                     singleLine = true,
                     placeholder = { Text("Title") },
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap)) {
                     Button(
                         onClick = {
                             vm.renamePin(pin.id, titleDraft)
@@ -1174,7 +1180,7 @@ private fun PinDetail(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap)) {
                     Button(
                         onClick = {
                             vm.deletePin(pin.id)
@@ -1272,7 +1278,7 @@ private fun SearchResultRow(hit: SearchHit, openable: Boolean, onOpen: () -> Uni
             .fillMaxWidth()
             .heightIn(min = 48.dp)
             .clickable(enabled = openable, role = Role.Button, onClick = onOpen)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = AnswerStyle.screenPadding, vertical = AnswerStyle.rowInset),
     ) {
         Text(
             text = hit.snippet,
@@ -1325,8 +1331,8 @@ private fun TurnPrompt(turn: ChatTurn, expanded: Boolean, onToggle: () -> Unit) 
             .padding(
                 start = AnswerStyle.promptPadding,
                 end = AnswerStyle.promptPadding,
-                top = AnswerStyle.promptPadding - 2.dp,
-                bottom = AnswerStyle.promptPadding - 2.dp,
+                top = AnswerStyle.accentBarInset,
+                bottom = AnswerStyle.accentBarInset,
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1347,12 +1353,12 @@ private fun TurnPrompt(turn: ChatTurn, expanded: Boolean, onToggle: () -> Unit) 
             modifier = Modifier.weight(1f),
         )
         if (openable) {
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(AnswerStyle.controlGap))
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowDown,
                 contentDescription = if (expanded) "Hide answer" else "Show answer",
                 tint = scheme.primary,
-                modifier = Modifier.size(22.dp).rotate(chevron),
+                modifier = Modifier.size(AnswerStyle.chevronSize).rotate(chevron),
             )
         }
     }
@@ -1580,7 +1586,7 @@ private fun AnsweredQuestion(question: String, answer: String?, modifier: Modifi
         modifier = modifier,
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = AnswerStyle.panelPadding, vertical = AnswerStyle.rowInset),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             if (question.isNotBlank()) {
@@ -1627,11 +1633,11 @@ private fun NoticeBar(
     Surface(
         color = container,
         contentColor = onContainer,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.panelPadding, vertical = 6.dp),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = AnswerStyle.panelPadding, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -1685,7 +1691,7 @@ private fun CommandPalette(
         modifier = modifier
             .heightIn(max = 240.dp)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .padding(horizontal = AnswerStyle.panelPadding, vertical = 4.dp),
     ) {
         if (shown.isEmpty()) {
             // The note covers an older bridge that has no command list at all;
@@ -1706,7 +1712,7 @@ private fun CommandPalette(
                     .clip(RoundedCornerShape(AnswerStyle.promptRadius))
                     .clickable(role = Role.Button) { onPick(command) }
                     .tactile()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                    .padding(horizontal = AnswerStyle.controlGap, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -1730,7 +1736,7 @@ private fun CommandPalette(
                         text = command.source,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(start = 8.dp),
+                        modifier = Modifier.padding(start = AnswerStyle.controlGap),
                     )
                 }
             }
@@ -1759,7 +1765,7 @@ private fun Composer(
     captureEnabled: Boolean,
     onToggleCapture: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(AnswerStyle.panelPadding)) {
         if (listening && partialText.isNotBlank()) {
             Text(
                 text = partialText,
@@ -1793,7 +1799,7 @@ private fun Composer(
             leadingIcon = commandAffordance,
             placeholder = { Text(placeholder) },
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
         val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
         val label = MaterialTheme.typography.bodyLarge
         // Two rows, and the split is the point: the action and the escape are the
@@ -1802,7 +1808,7 @@ private fun Composer(
         // it sideways.
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap),
             modifier = Modifier.fillMaxWidth(),
         ) {
             // One button, two jobs: it reads what it will do. Sending is the same
@@ -1824,12 +1830,12 @@ private fun Composer(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
         // The rest of the composer's controls, in a row that scrolls so a narrow
         // screen can still reach them without crowding the action above.
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap),
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         ) {
             // The clipboard capture toggle. It shows its own state: filled and
@@ -1931,6 +1937,9 @@ fun SettingsScreen(
         // Transparent for the same reason as the chat screen: the sky is drawn
         // once, behind everything, and this must not paint over it.
         containerColor = Color.Transparent,
+        // Same safe-drawing inset as the chat screen: the settings list must not
+        // run under the gesture bar either.
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
@@ -2045,7 +2054,7 @@ fun SettingsScreen(
                         onClick = { onSave(baseUrl, token) },
                         modifier = size.tactile(haptics = true, depth = AnswerStyle.keyDepth),
                     ) { Text("Save", style = label) }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(AnswerStyle.controlGap))
                     OutlinedButton(
                         onClick = onTest,
                         modifier = size.tactile(depth = AnswerStyle.keyDepth),
@@ -2218,7 +2227,7 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap)) {
                         val label = MaterialTheme.typography.bodyLarge
                         val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
                         Button(
@@ -2252,14 +2261,14 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(AnswerStyle.sectionGap))
             Text(
                 text = versionLabel,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = AnswerStyle.screenPadding),
             )
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(AnswerStyle.sectionGap))
         }
     }
 }
@@ -2330,7 +2339,7 @@ private fun LaptopCommand(command: String) {
             .tactile(haptics = true),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = AnswerStyle.panelPadding, vertical = AnswerStyle.rowInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -2378,7 +2387,7 @@ private fun SettingsSection(
                 .fillMaxWidth()
                 .clickable(role = Role.Button, onClick = onToggle)
                 .tactile()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = AnswerStyle.screenPadding, vertical = AnswerStyle.cardPadding),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // The icon sits in a rounded square tinted with the accent, as in the
@@ -2434,7 +2443,7 @@ private fun SettingsSection(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                    .padding(start = AnswerStyle.panelPadding, end = AnswerStyle.panelPadding, bottom = AnswerStyle.panelPadding),
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -2479,7 +2488,7 @@ private fun StatusCard(
         border = BorderStroke(1.dp, border),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().padding(12.dp)) { content() }
+        Box(modifier = Modifier.fillMaxWidth().padding(AnswerStyle.panelPadding)) { content() }
     }
 }
 
@@ -2510,8 +2519,8 @@ private fun VersionCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(AnswerStyle.cardPadding),
+            verticalArrangement = Arrangement.spacedBy(AnswerStyle.lineGap),
         ) {
             Row(verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -2618,8 +2627,8 @@ private fun QuestionCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(AnswerStyle.cardPadding),
+            verticalArrangement = Arrangement.spacedBy(AnswerStyle.lineGap),
         ) {
             Text(
                 text = when {
@@ -2650,7 +2659,7 @@ private fun QuestionCard(
                         color = MaterialTheme.colorScheme.primary,
                     )
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap)) {
                         // The option's own shape goes to the tactile modifier as
                         // well: the depth it draws is cut from the same outline
                         // as the face, so the two edges line up.
@@ -2695,7 +2704,7 @@ private fun QuestionCard(
                                     singleLine = true,
                                     placeholder = { Text("Or type your own answer") },
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(AnswerStyle.controlGap))
                                 Button(
                                     onClick = {
                                         onTyped(question.id, typed)
