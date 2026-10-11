@@ -12,13 +12,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Design tokens for rendering answers, taken from the design lab choices saved
- * on 2026-10-04 (pi-remote-design-lab/out/choices-latest.json):
+ * Design tokens for rendering answers. The typography and layout choices are the
+ * design lab's base set (pi-remote-design-lab/design-lab.html; no choices file
+ * was ever saved for it):
  *
  *   layout document · font sans · scale compact (14 / 1.42) · rhythm tight
  *   headings hierarchy · inline chip · code bordered · lists bullets
  *   links underline · citations inline · diff inline · tools hidden
  *   think hidden · stream pulse · status shimmer · accent indigo · measure 54ch
+ *
+ * The tactile choices are the ones that were saved, at
+ * pi-remote-design-lab/out/choices-tactile-latest.json on 2026-10-05: press
+ * scale on every tappable control, a press and release tap pair, confirm and
+ * reject on an outcome, haptics only on controls that change pi's state, and
+ * platform constants alone. The answer icons and the composer follow these.
  *
  * The dark side no longer follows that accent: it now comes in four named
  * themes, Midnight first among them, each a complete palette with its own night
