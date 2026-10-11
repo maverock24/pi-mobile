@@ -112,6 +112,16 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
     suspend fun question(): JSONObject = execute(builder("/api/question").get().build())
 
     /**
+     * Hand a crash trace to the laptop, which keeps the newest one beside its
+     * audit log. The caller treats a failure as nothing to show, because the
+     * trace being reported is usually a previous launch's.
+     */
+    suspend fun reportDiagnostics(trace: String): JSONObject {
+        val payload = JSONObject().apply { put("trace", trace) }.toString()
+        return execute(builder("/api/diagnostics").post(payload.toRequestBody(json)).build())
+    }
+
+    /**
      * Answer an open question. [value] is normally an option's value; set
      * [custom] when it is free text, or [cancel] to dismiss the widget.
      */

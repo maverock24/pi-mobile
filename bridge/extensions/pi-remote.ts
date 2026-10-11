@@ -21,6 +21,8 @@
  *   GET  /api/question  - pending question widget, if one is open
  *   POST /api/answer    - answer it: {"questionId": "...", "value": "...",
  *                         "custom": false, "cancel": false, "submit": false}
+ *   GET  /api/diagnostics - the most recent crash trace a phone has reported
+ *   POST /api/diagnostics - record one: {"trace": "..."}
  *
  * While a session serves the bridge it marks its own herdr pane with a
  * "remote ●/○" badge (● means a phone is attached), so you can see at a glance
@@ -279,6 +281,43 @@ function shrink(value: unknown, depth = 0): unknown {
 		return out;
 	}
 	return value;
+}
+
+/**
+ * The longest trace the bridge keeps. The phone caps its own trace well below
+ * this, so a longer one is a client bug and is refused rather than stored.
+ */
+const MAX_DIAGNOSTIC_CHARS = 16_000;
+
+/** The last crash trace a phone sent, beside the audit log so the laptop can read it. */
+function diagnosticsPath(): string {
+	return path.join(remoteDir(), "diagnostics.json");
+}
+
+function readDiagnostics(): Record<string, unknown> | null {
+	try {
+		const raw = JSON.parse(fs.readFileSync(diagnosticsPath(), "utf8"));
+		if (!raw || typeof raw !== "object" || typeof (raw as Record<string, unknown>).trace !== "string") {
+			return null;
+		}
+		return raw as Record<string, unknown>;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * One file, overwritten on every report, so a phone that reports in a loop
+ * cannot grow it. The trace is capped here as well as at the route, so a caller
+ * that skips the length check still cannot write an unbounded file.
+ */
+function writeDiagnostics(record: Record<string, unknown>): void {
+	try {
+		fs.mkdirSync(remoteDir(), { recursive: true, mode: 0o700 });
+		fs.writeFileSync(diagnosticsPath(), JSON.stringify(record), { mode: 0o600 });
+	} catch {
+		// losing a diagnostic report must never break a request
+	}
 }
 
 const HERDR_SOURCE = "pi-remote";
@@ -1169,6 +1208,51 @@ export default function (pi: ExtensionAPI) {
 					sendJson(res, 200, { ok: true });
 				} catch (error) {
 					sendJson(res, 500, { error: String((error as Error)?.message || error) });
+				}
+			})();
+			return;
+		}
+
+		if (req.method === "GET" && url.pathname === "/api/diagnostics") {
+			const record = readDiagnostics();
+			if (!record) {
+				sendJson(res, 404, { error: "no crash trace has been reported" });
+				return;
+			}
+			// The trace is returned whole rather than through shrink(): it is the
+			// one thing this endpoint exists to carry, and shrink would cut it at
+			// MAX_STRING, so the bound is enforced when it is written instead.
+			sendJson(res, 200, record);
+			return;
+		}
+
+		if (req.method === "POST" && url.pathname === "/api/diagnostics") {
+			void (async () => {
+				try {
+					const body = await readBody(req);
+					const trace = typeof body.trace === "string" ? body.trace : "";
+					if (!trace.trim()) {
+						sendJson(res, 400, { error: "trace is required" });
+						return;
+					}
+					if (trace.length > MAX_DIAGNOSTIC_CHARS) {
+						sendJson(res, 413, { error: `trace is longer than ${MAX_DIAGNOSTIC_CHARS} characters` });
+						return;
+					}
+					writeDiagnostics({
+						at: nowIso(),
+						device,
+						client: clientLabel(req),
+						chars: trace.length,
+						trace,
+					});
+					audit({ event: "diagnostics_received", device, client: clientLabel(req), chars: trace.length });
+					sendJson(res, 200, { ok: true });
+				} catch (error) {
+					const message = String((error as Error)?.message || error);
+					// readBody refuses a body past its own cap, which is the same
+					// oversized rejection this route makes about the trace itself.
+					sendJson(res, message.includes("too large") ? 413 : 400, { error: message });
 				}
 			})();
 			return;

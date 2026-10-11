@@ -23,6 +23,9 @@ import java.time.Instant
  *    killed leaves `starting` behind, which is deliberately not a crash.
  *  - `last-crash.txt` holds the readable trace of the most recent crash, for the
  *    troubleshooting section of the settings screen.
+ *  - `crash-report.txt` holds a fingerprint of the trace already handed to the
+ *    laptop, so the same trace is not sent on every launch while a later crash
+ *    still is.
  *  - `startup-crashes.txt` counts launches that died in a row before coming up,
  *    so the second one can drop more state than the first.
  *
@@ -34,6 +37,7 @@ class CrashLog(context: Context) {
     private val dir = context.filesDir
     private val launchFile = File(dir, "launch.txt")
     private val crashFile = File(dir, "last-crash.txt")
+    private val reportedFile = File(dir, "crash-report.txt")
     private val startupCrashFile = File(dir, "startup-crashes.txt")
 
     /**
@@ -111,11 +115,35 @@ class CrashLog(context: Context) {
     fun clearLastCrash() {
         runCatching { crashFile.delete() }
     }
+
+    /**
+     * True when the trace now on disk is the one already handed to the laptop.
+     * The mark is a fingerprint of the trace rather than a one-way flag, so the
+     * same trace is not resent while a crash after it is still reported.
+     */
+    fun lastCrashWasReported(): Boolean = runCatching {
+        val trace = lastCrash() ?: return false
+        reportedFile.readText().trim() == fingerprint(trace)
+    }.getOrDefault(false)
+
+    /** Note that the trace now on disk reached the laptop. */
+    fun markLastCrashReported() {
+        runCatching {
+            val trace = lastCrash() ?: return
+            reportedFile.writeText(fingerprint(trace))
+        }
+    }
 }
 
 private const val STARTING = "starting"
 private const val RUNNING = "running"
 private const val CRASHED = "crashed"
+
+/**
+ * A short, stable stand-in for a trace. Length plus hash is enough to tell two
+ * traces apart for this purpose without keeping a second copy of the trace.
+ */
+private fun fingerprint(trace: String): String = "${trace.length}:${trace.hashCode()}"
 
 /** Long enough to name a cause, short enough not to fill the phone. */
 private const val MAX_CRASH_CHARS = 16_000

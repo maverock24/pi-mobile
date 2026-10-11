@@ -9,6 +9,11 @@ import android.os.Handler
 import android.os.Looper
 import androidx.core.app.NotificationManagerCompat
 import com.maverock24.pimobile.data.CrashLog
+import com.maverock24.pimobile.data.SettingsStore
+import com.maverock24.pimobile.net.PiRemoteClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Wires in the two things that have to exist before any screen does: the record
@@ -43,6 +48,27 @@ class PiRemoteApp : Application() {
 
         registerActivityLifecycleCallbacks(foregroundTracker)
         createRunChannel()
+        reportLastCrashOnce(log)
+    }
+
+    /**
+     * Hand the last crash trace to the bridge, once. The crash this reports is
+     * usually a previous launch's, so it is fired and forgotten on a worker: a
+     * bridge that is down or a missing token changes nothing on screen, and
+     * nothing here can delay or fail startup. The trace is not cleared after it
+     * is sent, because the troubleshooting screen still shows it to the human.
+     */
+    private fun reportLastCrashOnce(log: CrashLog) {
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching {
+                val trace = log.lastCrash() ?: return@runCatching
+                if (log.lastCrashWasReported()) return@runCatching
+                val store = SettingsStore(this@PiRemoteApp)
+                if (store.baseUrl.isBlank() || store.token.isBlank()) return@runCatching
+                PiRemoteClient { store.baseUrl to store.token }.reportDiagnostics(trace)
+                log.markLastCrashReported()
+            }
+        }
     }
 
     /**
