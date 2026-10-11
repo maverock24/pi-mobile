@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -44,6 +45,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Draw under the system bars so the app owns the whole window; the
+        // scaffolds pad their content back out with the safe-drawing insets.
+        enableEdgeToEdge()
         handlePairingIntent(intent)
         if (BuildConfig.DEBUG) {
             // Log (do not crash) any accidental blocking network call on the UI thread.
