@@ -21,6 +21,9 @@ sources=(
 	"$here/extensions/pi-remote.ts:$agent_dir/extensions/pi-remote.ts"
 	"$here/lib/remote-question.ts:$agent_dir/lib/remote-question.ts"
 	"$here/lib/lease.ts:$agent_dir/lib/lease.ts"
+	"$here/lib/talks.ts:$agent_dir/lib/talks.ts"
+	"$here/skills/talk/SKILL.md:$agent_dir/skills/talk/SKILL.md"
+	"$here/skills/talk/render-talk.sh:$agent_dir/skills/talk/render-talk.sh"
 )
 
 missing=0

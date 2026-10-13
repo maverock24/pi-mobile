@@ -23,6 +23,14 @@
  *                         "custom": false, "cancel": false, "submit": false}
  *   GET  /api/diagnostics - the most recent crash trace a phone has reported
  *   POST /api/diagnostics - record one: {"trace": "..."}
+ *   POST /api/talks     - register a generated talk and start the edge-tts render
+ *                         {"title": "...", "script"|"scriptPath": "...", "voice": "..."}
+ *   GET  /api/talks     - the talk library, newest first, with render state
+ *   GET  /api/talks/<id>.mp3 - the audio, with byte-range support
+ *   DELETE /api/talks/<id>   - remove a talk's audio, script and metadata
+ *   POST /api/talks/<id>/link - mint a one-off, short-lived download link
+ *                         (the key in that URL is the only unauthenticated
+ *                         download path; the bearer token is never a query param)
  *
  * While a session serves the bridge it marks its own herdr pane with a
  * "remote ●/○" badge (● means a phone is attached), so you can see at a glance
@@ -65,6 +73,18 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readPending, remoteDir, writeAnswer } from "../lib/remote-question.ts";
 import {
+	estimateDurationSeconds,
+	listTalks,
+	newTalkId,
+	readTalk,
+	removeTalk,
+	saveTalk,
+	serveFile,
+	talkPaths,
+	talksDir,
+	type TalkRecord,
+} from "../lib/talks.ts";
+import {
 	decideState,
 	isTakeoverFile,
 	leaseFileName,
@@ -88,6 +108,17 @@ const PAIR_WIDGET_ID = "pi-remote-pair";
 const MAX_STRING = 4000;
 const MAX_ARRAY = 40;
 const MAX_DEPTH = 8;
+
+/** edge-tts voice used when the caller does not name one. */
+const DEFAULT_TALK_VOICE = "en-US-AriaNeural";
+/** How long a one-off download link stays usable. Long enough for a car tap. */
+const TALK_LINK_TTL_MS = 5 * 60_000;
+/** A script longer than this is a client bug, and is refused rather than read. */
+const MAX_TALK_SCRIPT_BYTES = 2 * 1024 * 1024;
+
+const TALK_FILE_RE = /^\/api\/talks\/([A-Za-z0-9_-]{1,64})\.mp3$/;
+const TALK_ITEM_RE = /^\/api\/talks\/([A-Za-z0-9_-]{1,64})$/;
+const TALK_LINK_RE = /^\/api\/talks\/([A-Za-z0-9_-]{1,64})\/link$/;
 
 /** How much of a matched message a search hit carries around the match. */
 const SNIPPET_BEFORE = 40;
@@ -982,6 +1013,183 @@ export default function (pi: ExtensionAPI) {
 		return requested !== sessionId();
 	}
 
+	// ---------- generated talks ----------
+
+	/**
+	 * One-off download links, keyed by the token in the URL. A value names the one
+	 * talk it may fetch and when it stops working. Held in memory on purpose: the
+	 * token must not survive a restart, and it is handed out seconds before use.
+	 */
+	const talkLinks = new Map<string, { talkId: string; expiresAt: number }>();
+
+	function pruneTalkLinks(): void {
+		const now = Date.now();
+		for (const [key, link] of talkLinks) {
+			if (link.expiresAt <= now) talkLinks.delete(key);
+		}
+	}
+
+	/**
+	 * One talk, trimmed. Only a title or an error message a hand-edited metadata
+	 * file could stretch, so those are capped here rather than through shrink(),
+	 * whose unknown return type cannot be spread into a response.
+	 */
+	function talkSummary(record: TalkRecord) {
+		return {
+			id: record.id,
+			title: record.title.length > MAX_STRING ? `${record.title.slice(0, MAX_STRING)}…` : record.title,
+			state: record.state,
+			createdAt: record.createdAt,
+			bytes: record.bytes,
+			durationSeconds: record.durationSeconds,
+			durationEstimated: record.durationEstimated,
+			voice: record.voice,
+			error: record.error === null ? null : record.error.length > MAX_STRING ? record.error.slice(0, MAX_STRING) : record.error,
+		};
+	}
+
+	/**
+	 * The talk library, newest first. Rows are trimmed, the list is not, for the
+	 * same reason commandsPayload does it that way: shrink() caps an array at
+	 * MAX_ARRAY, and a library past 40 talks would lose its oldest entries silently.
+	 */
+	function talksPayload() {
+		return { talks: listTalks().map(talkSummary) };
+	}
+
+	/** The edge-tts binary, overridable for a test harness or a non-standard install. */
+	function edgeTtsPath(): string {
+		return whichSync(process.env.PI_REMOTE_EDGE_TTS || "edge-tts");
+	}
+
+	/**
+	 * Fail before a render is promised when edge-tts cannot run. A missing binary
+	 * and a broken install are the same failure to the human, so both come back as
+	 * one actionable sentence naming what to install, never a stack trace. Running
+	 * `--version` proves the interpreter behind the shim still imports the module;
+	 * it touches no network.
+	 */
+	function edgeTtsProblem(): string | undefined {
+		const binary = edgeTtsPath();
+		if (!binary) {
+			return "edge-tts is not installed. Install it with `pipx install edge-tts` (or `pip install --user edge-tts`), then try again.";
+		}
+		const probe = spawnSync(binary, ["--version"], { encoding: "utf8", timeout: 5000 });
+		if (probe.error || probe.status !== 0) {
+			const tail = `${probe.stderr || ""}`.split("\n").map((line) => line.trim()).filter(Boolean).pop();
+			const detail = (tail || probe.error?.message || "unknown error").slice(0, 200);
+			return `edge-tts is installed at ${binary} but could not run (${detail}). Reinstall it with \`pipx install --force edge-tts\`, then try again.`;
+		}
+		return undefined;
+	}
+
+	/** Reads a script a caller named, with the same size bound the body path gets. */
+	function readTalkScriptFile(file: string): string {
+		const stat = fs.statSync(file);
+		if (!stat.isFile()) throw new Error("not a file");
+		if (stat.size > MAX_TALK_SCRIPT_BYTES) throw new Error("script is too large");
+		return fs.readFileSync(file, "utf8");
+	}
+
+	/**
+	 * Spawn edge-tts for one talk and record where it got to. The child belongs to
+	 * the bridge process, not to the HTTP request that started it, so closing the
+	 * phone does not cancel a render that is minutes from finishing.
+	 */
+	function startTalkRender(record: TalkRecord): void {
+		const binary = edgeTtsPath();
+		const args = ["--file", record.scriptPath, "--voice", record.voice, "--write-media", record.mp3Path];
+		let stderr = "";
+		let child: ReturnType<typeof spawn>;
+		try {
+			child = spawn(binary, args, { stdio: ["ignore", "ignore", "pipe"] });
+		} catch (error) {
+			finishTalk(record, "failed", `edge-tts could not start: ${String((error as Error)?.message || error)}`);
+			return;
+		}
+		child.stderr?.on("data", (chunk: Buffer) => {
+			// Keep the tail only. A Python traceback is long, and its last line is the
+			// only part that names the problem.
+			stderr = `${stderr}${chunk.toString()}`.slice(-4000);
+		});
+		child.on("error", (error) => {
+			finishTalk(record, "failed", `edge-tts could not start: ${error.message}`);
+		});
+		child.on("close", (code) => {
+			if (code === 0) {
+				try {
+					const size = fs.statSync(record.mp3Path).size;
+					if (size > 0) {
+						finishTalk(record, "ready", null, size);
+						return;
+					}
+				} catch {
+					// fall through: a zero or missing file is a failure
+				}
+			}
+			const tail = stderr.split("\n").map((line) => line.trim()).filter(Boolean).pop();
+			finishTalk(record, "failed", tail ? tail.slice(0, 300) : `edge-tts exited with code ${code ?? "unknown"}`);
+		});
+	}
+
+	/** Persist the terminal state and tell any attached phone about it. */
+	function finishTalk(record: TalkRecord, state: "ready" | "failed", error: string | null, bytes?: number): void {
+		const current = readTalk(record.id) ?? record;
+		current.state = state;
+		current.updatedAt = nowIso();
+		current.error = error;
+		if (state === "ready") {
+			let size = bytes ?? null;
+			if (size === null) {
+				try {
+					size = fs.statSync(current.mp3Path).size;
+				} catch {
+					size = null;
+				}
+			}
+			current.bytes = size;
+		} else {
+			current.bytes = null;
+		}
+		saveTalk(current);
+		emit("talk", talkSummary(current));
+	}
+
+	/**
+	 * The one unauthenticated download path. The key is the credential and nothing
+	 * else is trusted: it names exactly one talk, it is spent on first use, and it
+	 * expires. A normal bearer token is never read from the query string.
+	 */
+	function handleTalkLink(req: http.IncomingMessage, res: http.ServerResponse, url: URL, id: string): void {
+		const provided = url.searchParams.get("key") || "";
+		pruneTalkLinks();
+		const link = talkLinks.get(provided);
+		if (!link || link.talkId !== id || link.expiresAt <= Date.now()) {
+			audit({ event: "talk_link_rejected", id });
+			sendJson(res, 401, { error: "this download link is invalid or has expired" });
+			return;
+		}
+		talkLinks.delete(provided);
+		const record = readTalk(id);
+		if (!record) {
+			sendJson(res, 404, { error: "no such talk" });
+			return;
+		}
+		const served = serveFile(req, res, record.mp3Path, "audio/mpeg");
+		audit({ event: "talk_download", id, via: "link", status: served.status });
+	}
+
+	/** The authenticated download path: the app seeking in a file it already owns. */
+	function handleTalkDownload(req: http.IncomingMessage, res: http.ServerResponse, id: string, device: string): void {
+		const record = readTalk(id);
+		if (!record) {
+			sendJson(res, 404, { error: "no such talk" });
+			return;
+		}
+		const served = serveFile(req, res, record.mp3Path, "audio/mpeg");
+		audit({ event: "talk_download", id, device, via: "bearer", status: served.status });
+	}
+
 	/** Second, loopback-only listener so `tailscale serve` can front the bridge. */
 	function startLoopbackServer(port: number): void {
 		if (loopbackServer || process.env.PI_REMOTE_NO_LOOPBACK === "1") {
@@ -1015,6 +1223,16 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
+		// A one-off download link, before the bearer gate. A browser cannot send an
+		// Authorization header, so the key in the URL is the credential instead. It
+		// is scoped to one talk, short-lived and single use, which is why this does
+		// not widen the auth model: the bearer token is still never a query param.
+		const talkFile = TALK_FILE_RE.exec(url.pathname);
+		if ((req.method === "GET" || req.method === "HEAD") && talkFile && url.searchParams.has("key")) {
+			handleTalkLink(req, res, url, talkFile[1]);
+			return;
+		}
+
 		const device = authorized(req);
 		if (!device) {
 			sendJson(res, 401, { error: "unauthorized" });
@@ -1023,6 +1241,175 @@ export default function (pi: ExtensionAPI) {
 
 		if (req.method === "GET" && url.pathname === "/api/health") {
 			sendJson(res, 200, { ok: true, serverTime: nowIso() });
+			return;
+		}
+
+		if (req.method === "GET" && url.pathname === "/api/talks") {
+			// Carried whole on purpose, like /api/commands: talksPayload trims each row
+			// and shrink() would otherwise cut the list at 40.
+			sendJson(res, 200, talksPayload());
+			return;
+		}
+
+		if (req.method === "POST" && url.pathname === "/api/talks") {
+			void (async () => {
+				try {
+					const body = await readBody(req);
+					if (wrongSession(body)) {
+						sendJson(res, 409, { error: "this bridge serves a different session", sessionId: sessionId() });
+						return;
+					}
+					const title = (typeof body.title === "string" ? body.title : "").trim();
+					if (!title) {
+						sendJson(res, 400, { error: "title is required" });
+						return;
+					}
+					// Text wins when both are sent: it is the caller's own writing, and a
+					// path is only ever a convenience.
+					let script = "";
+					if (typeof body.script === "string" && body.script.trim()) {
+						script = body.script;
+					} else if (typeof body.scriptPath === "string" && body.scriptPath.trim()) {
+						try {
+							script = readTalkScriptFile(body.scriptPath.trim());
+						} catch (error) {
+							sendJson(res, 400, { error: `could not read the script: ${String((error as Error)?.message || error)}` });
+							return;
+						}
+					} else {
+						sendJson(res, 400, { error: "script or scriptPath is required" });
+						return;
+					}
+					if (script.length > MAX_TALK_SCRIPT_BYTES) {
+						sendJson(res, 413, { error: `script is longer than ${MAX_TALK_SCRIPT_BYTES} bytes` });
+						return;
+					}
+					// Check the renderer before promising a render, so a missing edge-tts is
+					// one actionable sentence here rather than a failed talk later.
+					const problem = edgeTtsProblem();
+					if (problem) {
+						sendJson(res, 503, { error: problem });
+						return;
+					}
+					const voice = (typeof body.voice === "string" && body.voice.trim()) || DEFAULT_TALK_VOICE;
+					const id = newTalkId();
+					const paths = talkPaths(id);
+					fs.mkdirSync(talksDir(), { recursive: true, mode: 0o700 });
+					fs.writeFileSync(paths.script, script, { mode: 0o600 });
+					const record: TalkRecord = {
+						id,
+						title: title.slice(0, 200),
+						createdAt: nowIso(),
+						updatedAt: nowIso(),
+						state: "rendering",
+						scriptPath: paths.script,
+						mp3Path: paths.mp3,
+						bytes: null,
+						durationSeconds: estimateDurationSeconds(script),
+						durationEstimated: true,
+						voice,
+						error: null,
+					};
+					saveTalk(record);
+					// spawn() returns at once, so the id the phone is waiting on does not
+					// wait for a render that will take minutes.
+					startTalkRender(record);
+					emit("talk", talkSummary(record));
+					audit({
+						event: "talk_registered",
+						id,
+						title: record.title,
+						device,
+						client: clientLabel(req),
+						chars: script.length,
+						voice,
+					});
+					sendJson(res, 200, {
+						...talkSummary(record),
+						estimatedMinutes: Math.round((record.durationSeconds ?? 0) / 60),
+					});
+				} catch (error) {
+					sendJson(res, 500, { error: String((error as Error)?.message || error) });
+				}
+			})();
+			return;
+		}
+
+		const talkItem = TALK_ITEM_RE.exec(url.pathname);
+		if (talkItem && req.method === "DELETE") {
+			void (async () => {
+				try {
+					// A DELETE carries an optional sessionId but no other body; an empty or
+					// unparsable body means "no session named", not a failure.
+					let body: Record<string, unknown> = {};
+					try {
+						body = await readBody(req);
+					} catch {
+						body = {};
+					}
+					if (wrongSession(body)) {
+						sendJson(res, 409, { error: "this bridge serves a different session", sessionId: sessionId() });
+						return;
+					}
+					const id = talkItem[1];
+					if (!removeTalk(id)) {
+						sendJson(res, 404, { error: "no such talk" });
+						return;
+					}
+					// Any link already handed out for this talk dies with it.
+					for (const [key, link] of talkLinks) {
+						if (link.talkId === id) talkLinks.delete(key);
+					}
+					emit("talk_removed", { id });
+					audit({ event: "talk_removed", id, device });
+					sendJson(res, 200, { ok: true, id });
+				} catch (error) {
+					sendJson(res, 500, { error: String((error as Error)?.message || error) });
+				}
+			})();
+			return;
+		}
+
+		const talkLink = TALK_LINK_RE.exec(url.pathname);
+		if (talkLink && req.method === "POST") {
+			void (async () => {
+				try {
+					const body = await readBody(req);
+					if (wrongSession(body)) {
+						sendJson(res, 409, { error: "this bridge serves a different session", sessionId: sessionId() });
+						return;
+					}
+					const id = talkLink[1];
+					const record = readTalk(id);
+					if (!record) {
+						sendJson(res, 404, { error: "no such talk" });
+						return;
+					}
+					if (record.state !== "ready" || !fs.existsSync(record.mp3Path)) {
+						sendJson(res, 409, { error: `talk is ${record.state}` });
+						return;
+					}
+					pruneTalkLinks();
+					const key = crypto.randomBytes(32).toString("base64url");
+					const expiresAt = Date.now() + TALK_LINK_TTL_MS;
+					talkLinks.set(key, { talkId: id, expiresAt });
+					// Same host choice as pairing: the MagicDNS name is what Android accepts
+					// for cleartext HTTP, and the bound port is the one that is serving.
+					const pair = pairHost();
+					const port = boundAddress?.port ?? configuredPort();
+					const host = pair.source === "fallback" ? (boundAddress?.host ?? configuredHost()) : pair.host;
+					const downloadUrl = `http://${host}:${port}/api/talks/${id}.mp3?key=${key}`;
+					audit({ event: "talk_link_issued", id, device, expiresAt: new Date(expiresAt).toISOString() });
+					sendJson(res, 200, { id, url: downloadUrl, expiresAt: new Date(expiresAt).toISOString() });
+				} catch (error) {
+					sendJson(res, 500, { error: String((error as Error)?.message || error) });
+				}
+			})();
+			return;
+		}
+
+		if ((req.method === "GET" || req.method === "HEAD") && talkFile) {
+			handleTalkDownload(req, res, talkFile[1], device);
 			return;
 		}
 
