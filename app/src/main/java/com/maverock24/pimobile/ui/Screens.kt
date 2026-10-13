@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -256,6 +257,7 @@ fun ChatScreen(
     partialText: String,
     onToggleMic: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenTalks: () -> Unit,
     // A notice's action is a value, because the notice outlives the composition
     // that raised it; this composition maps the value to the behaviour it has
     // now, so the action still runs after the screen is recreated.
@@ -407,6 +409,9 @@ fun ChatScreen(
                             )
                             vm.busy -> WorkingShimmer()
                         }
+                    }
+                    IconButton(onClick = onOpenTalks, modifier = Modifier.tactile()) {
+                        Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = "Talks")
                     }
                     IconButton(onClick = { searchOpen = !searchOpen }, modifier = Modifier.tactile()) {
                         Icon(

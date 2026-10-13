@@ -20,15 +20,24 @@ class Notifier(private val context: Context) {
 
     /** A question is waiting, so the answer cannot be given on the laptop alone. */
     fun postQuestion(title: String) {
-        post(question = true, text = title)
+        post("pi needs an answer", title, QUESTION_ID)
     }
 
     /** The run settled, so its first answer line is worth reading from the shade. */
     fun postSettled(answer: String) {
-        post(question = false, text = answer)
+        post("pi finished", answer, SETTLED_ID)
     }
 
-    private fun post(question: Boolean, text: String) {
+    /**
+     * A talk finished rendering but the app was not in a place to play it, so
+     * the human is told it exists rather than left to find it. The tap opens the
+     * app, where the ready talk is waiting in the library.
+     */
+    fun postTalkReady(title: String) {
+        post("talk ready", title, TALK_ID)
+    }
+
+    private fun post(title: String, text: String, id: Int) {
         // A notification reports something you cannot see: posting one while the
         // app is in front is noise. A user who turned notifications off has
         // already said they do not want them, so nothing is posted either way.
@@ -48,22 +57,23 @@ class Notifier(private val context: Context) {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_RUNS)
             .setSmallIcon(R.drawable.ic_stat_run)
-            .setContentTitle(if (question) "pi needs an answer" else "pi finished")
+            .setContentTitle(title)
             .setContentText(text)
             .setAutoCancel(true)
             .setContentIntent(openIntent)
             .addAction(0, "Open", openIntent)
             .build()
 
-        NotificationManagerCompat.from(context).notify(if (question) QUESTION_ID else SETTLED_ID, notification)
+        NotificationManagerCompat.from(context).notify(id, notification)
     }
 
     private companion object {
         /** The channel PiRemoteApp creates on every launch. */
         const val CHANNEL_RUNS = "pi-runs"
 
-        /** Two fixed ids so a later notification replaces its own kind, not the other's. */
+        /** One id per kind so a later notification replaces its own, not another's. */
         const val QUESTION_ID = 1
         const val SETTLED_ID = 2
+        const val TALK_ID = 3
     }
 }

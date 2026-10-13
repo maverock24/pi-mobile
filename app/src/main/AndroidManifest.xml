@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Talk playback keeps running with the screen off, so the player lives in a
+         foreground service. This is the app's first foreground permission. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Pairing only: ZXing decodes the QR /pair draws. Not required for chat or
          dictation, so the app still installs on a device without a camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -49,5 +53,18 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- The player behind the Talks screen. media3 starts it and promotes it to
+             the foreground while audio plays, which is what keeps a talk going with
+             the screen off and posts the media notification. Not exported: only this
+             app binds it. -->
+        <service
+            android:name=".player.TalkPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

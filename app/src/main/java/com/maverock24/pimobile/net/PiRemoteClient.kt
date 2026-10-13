@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Response
 import org.json.JSONObject
+import java.io.File
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -93,6 +94,58 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
      * failure worth showing.
      */
     suspend fun commands(): JSONObject = execute(builder("/api/commands").get().build())
+
+    /**
+     * The generated-talk library, newest first. Each row carries the render state
+     * (rendering / ready / failed) and, once ready, the size and an estimated
+     * duration. It is carried whole, so a library past forty talks is not cut.
+     */
+    suspend fun talks(): JSONObject = execute(builder("/api/talks").get().build())
+
+    /**
+     * Download one talk's MP3 to [dest], reporting bytes read against the total
+     * as it goes. It stages through a `.part` file and renames on success, so a
+     * dropped connection never leaves a half file that plays as noise. [id] is
+     * checked by the caller to be the bridge's id shape before it reaches a URL.
+     */
+    suspend fun downloadTalk(id: String, dest: File, onProgress: (Long, Long) -> Unit): Unit =
+        withContext(Dispatchers.IO) {
+            val request = builder("/api/talks/$id.mp3").get().build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw BridgeException(
+                        response.code,
+                        describeError(response.code, response.body?.string().orEmpty()),
+                    )
+                }
+                val body = response.body ?: throw IOException("the bridge returned no audio")
+                val total = body.contentLength()
+                dest.parentFile?.mkdirs()
+                val part = File(dest.parentFile, dest.name + ".part")
+                try {
+                    body.byteStream().use { input ->
+                        part.outputStream().use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            var read = 0L
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                output.write(buffer, 0, count)
+                                read += count
+                                onProgress(read, total)
+                            }
+                        }
+                    }
+                    if (!part.renameTo(dest)) {
+                        part.copyTo(dest, overwrite = true)
+                        part.delete()
+                    }
+                } catch (error: Exception) {
+                    part.delete()
+                    throw error
+                }
+            }
+        }
 
     suspend fun prompt(text: String, deliverAs: String = "steer", sessionId: String? = null): JSONObject {
         val payload = JSONObject().apply {

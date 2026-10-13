@@ -1,19 +1,23 @@
 package com.maverock24.pimobile.ui
 
 import android.app.Application
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.maverock24.pimobile.PiRemoteApp
 import com.maverock24.pimobile.data.CrashLog
+import com.maverock24.pimobile.data.DownloadedTalk
 import com.maverock24.pimobile.data.Pin
 import com.maverock24.pimobile.data.PinsStore
 import com.maverock24.pimobile.data.SettingsStore
+import com.maverock24.pimobile.data.TalksStore
 import com.maverock24.pimobile.data.TranscriptEntry
 import com.maverock24.pimobile.data.TranscriptStore
 import com.maverock24.pimobile.data.mergeTranscript
@@ -21,6 +25,7 @@ import com.maverock24.pimobile.net.BridgeException
 import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
 import com.maverock24.pimobile.notify.Notifier
+import com.maverock24.pimobile.player.TalkPlayer
 import com.maverock24.pimobile.update.UpdateChecker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -173,6 +178,25 @@ data class SessionCommand(
 )
 
 /**
+ * One row of the talks library: what the bridge published about a generated
+ * talk, and whether this phone already holds its audio. [state] is the bridge's
+ * own word for the render, one of "rendering", "ready" or "failed". The two
+ * durations are the bridge's estimate from the script's word count, so they are
+ * shown as "about N minutes" rather than a claim about the file.
+ */
+data class TalkRow(
+    val id: String,
+    val title: String,
+    val state: String,
+    val bytes: Long,
+    val durationSeconds: Double,
+    val durationEstimated: Boolean,
+    val voice: String?,
+    val createdAt: String,
+    val error: String?,
+)
+
+/**
  * Groups the transcript by prompt. An assistant message carries no link to the
  * prompt that caused it, but the order does: every answer that follows a prompt
  * belongs to it. Answers that arrive before any prompt, which happens when the
@@ -314,9 +338,45 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var attachedSessionId by mutableStateOf(store.sessionId.takeIf { it.isNotBlank() })
         private set
 
+    private val talksStore = TalksStore(app)
+    private val audioManager = app.getSystemService(AudioManager::class.java)
+
+    /**
+     * The player the Talks screen drives. It is owned here so it survives a trip
+     * to Settings, and it talks to the background service so a talk keeps playing
+     * with the screen off.
+     */
+    val player = TalkPlayer(app)
+
+    /**
+     * The talk library, merged from the bridge and from this phone's own storage.
+     * Newest first, as the bridge sends it, with talks saved on the phone that
+     * the bridge no longer lists kept after it so offline playback still has a
+     * list to play from. It lives above the init block because the init reads it.
+     */
+    val talks = mutableStateListOf<TalkRow>()
+
+    /** The ids of talks whose audio is stored on this phone. */
+    val downloadedIds = mutableStateListOf<String>()
+
+    /** Download progress per talk id, 0f to 1f, present only while one is running. */
+    val downloadProgress = mutableStateMapOf<String, Float>()
+
+    /** True while the bridge is being asked for the library. */
+    var talksLoading by mutableStateOf(false)
+        private set
+
+    /** Why the last library fetch failed, or null when it did not. */
+    var talksError by mutableStateOf<String?>(null)
+        private set
+
+    /** Ids with a download in flight, so a repeated event does not start a second. */
+    private val downloadsInFlight = HashSet<String>()
+
     init {
         if (!PiRemoteApp.startupSafeMode) {
             pins.addAll(runCatching { pinsStore.load() }.getOrElse { emptyList() })
+            loadLocalTalks()
             // The pinned session's transcript goes up from the cache before the
             // bridge is asked for anything, so a phone that cannot reach it still
             // shows the record it saved instead of an empty screen. The start is
@@ -1495,6 +1555,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 pendingQuestion?.let { notifier.postQuestion(it.title) }
             }
             "state" -> applyState(data)
+            "talk" -> {
+                // A render advanced, most often to ready. A ready talk is fetched
+                // here without a tap: download first when it is not stored yet,
+                // then decide whether the human is present enough to auto-play it.
+                val row = talkFrom(data)
+                if (row != null) {
+                    upsertTalk(row)
+                    when {
+                        row.state != "ready" -> Unit
+                        !downloadedIds.contains(row.id) -> downloadTalk(row.id, autoPlay = true)
+                        else -> maybeAutoPlay(row)
+                    }
+                }
+            }
+            "talk_removed" -> {
+                val id = data.optString("id")
+                if (id.isNotBlank()) talks.removeAll { it.id == id }
+            }
             "prompt_accepted", "agent_start", "turn_start" -> busy = true
             "agent_settled" -> {
                 busy = false
@@ -1795,7 +1873,185 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         return parts.filter { it.isNotBlank() }.joinToString("\n")
     }
 
+    /**
+     * Seed the library from this phone's own storage, before any bridge is
+     * asked. A phone with no connection still has a list to play from.
+     */
+    private fun loadLocalTalks() {
+        val local = runCatching { talksStore.list() }.getOrElse { emptyList() }
+        downloadedIds.clear()
+        talks.clear()
+        local.forEach { talk ->
+            downloadedIds.add(talk.id)
+            talks.add(
+                TalkRow(
+                    id = talk.id,
+                    title = talk.title,
+                    state = "ready",
+                    bytes = talksStore.audioFile(talk.id)?.length() ?: 0L,
+                    durationSeconds = talk.durationSeconds,
+                    durationEstimated = talk.durationEstimated,
+                    voice = talk.voice,
+                    createdAt = talk.createdAt,
+                    error = null,
+                ),
+            )
+        }
+    }
+
+    /** One library row, or null when the bridge sent an id that cannot name a file. */
+    private fun talkFrom(json: JSONObject): TalkRow? {
+        val id = json.optString("id")
+        if (!talksStore.isSafeId(id)) return null
+        return TalkRow(
+            id = id,
+            title = json.optString("title").ifBlank { "Talk" },
+            state = json.optString("state").ifBlank { "ready" },
+            bytes = json.optLong("bytes", 0L),
+            durationSeconds = json.optDouble("durationSeconds", 0.0),
+            durationEstimated = json.optBoolean("durationEstimated", false),
+            voice = json.string("voice"),
+            createdAt = json.optString("createdAt"),
+            error = json.string("error"),
+        )
+    }
+
+    /** Ask the bridge for the library and merge it over what is stored here. */
+    fun refreshTalks() {
+        if (!isConfigured) return
+        talksLoading = true
+        safeLaunch {
+            runCatching { client.talks() }
+                .onSuccess { payload ->
+                    val array = payload.optJSONArray("talks")
+                    val rows = ArrayList<TalkRow>()
+                    if (array != null) {
+                        for (index in 0 until array.length()) {
+                            array.optJSONObject(index)?.let { talkFrom(it) }?.let { rows.add(it) }
+                        }
+                    }
+                    applyTalks(rows)
+                    talksError = null
+                }
+                .onFailure { error -> talksError = Diagnostics.describe(error, store.baseUrl) }
+            talksLoading = false
+        }
+    }
+
+    private fun applyTalks(remote: List<TalkRow>) {
+        val remoteIds = remote.mapTo(HashSet()) { it.id }
+        val merged = ArrayList<TalkRow>(remote)
+        // A talk saved on the phone but no longer listed by the bridge still plays
+        // offline, so it stays, after the live rows rather than being dropped.
+        talks.filter { it.id !in remoteIds }.forEach { merged.add(it) }
+        talks.clear()
+        talks.addAll(merged)
+    }
+
+    private fun upsertTalk(row: TalkRow) {
+        val index = talks.indexOfFirst { it.id == row.id }
+        if (index >= 0) talks[index] = row else talks.add(0, row)
+    }
+
+    private fun TalkRow.toDownloaded() = DownloadedTalk(
+        id = id,
+        title = title,
+        durationSeconds = durationSeconds,
+        durationEstimated = durationEstimated,
+        voice = voice,
+        createdAt = createdAt,
+    )
+
+    /**
+     * Download a ready talk's audio into app storage. [autoPlay] is set only for
+     * a render that just finished, which is the case the human asked to hear
+     * without a tap; a manual download never starts playing by itself.
+     */
+    fun downloadTalk(id: String, autoPlay: Boolean = false) {
+        if (!talksStore.isSafeId(id) || downloadsInFlight.contains(id)) return
+        val dest = talksStore.audioFile(id) ?: return
+        val row = talks.firstOrNull { it.id == id }
+        downloadsInFlight.add(id)
+        downloadProgress[id] = 0f
+        safeLaunch {
+            runCatching {
+                client.downloadTalk(id, dest) { read, total ->
+                    // The callback runs on an IO worker, so the state write is posted
+                    // to main where composition follows it.
+                    main.post {
+                        downloadProgress[id] = if (total > 0) {
+                            (read.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        }
+                    }
+                }
+            }
+                .onSuccess {
+                    row?.let { talksStore.save(it.toDownloaded()) }
+                    if (!downloadedIds.contains(id)) downloadedIds.add(id)
+                    downloadProgress.remove(id)
+                    downloadsInFlight.remove(id)
+                    if (autoPlay) row?.let { maybeAutoPlay(it) }
+                }
+                .onFailure { error ->
+                    downloadProgress.remove(id)
+                    downloadsInFlight.remove(id)
+                    dest.delete()
+                    notifyError("talk download: ${Diagnostics.describe(error, store.baseUrl)}")
+                }
+        }
+    }
+
+    /** Play a downloaded talk from the phone's own storage, with no bridge needed. */
+    fun playTalk(id: String) {
+        val file = talksStore.audioFile(id) ?: return
+        if (!file.isFile) return
+        val title = talks.firstOrNull { it.id == id }?.title ?: "Talk"
+        player.play(file, id, title)
+    }
+
+    fun togglePlayback() = player.toggle()
+
+    /** Play [id] if it is not on, or pause it if it is. One button, two jobs. */
+    fun playOrPause(id: String) {
+        if (player.playingId == id) player.toggle() else playTalk(id)
+    }
+
+    fun seekPlayback(positionMs: Long) = player.seekTo(positionMs)
+
+    /**
+     * Delete this phone's copy. The master on the laptop is left alone: whether
+     * deleting a download should delete the render is a separate question and is
+     * not answered by a tap here.
+     */
+    fun deleteTalk(id: String) {
+        talksStore.delete(id)
+        downloadedIds.remove(id)
+        downloadProgress.remove(id)
+        // Drop the row too. A live row is restored by the next refresh; a row the
+        // bridge no longer lists is gone for good, which is what was asked.
+        talks.removeAll { it.id == id }
+        if (player.playingId == id) player.stop()
+    }
+
+    /**
+     * A render just finished. Auto-play is a hijack unless the human is there for
+     * it, so it runs only when the app is in front, no other audio is playing and
+     * this player is idle. Any of those failing means the talk is announced by a
+     * notification instead, which does not take the phone over.
+     */
+    private fun maybeAutoPlay(row: TalkRow) {
+        val otherAudioPlaying = audioManager?.isMusicActive == true
+        if (!PiRemoteApp.isResumed || otherAudioPlaying || player.playing) {
+            notifier.postTalkReady(row.title)
+            return
+        }
+        playTalk(row.id)
+    }
+
     override fun onCleared() {
+        player.release()
         disconnect()
         super.onCleared()
     }

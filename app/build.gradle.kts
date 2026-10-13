@@ -76,6 +76,11 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Talk playback. media3-exoplayer decodes the MP3 and media3-session pairs it
+    // with a MediaSessionService, which is what keeps a 30 minute talk playing
+    // with the screen off. Apache-2.0, so nothing GPL enters the app.
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+    implementation("androidx.media3:media3-session:1.5.1")
     // QR scanning for pairing. ZXing only: no Google Play services component, and the
     // camera is used solely to decode the code /pair draws.
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")

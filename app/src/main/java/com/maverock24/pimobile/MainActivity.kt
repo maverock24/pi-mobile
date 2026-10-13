@@ -30,6 +30,7 @@ import com.maverock24.pimobile.ui.ChatViewModel
 import com.maverock24.pimobile.ui.NoticeAction
 import com.maverock24.pimobile.ui.PiRemoteTheme
 import com.maverock24.pimobile.ui.SettingsScreen
+import com.maverock24.pimobile.ui.TalksScreen
 import com.maverock24.pimobile.ui.UpdateStatus
 import com.maverock24.pimobile.update.UpdateChecker
 import com.maverock24.pimobile.voice.Dictation
@@ -65,6 +66,7 @@ class MainActivity : ComponentActivity() {
                 val scope = rememberCoroutineScope()
 
                 var showSettings by rememberSaveable { mutableStateOf(false) }
+                var showTalks by rememberSaveable { mutableStateOf(false) }
                 var listening by remember { mutableStateOf(false) }
                 var partialText by remember { mutableStateOf("") }
                 var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Checking) }
@@ -147,6 +149,16 @@ class MainActivity : ComponentActivity() {
                         onFinal = { text ->
                             partialText = ""
                             vm.appendToDraft(text)
+                        },
+                        onSubmit = {
+                            // Voice-only submit: a whole spoken trigger phrase sends
+                            // the open mic's draft with no tap. Nothing is sent when
+                            // the composer is blocked, so the words are not lost.
+                            partialText = ""
+                            if (vm.draft.isNotBlank() && vm.composerBlock == null) {
+                                vm.send(vm.draft)
+                                vm.clearDraft()
+                            }
                         },
                         onListeningChanged = { listening = it },
                         onError = { vm.notifyError(it) },
@@ -280,6 +292,13 @@ class MainActivity : ComponentActivity() {
                         onClearCrashState = vm::clearCrashState,
                         onBack = { showSettings = false },
                     )
+                } else if (showTalks) {
+                    // Back leaves the library rather than the app, same as settings.
+                    BackHandler(enabled = showTalks) { showTalks = false }
+                    TalksScreen(
+                        vm = vm,
+                        onBack = { showTalks = false },
+                    )
                 } else {
                     holder.SaveableStateProvider("chat") {
                         ChatScreen(
@@ -303,6 +322,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onOpenSettings = { showSettings = true },
+                            onOpenTalks = { showTalks = true },
                             onNoticeAction = { action ->
                                 when (action) {
                                     is NoticeAction.InstallUpdate -> installUpdate(action.info)
