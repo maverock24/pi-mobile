@@ -22,7 +22,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -90,7 +89,6 @@ fun TalksView(
                 )
             }
         }
-        NowPlaying(vm)
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (vm.talks.isEmpty()) {
                 item {
@@ -163,65 +161,45 @@ fun TalksScreen(
 }
 
 /**
- * The player strip, drawn only once a talk has been loaded into the player. It
- * is the one place with a scrubber, since a thirty minute MP3 is unusable
- * without one.
+ * The scrubber for the talk the player holds. It is drawn inside that talk's
+ * own row so the row itself is the whole control, and only while that talk is
+ * the one loaded, so a stopped library shows no slider at all.
  */
 @Composable
-private fun NowPlaying(vm: ChatViewModel) {
-    val playingId = vm.player.playingId ?: return
-    val title = vm.talks.firstOrNull { it.id == playingId }?.title ?: "Talk"
+private fun TalkScrubber(vm: ChatViewModel, id: String) {
     val duration = vm.player.durationMs
-    var position by remember(playingId) { mutableStateOf(0L) }
-    var scrubbing by remember(playingId) { mutableStateOf(false) }
-    var scrubValue by remember(playingId) { mutableStateOf(0f) }
+    var position by remember(id) { mutableStateOf(0L) }
+    var scrubbing by remember(id) { mutableStateOf(false) }
+    var scrubValue by remember(id) { mutableStateOf(0f) }
 
     // The player does not push its position, so the bar polls it while it is on
     // screen. Polling pauses under the thumb, so the bar does not fight the drag.
-    LaunchedEffect(playingId) {
+    LaunchedEffect(id) {
         while (isActive) {
             if (!scrubbing) position = vm.player.positionMs()
             delay(500)
         }
     }
 
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 8.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Slider(
-            value = (if (scrubbing) scrubValue else position.toFloat()).coerceIn(0f, duration.coerceAtLeast(1L).toFloat()),
-            onValueChange = {
-                scrubbing = true
-                scrubValue = it
-            },
-            onValueChangeFinished = {
-                vm.seekPlayback(scrubValue.toLong())
-                position = scrubValue.toLong()
-                scrubbing = false
-            },
-            valueRange = 0f..duration.coerceAtLeast(1L).toFloat(),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Button(onClick = vm::togglePlayback, modifier = Modifier.tactile(haptics = true)) {
-                Text(if (vm.player.playing) "Pause" else "Play")
-            }
-            Text(
-                text = "${formatMillis(position)} / ${formatMillis(duration)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        HorizontalDivider()
-    }
+    Slider(
+        value = (if (scrubbing) scrubValue else position.toFloat()).coerceIn(0f, duration.coerceAtLeast(1L).toFloat()),
+        onValueChange = {
+            scrubbing = true
+            scrubValue = it
+        },
+        onValueChangeFinished = {
+            vm.seekPlayback(scrubValue.toLong())
+            position = scrubValue.toLong()
+            scrubbing = false
+        },
+        valueRange = 0f..duration.coerceAtLeast(1L).toFloat(),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        text = "${formatMillis(position)} / ${formatMillis(duration)}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /** One library row, its controls chosen by the render state and what is stored. */
@@ -261,6 +239,13 @@ private fun TalkRowCard(vm: ChatViewModel, row: TalkRow) {
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            // The scrubber sits in the talk's own row and only while that talk
+            // is the one the player holds. A stopped talk shows no slider, so a
+            // stopped library is just rows.
+            if (vm.player.playingId == row.id) {
+                Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
+                TalkScrubber(vm = vm, id = row.id)
             }
             Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
             when {
