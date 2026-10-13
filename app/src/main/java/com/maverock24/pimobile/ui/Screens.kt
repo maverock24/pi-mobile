@@ -13,13 +13,13 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -1815,10 +1815,13 @@ private fun Composer(
         Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
         val buttonModifier = Modifier.heightIn(min = AnswerStyle.buttonHeight)
         val label = MaterialTheme.typography.bodyLarge
-        // Two rows, and the split is the point: the action and the escape are the
-        // two controls a run needs within reach, so neither of them sits in a row
-        // that scrolls. The action leads, so Stop appearing beside it cannot move
-        // it sideways.
+        // One row for every control, always: each takes an equal share of the
+        // width, so the row can never wrap and no button can be carried off the
+        // phone's edge the way the old scrolling row did. A label wider than its
+        // share shrinks with an ellipsis rather than forcing a second row or
+        // dropping a control, and the tight padding leaves as much of the label
+        // showing as the share allows.
+        val keyPadding = PaddingValues(horizontal = 6.dp)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap),
@@ -1826,31 +1829,25 @@ private fun Composer(
         ) {
             // One button, two jobs: it reads what it will do. Sending is the same
             // as before, while searching runs the search on this same text, so a
-            // search can never leave as a prompt.
+            // search can never leave as a prompt. It leads the row, so Stop
+            // appearing beside it never moves it.
             Button(
                 onClick = onAction,
                 enabled = actionEnabled,
-                modifier = buttonModifier.tactile(haptics = true, enabled = actionEnabled, depth = AnswerStyle.keyDepth),
+                contentPadding = keyPadding,
+                modifier = buttonModifier.weight(1f).tactile(haptics = true, enabled = actionEnabled, depth = AnswerStyle.keyDepth),
             ) {
-                Text(actionLabel, style = label)
+                Text(actionLabel, style = label, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (busy) {
                 OutlinedButton(
                     onClick = onStop,
-                    modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                    contentPadding = keyPadding,
+                    modifier = buttonModifier.weight(1f).tactile(haptics = true, depth = AnswerStyle.keyDepth),
                 ) {
-                    Text("Stop", style = label)
+                    Text("Stop", style = label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-        }
-        Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
-        // The rest of the composer's controls, in a row that scrolls so a narrow
-        // screen can still reach them without crowding the action above.
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap),
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        ) {
             // The clipboard capture toggle. It shows its own state: filled and
             // reading "Auto-paste on" when a copy will be collected, outlined and
             // reading "Auto-paste" when it will not. It sits in the composer row
@@ -1858,30 +1855,34 @@ private fun Composer(
             if (captureEnabled) {
                 FilledTonalButton(
                     onClick = onToggleCapture,
-                    modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                    contentPadding = keyPadding,
+                    modifier = buttonModifier.weight(1f).tactile(haptics = true, depth = AnswerStyle.keyDepth),
                 ) {
-                    Text("Auto-paste on", style = label)
+                    Text("Auto-paste on", style = label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             } else {
                 OutlinedButton(
                     onClick = onToggleCapture,
-                    modifier = buttonModifier.tactile(depth = AnswerStyle.keyDepth),
+                    contentPadding = keyPadding,
+                    modifier = buttonModifier.weight(1f).tactile(depth = AnswerStyle.keyDepth),
                 ) {
-                    Text("Auto-paste", style = label)
+                    Text("Auto-paste", style = label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             FilledTonalButton(
                 onClick = onToggleMic,
-                modifier = buttonModifier.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                contentPadding = keyPadding,
+                modifier = buttonModifier.weight(1f).tactile(haptics = true, depth = AnswerStyle.keyDepth),
             ) {
-                Text(if (listening) "Mic on" else "Mic", style = label)
+                Text(if (listening) "Mic on" else "Mic", style = label, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             OutlinedButton(
                 onClick = onClear,
                 enabled = text.isNotBlank(),
-                modifier = buttonModifier.tactile(enabled = text.isNotBlank(), depth = AnswerStyle.keyDepth),
+                contentPadding = keyPadding,
+                modifier = buttonModifier.weight(1f).tactile(enabled = text.isNotBlank(), depth = AnswerStyle.keyDepth),
             ) {
-                Text("Clear", style = label)
+                Text("Clear", style = label, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
