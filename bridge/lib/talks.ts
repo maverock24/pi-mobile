@@ -88,20 +88,68 @@ export function saveTalk(record: TalkRecord): void {
 	fs.renameSync(temp, target);
 }
 
+/**
+ * A talk inferred from an MP3 that has no metadata record. The filename is the
+ * only description that is left, so the id is the file's basename and the title
+ * is that name prettied up. Size and time come from the file itself; the spoken
+ * length is not guessed, since reading it would mean decoding MPEG frames.
+ */
+function orphanTalk(id: string): TalkRecord | undefined {
+	const mp3 = talkPaths(id).mp3;
+	let stat: fs.Stats;
+	try {
+		stat = fs.statSync(mp3);
+	} catch {
+		return undefined;
+	}
+	if (!stat.isFile()) return undefined;
+	const at = stat.mtime.toISOString();
+	return {
+		id,
+		title: prettifyTalkTitle(id),
+		createdAt: at,
+		updatedAt: at,
+		state: "ready",
+		scriptPath: talkPaths(id).script,
+		mp3Path: mp3,
+		bytes: stat.size,
+		durationSeconds: null,
+		durationEstimated: false,
+		voice: "",
+		error: null,
+	};
+}
+
+/** "bees" or "great_lecture-2" as a readable title: "Bees", "Great Lecture 2". */
+function prettifyTalkTitle(id: string): string {
+	const words = id.replace(/[-_]+/g, " ").split(" ").filter(Boolean);
+	if (words.length === 0) return "Talk";
+	return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+
+/**
+ * The talk named [id]: its metadata record when one reads, otherwise the MP3
+ * alone. A file that an older bridge or a render outside the API left without a
+ * record is still playable, so the record is preferred and the bare file is the
+ * fallback rather than a 404.
+ */
 export function readTalk(id: string): TalkRecord | undefined {
 	if (!isSafeTalkId(id)) return undefined;
 	try {
 		const raw = JSON.parse(fs.readFileSync(talkPaths(id).meta, "utf8")) as TalkRecord;
-		if (!raw || typeof raw !== "object" || !isTalkState(raw.state)) return undefined;
-		return raw;
+		if (raw && typeof raw === "object" && isTalkState(raw.state)) return raw;
 	} catch {
-		return undefined;
+		// Fall through: a record that will not read does not hide the audio beside it.
 	}
+	return orphanTalk(id);
 }
 
 /**
  * Every talk, newest first. A corrupt record is skipped rather than failing the
- * whole list, so one bad file cannot hide the rest of the library.
+ * whole list, so one bad file cannot hide the rest of the library. An MP3 with
+ * no record of its own is listed too: a library that hides a playable file
+ * because a record is missing is the bug this fallback exists to avoid. One id
+ * is one row, and the metadata record is authoritative when both are present.
  */
 export function listTalks(): TalkRecord[] {
 	let names: string[];
@@ -112,12 +160,20 @@ export function listTalks(): TalkRecord[] {
 		// the same answer either way.
 		return [];
 	}
-	const talks: TalkRecord[] = [];
+	// One row per id. A `.json` record and a `.mp3` of the same id are the same
+	// talk: readTalk prefers the record, so reading both names cannot double it.
+	const byId = new Map<string, TalkRecord>();
 	for (const name of names) {
-		if (!name.endsWith(".json")) continue;
-		const record = readTalk(name.slice(0, -".json".length));
-		if (record) talks.push(record);
+		const id = name.endsWith(".json")
+			? name.slice(0, -".json".length)
+			: name.endsWith(".mp3")
+				? name.slice(0, -".mp3".length)
+				: undefined;
+		if (id === undefined || !isSafeTalkId(id)) continue;
+		const record = readTalk(id);
+		if (record) byId.set(id, record);
 	}
+	const talks = [...byId.values()];
 	talks.sort((left, right) => (left.createdAt < right.createdAt ? 1 : left.createdAt > right.createdAt ? -1 : 0));
 	return talks;
 }

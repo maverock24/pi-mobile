@@ -77,13 +77,18 @@ fun TalksView(
                 modifier = Modifier.padding(AnswerStyle.screenPadding),
             )
         }
-        vm.talksError?.let { error ->
-            Text(
-                text = error,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
-            )
+        // An error over a library that still has rows belongs above them. When the
+        // list is empty the box below carries the error instead, so the failure is
+        // named once and never looks like the plain "No talks yet" case.
+        if (vm.talks.isNotEmpty()) {
+            vm.talksError?.let { error ->
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
+                )
+            }
         }
         NowPlaying(vm)
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -93,10 +98,19 @@ fun TalksView(
                         modifier = Modifier.fillMaxWidth().padding(AnswerStyle.screenPadding),
                         contentAlignment = Alignment.Center,
                     ) {
+                        val error = vm.talksError
                         Text(
-                            text = if (vm.talksLoading) "Loading talks…" else "No talks yet",
+                            text = when {
+                                vm.talksLoading -> "Loading talks…"
+                                error != null -> error
+                                else -> "No talks yet"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (!vm.talksLoading && error != null) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         )
                     }
                 }
