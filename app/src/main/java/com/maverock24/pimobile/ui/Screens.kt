@@ -258,6 +258,9 @@ fun ChatScreen(
     onToggleMic: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenFiles: () -> Unit,
+    // Turning car mode on from the chat. It is the way into the mode; the way
+    // out is the big Exit control on the car screen itself.
+    onOpenCar: () -> Unit,
     // A notice's action is a value, because the notice outlives the composition
     // that raised it; this composition maps the value to the behaviour it has
     // now, so the action still runs after the screen is recreated.
@@ -409,6 +412,12 @@ fun ChatScreen(
                             )
                             vm.busy -> WorkingShimmer()
                         }
+                    }
+                    // Car mode is a mode, not a destination: a word rather than
+                    // an icon, because there is no car glyph in the core icon
+                    // set and it must be readable at a glance in a holder.
+                    TextButton(onClick = onOpenCar, modifier = Modifier.tactile()) {
+                        Text("Car", style = MaterialTheme.typography.labelLarge)
                     }
                     IconButton(onClick = onOpenFiles, modifier = Modifier.tactile()) {
                         Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = "Files")

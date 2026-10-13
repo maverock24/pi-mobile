@@ -65,6 +65,16 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit().putString("viewMode", value).apply()
 
     /**
+     * Whether the app is showing car mode. Off by default. It is a manual
+     * choice with no auto-detection behind it, and it is written down so a
+     * launch that restarts mid-drive comes back to the big controls rather than
+     * dropping the driver into the dense UI.
+     */
+    var carMode: Boolean
+        get() = prefs.getBoolean("carMode", false)
+        set(value) = prefs.edit().putBoolean("carMode", value).apply()
+
+    /**
      * "midnight", "indigo", "amber" or "forest": which dark palette the app
      * paints with. Light mode ignores it, so this only matters on the dark side.
      * Midnight is the original look and the default.

@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.maverock24.pimobile.net.Pairing
+import com.maverock24.pimobile.ui.CarScreen
 import com.maverock24.pimobile.ui.ChatScreen
 import com.maverock24.pimobile.ui.ChatViewModel
 import com.maverock24.pimobile.ui.NoticeAction
@@ -165,6 +166,26 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // One mic toggle for both screens. Car mode's big Talk button
+                // and the chat's Mic button run the same start and stop, so the
+                // hands-free path is the same path in either mode.
+                val toggleMic: () -> Unit = {
+                    if (listening) {
+                        dictation.stop()
+                    } else {
+                        val granted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (granted) {
+                            runCatching { dictation.start() }
+                                .onFailure { vm.notifyError("Could not start dictation: ${it.javaClass.simpleName}") }
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    }
+                }
+
                 LaunchedEffect(Unit) {
                     vm.connect()
                     checkForUpdates()
@@ -253,7 +274,19 @@ class MainActivity : ComponentActivity() {
                 // are seeded from the view model on every entry, and a saved field
                 // would re-seed them with a stale token after a pairing.
                 val holder = rememberSaveableStateHolder()
-                if (showSettings) {
+                if (vm.carMode) {
+                    // Car mode is the outermost branch: it replaces the chat
+                    // whole, and the way out is its own big Exit button rather
+                    // than the system back gesture, so back is wired to the
+                    // same exit as a convenience.
+                    BackHandler(enabled = true) { vm.updateCarMode(false) }
+                    CarScreen(
+                        vm = vm,
+                        listening = listening,
+                        partialText = partialText,
+                        onToggleMic = toggleMic,
+                    )
+                } else if (showSettings) {
                     // Back leaves settings rather than the app. The screen is a
                     // destination and the chat is the app's body, so the gesture
                     // that closes a layer should land on the chat, not finish.
@@ -295,24 +328,10 @@ class MainActivity : ComponentActivity() {
                             vm = vm,
                             listening = listening,
                             partialText = partialText,
-                            onToggleMic = {
-                                if (listening) {
-                                    dictation.stop()
-                                } else {
-                                    val granted = ContextCompat.checkSelfPermission(
-                                        context,
-                                        Manifest.permission.RECORD_AUDIO,
-                                    ) == PackageManager.PERMISSION_GRANTED
-                                    if (granted) {
-                                        runCatching { dictation.start() }
-                                            .onFailure { vm.notifyError("Could not start dictation: ${it.javaClass.simpleName}") }
-                                    } else {
-                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                    }
-                                }
-                            },
+                            onToggleMic = toggleMic,
                             onOpenSettings = { showSettings = true },
                             onOpenFiles = { showFiles = true },
+                            onOpenCar = { vm.updateCarMode(true) },
                             onNoticeAction = { action ->
                                 when (action) {
                                     is NoticeAction.InstallUpdate -> installUpdate(action.info)

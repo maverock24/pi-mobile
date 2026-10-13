@@ -553,6 +553,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
+     * Whether the big car mode screen is on. It is a mode of the same view
+     * model rather than a second app: the transcript, the player and the
+     * settings are the ones the normal screen uses, so turning car mode on and
+     * off changes how they are shown and nothing else.
+     */
+    var carMode by mutableStateOf(store.carMode)
+        private set
+
+    /**
      * Which dark palette is on screen: Midnight, Indigo, Amber or Forest. It is
      * read and written like [appearance], and it only changes the dark side.
      */
@@ -1185,6 +1194,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun updateViewMode(value: String) {
         store.viewMode = value
         viewMode = value
+    }
+
+    /**
+     * Turn car mode on or off. It is written down so the choice survives a
+     * restart, and it deliberately touches nothing else: playback keeps going,
+     * the transcript is left where it was, and leaving the mode only changes
+     * which screen is drawn.
+     */
+    fun updateCarMode(value: Boolean) {
+        store.carMode = value
+        carMode = value
     }
 
     /** Choose one of the four dark palettes; the choice is written down. */
