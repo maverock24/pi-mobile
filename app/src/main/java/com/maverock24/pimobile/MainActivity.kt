@@ -150,16 +150,6 @@ class MainActivity : ComponentActivity() {
                             partialText = ""
                             vm.appendToDraft(text)
                         },
-                        onSubmit = {
-                            // Voice-only submit: a whole spoken trigger phrase sends
-                            // the open mic's draft with no tap. Nothing is sent when
-                            // the composer is blocked, so the words are not lost.
-                            partialText = ""
-                            if (vm.draft.isNotBlank() && vm.composerBlock == null) {
-                                vm.send(vm.draft)
-                                vm.clearDraft()
-                            }
-                        },
                         onListeningChanged = { listening = it },
                         onError = { vm.notifyError(it) },
                     )

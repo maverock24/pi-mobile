@@ -95,6 +95,30 @@ internal fun shortPath(path: String): String {
 }
 
 /**
+ * The phrase that sends the composer's draft without a tap. The draft holds
+ * keyboard dictation as ordinary text, so the phrase is matched at the end of
+ * whatever is there rather than as a bare "send it": a short phrase also ends
+ * a thinking pause ("I will send it"), and sending there would cut a prompt in
+ * half. A whole "send it now" is not something a half-finished request ends on.
+ */
+internal const val SUBMIT_PHRASE = "send it now"
+
+/**
+ * The prompt left when [text] ends in the spoken submit phrase, or null when it
+ * does not. Case and trailing punctuation are ignored, since a recogniser
+ * returns "Send it now." for "send it now". The phrase has to end a word, so
+ * "send it nowhere" is left alone. An empty result means the phrase was said
+ * with nothing before it.
+ */
+internal fun promptBeforeSubmitTrigger(text: String): String? {
+    val trimmed = text.trimEnd().trimEnd('.', '!', '?', ',', ';', ':').trimEnd()
+    if (!trimmed.lowercase().endsWith(SUBMIT_PHRASE)) return null
+    val before = trimmed.dropLast(SUBMIT_PHRASE.length)
+    if (before.isNotEmpty() && !before.last().isWhitespace()) return null
+    return before.trim()
+}
+
+/**
  * Names a session on screen: the folder it runs in first, then the name it
  * carries. Either can be missing, so the result can come back empty and each
  * caller says what it means by that.
@@ -1306,7 +1330,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateDraft(value: String) {
-        draft = value
+        applyDictatedDraft(value)
+    }
+
+    /**
+     * Put one result into the composer, whether it was typed, dictated by the
+     * keyboard or dictated on the app's own mic. A whole spoken submit phrase at
+     * the end sends what came before it, so a prompt leaves by voice with no tap;
+     * anything else is kept as the draft.
+     */
+    private fun applyDictatedDraft(value: String) {
+        val prompt = promptBeforeSubmitTrigger(value)
+        if (prompt == null) {
+            draft = value
+            return
+        }
+        // The phrase is removed before anything is sent, so it never reaches pi
+        // as part of the prompt. A blocked or empty draft keeps its words in the
+        // composer rather than losing them.
+        draft = prompt
+        if (prompt.isNotBlank() && composerBlock == null) {
+            send(prompt)
+            draft = ""
+        }
     }
 
     /**
@@ -1356,7 +1402,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun appendToDraft(text: String) {
         if (text.isBlank()) return
-        draft = if (draft.isBlank()) text else "${draft.trimEnd()} $text"
+        val joined = if (draft.isBlank()) text else "${draft.trimEnd()} $text"
+        applyDictatedDraft(joined)
     }
 
     /**

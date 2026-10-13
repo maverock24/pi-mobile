@@ -10,33 +10,14 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 
 /**
- * The spoken phrases that submit the open mic's draft without a tap. They are
- * whole utterances rather than words to look for inside one, because a submit
- * that fires on a phrase heard mid-sentence would send half a prompt. "send it"
- * said on its own sends; "I will send it tomorrow" is a sentence and is kept.
- */
-private val SUBMIT_PHRASES = setOf("send it", "send it now")
-
-/**
- * True when [text] is a submit phrase and nothing else. Trailing punctuation and
- * case are ignored, since a recogniser returns "Send it." for "send it".
- */
-internal fun isSubmitTrigger(text: String): Boolean {
-    val spoken = text.trim().trimEnd('.', '!', '?', ',', ';', ':').trim().lowercase()
-    return spoken in SUBMIT_PHRASES
-}
-
-/**
  * Dictation built on the platform speech recogniser. While the user keeps the
  * mic on we restart listening after every result, so long prompts can be spoken
- * in several breaths; each final result is handed to [onFinal] to append, or to
- * [onSubmit] when it is a whole submit phrase.
+ * in several breaths; each final result is handed to [onFinal] to append.
  */
 class Dictation(
     private val context: Context,
     private val onPartial: (String) -> Unit,
     private val onFinal: (String) -> Unit,
-    private val onSubmit: () -> Unit,
     private val onListeningChanged: (Boolean) -> Unit,
     private val onError: (String) -> Unit,
 ) {
@@ -150,11 +131,7 @@ class Dictation(
                 ?.firstOrNull()
                 .orEmpty()
                 .trim()
-            if (text.isNotEmpty()) {
-                // The trigger is checked against the whole utterance, so a submit
-                // never fires on a phrase buried in a sentence.
-                if (isSubmitTrigger(text)) onSubmit() else onFinal(text)
-            }
+            if (text.isNotEmpty()) onFinal(text)
             restartSoon()
         }
 
