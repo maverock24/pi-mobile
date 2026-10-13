@@ -481,6 +481,14 @@ fun ChatScreen(
                     onConfirm = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
+            } else if (vm.viewMode == "talks") {
+                // Talks is its own view of the bridge's library, shown for the
+                // same reason as pins: a phone that has not connected can still
+                // play what it already downloaded.
+                TalksView(
+                    vm = vm,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
             } else if (turns.isEmpty() && pending == null) {
                 // With nothing on the transcript the screen should say which of
                 // the three situations it is in, because the fix differs: pair,
@@ -952,16 +960,16 @@ private fun DeckCard(
 }
 
 /**
- * The switch between the transcript, the deck and the pins: one segmented row,
- * the view in use drawn as the chosen segment. It sits in a row of its own so it
- * never lands on the composer.
+ * The switch between the transcript, the deck, the pins and the talks: one
+ * segmented row, the view in use drawn as the chosen segment. It sits in a row
+ * of its own so it never lands on the composer.
  */
 @Composable
 private fun ViewModeSwitch(
     mode: String,
     onChange: (String) -> Unit,
 ) {
-    val modes = listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins")
+    val modes = listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins", "talks" to "Talks")
     SingleChoiceSegmentedButtonRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.panelPadding),
     ) {

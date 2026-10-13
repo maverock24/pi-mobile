@@ -1963,9 +1963,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     /**
-     * Download a ready talk's audio into app storage. [autoPlay] is set only for
-     * a render that just finished, which is the case the human asked to hear
-     * without a tap; a manual download never starts playing by itself.
+     * Download a ready talk's audio into app storage. [autoPlay] is set when the
+     * request itself was to play: a render that finished on its own, or a tap on
+     * a ready talk that is not on the phone yet. Either way the download runs
+     * first and the playback follows it.
      */
     fun downloadTalk(id: String, autoPlay: Boolean = false) {
         if (!talksStore.isSafeId(id) || downloadsInFlight.contains(id)) return

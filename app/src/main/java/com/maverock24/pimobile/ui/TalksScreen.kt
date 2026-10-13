@@ -49,10 +49,66 @@ import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 
 /**
- * The talks library: what the bridge has rendered, plus what this phone already
- * holds. A heading row plays back the downloaded audio, with a scrubber long
- * enough to move through a thirty minute talk, and each row offers download for
- * a ready talk or the delete that reclaims its space.
+ * The talks library body: what the bridge has rendered, plus what this phone
+ * already holds. A heading row plays back the downloaded audio, with a scrubber
+ * long enough to move through a thirty minute talk, and each row plays a ready
+ * talk or offers the delete that reclaims its space.
+ *
+ * It is split from [TalksScreen] so the tab beside pins draws the same list
+ * rather than a second copy of it.
+ */
+@Composable
+fun TalksView(
+    vm: ChatViewModel,
+    modifier: Modifier = Modifier,
+) {
+    // Reading the library is cheap and it is the reason the view was opened, so
+    // it happens on entry rather than on a manual refresh.
+    LaunchedEffect(Unit) { vm.refreshTalks() }
+
+    Column(modifier = modifier) {
+        if (vm.token.isBlank()) {
+            // Without a token there is nothing to ask, and saying so is more
+            // useful than an empty list that looks like a failed render.
+            Text(
+                text = "Pair the bridge in Settings to see rendered talks",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(AnswerStyle.screenPadding),
+            )
+        }
+        vm.talksError?.let { error ->
+            Text(
+                text = error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
+            )
+        }
+        NowPlaying(vm)
+        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (vm.talks.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(AnswerStyle.screenPadding),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = if (vm.talksLoading) "Loading talks…" else "No talks yet",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            items(vm.talks, key = { it.id }) { row -> TalkRowCard(vm, row) }
+        }
+    }
+}
+
+/**
+ * The library as a full screen, reached from the app bar's play icon. It wraps
+ * [TalksView] so the screen and the tab stay one implementation.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,10 +116,6 @@ fun TalksScreen(
     vm: ChatViewModel,
     onBack: () -> Unit,
 ) {
-    // Reading the library is cheap and it is the reason the screen was opened, so
-    // it happens on entry rather than on a manual refresh.
-    LaunchedEffect(Unit) { vm.refreshTalks() }
-
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -92,44 +144,7 @@ fun TalksScreen(
             )
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (vm.token.isBlank()) {
-                // Without a token there is nothing to ask, and saying so is more
-                // useful than an empty list that looks like a failed render.
-                Text(
-                    text = "Pair the bridge in Settings to see rendered talks",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(AnswerStyle.screenPadding),
-                )
-            }
-            vm.talksError?.let { error ->
-                Text(
-                    text = error,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
-                )
-            }
-            NowPlaying(vm)
-            LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                if (vm.talks.isEmpty()) {
-                    item {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().padding(AnswerStyle.screenPadding),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = if (vm.talksLoading) "Loading talks…" else "No talks yet",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-                items(vm.talks, key = { it.id }) { row -> TalkRowCard(vm, row) }
-            }
-        }
+        TalksView(vm = vm, modifier = Modifier.fillMaxSize().padding(padding))
     }
 }
 
@@ -237,7 +252,8 @@ private fun TalkRowCard(vm: ChatViewModel, row: TalkRow) {
             when {
                 row.state == "rendering" -> {
                     // An indeterminate bar is honest here: the bridge reports the
-                    // state but not how far the render has got.
+                    // state but not how far the render has got. There is no button,
+                    // so a talk still being rendered cannot be tapped into playback.
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
                 row.state == "failed" -> Unit
@@ -263,11 +279,14 @@ private fun TalkRowCard(vm: ChatViewModel, row: TalkRow) {
                     }
                 }
                 else -> {
+                    // A ready talk that is not on the phone yet still plays on the
+                    // first tap: the download runs and the playback follows it, so
+                    // listening is one action rather than two.
                     Button(
-                        onClick = { vm.downloadTalk(row.id) },
+                        onClick = { vm.downloadTalk(row.id, autoPlay = true) },
                         modifier = Modifier.tactile(haptics = true),
                     ) {
-                        Text("Download")
+                        Text("Play")
                     }
                 }
             }
