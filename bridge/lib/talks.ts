@@ -121,7 +121,7 @@ function orphanTalk(id: string): TalkRecord | undefined {
 }
 
 /** "bees" or "great_lecture-2" as a readable title: "Bees", "Great Lecture 2". */
-function prettifyTalkTitle(id: string): string {
+export function prettifyTalkTitle(id: string): string {
 	const words = id.replace(/[-_]+/g, " ").split(" ").filter(Boolean);
 	if (words.length === 0) return "Talk";
 	return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
@@ -254,6 +254,7 @@ export function serveFile(
 	res: http.ServerResponse,
 	file: string,
 	contentType: string,
+	missingMessage = "talk is not available",
 ): FileServeResult {
 	let size: number;
 	try {
@@ -261,7 +262,7 @@ export function serveFile(
 		if (!stat.isFile()) throw new Error("not a file");
 		size = stat.size;
 	} catch {
-		const body = JSON.stringify({ error: "talk is not available" });
+		const body = JSON.stringify({ error: missingMessage });
 		res.writeHead(404, {
 			"content-type": "application/json; charset=utf-8",
 			"content-length": Buffer.byteLength(body),

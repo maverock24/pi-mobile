@@ -22,6 +22,7 @@ sources=(
 	"$here/lib/remote-question.ts:$agent_dir/lib/remote-question.ts"
 	"$here/lib/lease.ts:$agent_dir/lib/lease.ts"
 	"$here/lib/talks.ts:$agent_dir/lib/talks.ts"
+	"$here/lib/files.ts:$agent_dir/lib/files.ts"
 	"$here/skills/talk/SKILL.md:$agent_dir/skills/talk/SKILL.md"
 	"$here/skills/talk/render-talk.sh:$agent_dir/skills/talk/render-talk.sh"
 )

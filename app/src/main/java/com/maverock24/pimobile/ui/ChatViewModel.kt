@@ -1,6 +1,8 @@
 package com.maverock24.pimobile.ui
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
@@ -13,11 +15,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.maverock24.pimobile.PiRemoteApp
 import com.maverock24.pimobile.data.CrashLog
-import com.maverock24.pimobile.data.DownloadedTalk
+import com.maverock24.pimobile.data.DownloadedFile
+import com.maverock24.pimobile.data.FilesStore
 import com.maverock24.pimobile.data.Pin
 import com.maverock24.pimobile.data.PinsStore
 import com.maverock24.pimobile.data.SettingsStore
-import com.maverock24.pimobile.data.TalksStore
 import com.maverock24.pimobile.data.TranscriptEntry
 import com.maverock24.pimobile.data.TranscriptStore
 import com.maverock24.pimobile.data.mergeTranscript
@@ -37,6 +39,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Call
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.time.Instant
 import java.util.UUID
 
@@ -202,15 +205,21 @@ data class SessionCommand(
 )
 
 /**
- * One row of the talks library: what the bridge published about a generated
- * talk, and whether this phone already holds its audio. [state] is the bridge's
- * own word for the render, one of "rendering", "ready" or "failed". The two
- * durations are the bridge's estimate from the script's word count, so they are
- * shown as "about N minutes" rather than a claim about the file.
+ * One row of the files library: what the bridge published about a file, and
+ * whether this phone already holds its bytes. [kind] is the bridge's word for
+ * what the file is (audio, video, image, text, other) and decides what a tap
+ * does. [name] is the on-disk name the download route serves and the key this
+ * screen and the local store both use. [state] is the bridge's own word for a
+ * talk's render, one of "rendering", "ready" or "failed"; any bare file is
+ * always ready. The two durations are the bridge's estimate from a talk's word
+ * count, so they are shown as "about N minutes" rather than a claim about the
+ * file.
  */
-data class TalkRow(
+data class FileRow(
     val id: String,
+    val name: String,
     val title: String,
+    val kind: String,
     val state: String,
     val bytes: Long,
     val durationSeconds: Double,
@@ -218,6 +227,19 @@ data class TalkRow(
     val voice: String?,
     val createdAt: String,
     val error: String?,
+)
+
+/**
+ * What a tap on a text or image row opened: the bytes are read or decoded on
+ * demand, and a kind with nothing to draw yet carries a plain [message] instead.
+ */
+data class FilePreview(
+    val name: String,
+    val title: String,
+    val kind: String,
+    val text: String? = null,
+    val image: android.graphics.Bitmap? = null,
+    val message: String? = null,
 )
 
 /**
@@ -362,45 +384,49 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var attachedSessionId by mutableStateOf(store.sessionId.takeIf { it.isNotBlank() })
         private set
 
-    private val talksStore = TalksStore(app)
+    private val filesStore = FilesStore(app)
     private val audioManager = app.getSystemService(AudioManager::class.java)
 
     /**
-     * The player the Talks screen drives. It is owned here so it survives a trip
-     * to Settings, and it talks to the background service so a talk keeps playing
-     * with the screen off.
+     * The player the Files screen drives. It is owned here so it survives a trip
+     * to Settings, and it talks to the background service so audio and video keep
+     * playing with the screen off.
      */
     val player = TalkPlayer(app)
 
     /**
-     * The talk library, merged from the bridge and from this phone's own storage.
-     * Newest first, as the bridge sends it, with talks saved on the phone that
+     * The file library, merged from the bridge and from this phone's own storage.
+     * Newest first, as the bridge sends it, with files saved on the phone that
      * the bridge no longer lists kept after it so offline playback still has a
      * list to play from. It lives above the init block because the init reads it.
      */
-    val talks = mutableStateListOf<TalkRow>()
+    val files = mutableStateListOf<FileRow>()
 
-    /** The ids of talks whose audio is stored on this phone. */
+    /** The names of files whose bytes are stored on this phone. */
     val downloadedIds = mutableStateListOf<String>()
 
-    /** Download progress per talk id, 0f to 1f, present only while one is running. */
+    /** Download progress per file name, 0f to 1f, present only while one is running. */
     val downloadProgress = mutableStateMapOf<String, Float>()
 
     /** True while the bridge is being asked for the library. */
-    var talksLoading by mutableStateOf(false)
+    var filesLoading by mutableStateOf(false)
         private set
 
     /** Why the last library fetch failed, or null when it did not. */
-    var talksError by mutableStateOf<String?>(null)
+    var filesError by mutableStateOf<String?>(null)
         private set
 
-    /** Ids with a download in flight, so a repeated event does not start a second. */
+    /** What a text or image row opened, or null while the list is on screen. */
+    var filePreview by mutableStateOf<FilePreview?>(null)
+        private set
+
+    /** Names with a download in flight, so a repeated event does not start a second. */
     private val downloadsInFlight = HashSet<String>()
 
     init {
         if (!PiRemoteApp.startupSafeMode) {
             pins.addAll(runCatching { pinsStore.load() }.getOrElse { emptyList() })
-            loadLocalTalks()
+            loadLocalFiles()
             // The pinned session's transcript goes up from the cache before the
             // bridge is asked for anything, so a phone that cannot reach it still
             // shows the record it saved instead of an empty screen. The start is
@@ -520,9 +546,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Which view of the transcript is on screen: the scrolling transcript or the
      * card deck. It is read and written the same way as [appearance], and both
-     * live in the store, so the choice survives a restart.
+     * live in the store, so the choice survives a restart. A saved "talks" from
+     * before this view was renamed is read as the files view rather than dropped.
      */
-    var viewMode by mutableStateOf(store.viewMode)
+    var viewMode by mutableStateOf(store.viewMode.let { mode -> if (mode == "talks") "files" else mode })
         private set
 
     /**
@@ -1606,19 +1633,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // A render advanced, most often to ready. A ready talk is fetched
                 // here without a tap: download first when it is not stored yet,
                 // then decide whether the human is present enough to auto-play it.
-                val row = talkFrom(data)
+                val row = fileFrom(data)
                 if (row != null) {
-                    upsertTalk(row)
+                    upsertFile(row)
                     when {
                         row.state != "ready" -> Unit
-                        !downloadedIds.contains(row.id) -> downloadTalk(row.id, autoPlay = true)
+                        !downloadedIds.contains(row.name) -> downloadFile(row.name, autoPlay = true)
                         else -> maybeAutoPlay(row)
                     }
                 }
             }
             "talk_removed" -> {
                 val id = data.optString("id")
-                if (id.isNotBlank()) talks.removeAll { it.id == id }
+                if (id.isNotBlank()) files.removeAll { it.id == id }
             }
             "prompt_accepted", "agent_start", "turn_start" -> busy = true
             "agent_settled" -> {
@@ -1924,35 +1951,44 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * Seed the library from this phone's own storage, before any bridge is
      * asked. A phone with no connection still has a list to play from.
      */
-    private fun loadLocalTalks() {
-        val local = runCatching { talksStore.list() }.getOrElse { emptyList() }
+    private fun loadLocalFiles() {
+        val local = runCatching { filesStore.list() }.getOrElse { emptyList() }
         downloadedIds.clear()
-        talks.clear()
-        local.forEach { talk ->
-            downloadedIds.add(talk.id)
-            talks.add(
-                TalkRow(
-                    id = talk.id,
-                    title = talk.title,
+        files.clear()
+        local.forEach { saved ->
+            downloadedIds.add(saved.name)
+            files.add(
+                FileRow(
+                    id = saved.id,
+                    name = saved.name,
+                    title = saved.title,
+                    kind = saved.kind,
                     state = "ready",
-                    bytes = talksStore.audioFile(talk.id)?.length() ?: 0L,
-                    durationSeconds = talk.durationSeconds,
-                    durationEstimated = talk.durationEstimated,
-                    voice = talk.voice,
-                    createdAt = talk.createdAt,
+                    bytes = filesStore.fileFor(saved.name)?.length() ?: 0L,
+                    durationSeconds = saved.durationSeconds,
+                    durationEstimated = saved.durationEstimated,
+                    voice = saved.voice,
+                    createdAt = saved.createdAt,
                     error = null,
                 ),
             )
         }
     }
 
-    /** One library row, or null when the bridge sent an id that cannot name a file. */
-    private fun talkFrom(json: JSONObject): TalkRow? {
+    /** One library row, or null when the bridge sent a name that cannot fetch a file. */
+    private fun fileFrom(json: JSONObject): FileRow? {
+        // A files row carries the on-disk name. The talk event still carries only
+        // its id, so a name is derived from it, which is the mp3 the talk renders.
         val id = json.optString("id")
-        if (!talksStore.isSafeId(id)) return null
-        return TalkRow(
-            id = id,
-            title = json.optString("title").ifBlank { "Talk" },
+        val name = json.optString("name").takeIf { it.isNotBlank() }
+            ?: "$id.mp3".takeIf { id.isNotBlank() }
+            ?: return null
+        if (!filesStore.isSafeName(name)) return null
+        return FileRow(
+            id = id.ifBlank { name.substringBeforeLast('.', name) },
+            name = name,
+            title = json.optString("title").ifBlank { "File" },
+            kind = json.optString("kind").ifBlank { "audio" },
             state = json.optString("state").ifBlank { "ready" },
             bytes = json.optLong("bytes", 0L),
             durationSeconds = json.optDouble("durationSeconds", 0.0),
@@ -1964,45 +2000,47 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Ask the bridge for the library and merge it over what is stored here. */
-    fun refreshTalks() {
+    fun refreshFiles() {
         if (!isConfigured) return
-        talksLoading = true
+        filesLoading = true
         safeLaunch {
-            runCatching { client.talks() }
+            runCatching { client.files() }
                 .onSuccess { payload ->
-                    val array = payload.optJSONArray("talks")
-                    val rows = ArrayList<TalkRow>()
+                    val array = payload.optJSONArray("files")
+                    val rows = ArrayList<FileRow>()
                     if (array != null) {
                         for (index in 0 until array.length()) {
-                            array.optJSONObject(index)?.let { talkFrom(it) }?.let { rows.add(it) }
+                            array.optJSONObject(index)?.let { fileFrom(it) }?.let { rows.add(it) }
                         }
                     }
-                    applyTalks(rows)
-                    talksError = null
+                    applyFiles(rows)
+                    filesError = null
                 }
-                .onFailure { error -> talksError = Diagnostics.describe(error, store.baseUrl) }
-            talksLoading = false
+                .onFailure { error -> filesError = Diagnostics.describe(error, store.baseUrl) }
+            filesLoading = false
         }
     }
 
-    private fun applyTalks(remote: List<TalkRow>) {
-        val remoteIds = remote.mapTo(HashSet()) { it.id }
-        val merged = ArrayList<TalkRow>(remote)
-        // A talk saved on the phone but no longer listed by the bridge still plays
+    private fun applyFiles(remote: List<FileRow>) {
+        val remoteNames = remote.mapTo(HashSet()) { it.name }
+        val merged = ArrayList<FileRow>(remote)
+        // A file saved on the phone but no longer listed by the bridge still plays
         // offline, so it stays, after the live rows rather than being dropped.
-        talks.filter { it.id !in remoteIds }.forEach { merged.add(it) }
-        talks.clear()
-        talks.addAll(merged)
+        files.filter { it.name !in remoteNames }.forEach { merged.add(it) }
+        files.clear()
+        files.addAll(merged)
     }
 
-    private fun upsertTalk(row: TalkRow) {
-        val index = talks.indexOfFirst { it.id == row.id }
-        if (index >= 0) talks[index] = row else talks.add(0, row)
+    private fun upsertFile(row: FileRow) {
+        val index = files.indexOfFirst { it.name == row.name }
+        if (index >= 0) files[index] = row else files.add(0, row)
     }
 
-    private fun TalkRow.toDownloaded() = DownloadedTalk(
+    private fun FileRow.toDownloaded() = DownloadedFile(
         id = id,
+        name = name,
         title = title,
+        kind = kind,
         durationSeconds = durationSeconds,
         durationEstimated = durationEstimated,
         voice = voice,
@@ -2010,92 +2048,177 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     /**
-     * Download a ready talk's audio into app storage. [autoPlay] is set when the
-     * request itself was to play: a render that finished on its own, or a tap on
-     * a ready talk that is not on the phone yet. Either way the download runs
-     * first and the playback follows it.
+     * Download a file's bytes into app storage, awaiting the result. A name that
+     * is already stored is not fetched again, and a name with a download in
+     * flight returns false rather than starting a second.
      */
-    fun downloadTalk(id: String, autoPlay: Boolean = false) {
-        if (!talksStore.isSafeId(id) || downloadsInFlight.contains(id)) return
-        val dest = talksStore.audioFile(id) ?: return
-        val row = talks.firstOrNull { it.id == id }
-        downloadsInFlight.add(id)
-        downloadProgress[id] = 0f
-        safeLaunch {
-            runCatching {
-                client.downloadTalk(id, dest) { read, total ->
-                    // The callback runs on an IO worker, so the state write is posted
-                    // to main where composition follows it.
-                    main.post {
-                        downloadProgress[id] = if (total > 0) {
-                            (read.toFloat() / total.toFloat()).coerceIn(0f, 1f)
-                        } else {
-                            0f
-                        }
+    private suspend fun performDownload(name: String): Boolean {
+        if (!filesStore.isSafeName(name)) return false
+        if (filesStore.hasDownload(name)) return true
+        if (downloadsInFlight.contains(name)) return false
+        val dest = filesStore.fileFor(name) ?: return false
+        val row = files.firstOrNull { it.name == name }
+        downloadsInFlight.add(name)
+        downloadProgress[name] = 0f
+        val outcome = runCatching {
+            client.downloadFile(name, dest) { read, total ->
+                // The callback runs on an IO worker, so the state write is posted
+                // to main where composition follows it.
+                main.post {
+                    downloadProgress[name] = if (total > 0) {
+                        (read.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                    } else {
+                        0f
                     }
                 }
             }
-                .onSuccess {
-                    row?.let { talksStore.save(it.toDownloaded()) }
-                    if (!downloadedIds.contains(id)) downloadedIds.add(id)
-                    downloadProgress.remove(id)
-                    downloadsInFlight.remove(id)
-                    if (autoPlay) row?.let { maybeAutoPlay(it) }
-                }
-                .onFailure { error ->
-                    downloadProgress.remove(id)
-                    downloadsInFlight.remove(id)
-                    dest.delete()
-                    notifyError("talk download: ${Diagnostics.describe(error, store.baseUrl)}")
-                }
+        }
+        downloadProgress.remove(name)
+        downloadsInFlight.remove(name)
+        return outcome
+            .onSuccess {
+                row?.let { filesStore.save(it.toDownloaded()) }
+                if (!downloadedIds.contains(name)) downloadedIds.add(name)
+            }
+            .onFailure { error ->
+                dest.delete()
+                notifyError("file download: ${Diagnostics.describe(error, store.baseUrl)}")
+            }
+            .isSuccess
+    }
+
+    /**
+     * Download a file into app storage, then play it when the tap asked for that.
+     * [autoPlay] is set when the request itself was to play: a render that
+     * finished on its own, or a tap on an audio or video file that is not on the
+     * phone yet. Either way the download runs first and playback follows it.
+     */
+    fun downloadFile(name: String, autoPlay: Boolean = false) {
+        if (!filesStore.isSafeName(name)) return
+        safeLaunch {
+            val row = files.firstOrNull { it.name == name }
+            if (performDownload(name) && autoPlay) row?.let { maybeAutoPlay(it) }
         }
     }
 
-    /** Play a downloaded talk from the phone's own storage, with no bridge needed. */
-    fun playTalk(id: String) {
-        val file = talksStore.audioFile(id) ?: return
+    /** Play a downloaded file from the phone's own storage, with no bridge needed. */
+    fun playFile(name: String) {
+        val file = filesStore.fileFor(name) ?: return
         if (!file.isFile) return
-        val title = talks.firstOrNull { it.id == id }?.title ?: "Talk"
-        player.play(file, id, title)
+        val title = files.firstOrNull { it.name == name }?.title ?: "File"
+        player.play(file, name, title)
     }
 
     fun togglePlayback() = player.toggle()
 
-    /** Play [id] if it is not on, or pause it if it is. One button, two jobs. */
-    fun playOrPause(id: String) {
-        if (player.playingId == id) player.toggle() else playTalk(id)
+    /** Play [name] if it is not on, or pause it if it is. One button, two jobs. */
+    fun playOrPause(name: String) {
+        if (player.playingId == name) player.toggle() else playFile(name)
     }
 
     fun seekPlayback(positionMs: Long) = player.seekTo(positionMs)
 
     /**
-     * Delete this phone's copy. The master on the laptop is left alone: whether
-     * deleting a download should delete the render is a separate question and is
-     * not answered by a tap here.
+     * Do the obvious thing for a file's kind on a tap. Audio and video play
+     * through the player, a text file is shown as text and an image is decoded
+     * and shown; a kind with nothing to draw yet carries a plain sentence rather
+     * than doing nothing.
      */
-    fun deleteTalk(id: String) {
-        talksStore.delete(id)
-        downloadedIds.remove(id)
-        downloadProgress.remove(id)
+    fun openFile(name: String) {
+        if (!filesStore.isSafeName(name)) return
+        val row = files.firstOrNull { it.name == name }
+        val title = row?.title ?: name
+        val kind = row?.kind ?: "other"
+        when (kind) {
+            "audio", "video" ->
+                if (filesStore.hasDownload(name)) playFile(name) else downloadFile(name, autoPlay = true)
+            "text", "image" -> safeLaunch {
+                val file = if (filesStore.hasDownload(name)) {
+                    filesStore.fileFor(name)
+                } else {
+                    if (performDownload(name)) filesStore.fileFor(name) else null
+                }
+                if (file == null) return@safeLaunch
+                if (kind == "text") {
+                    val text = withContext(Dispatchers.IO) { runCatching { readTextCapped(file) }.getOrElse { "" } }
+                    filePreview = FilePreview(name = name, title = title, kind = kind, text = text)
+                } else {
+                    val bitmap = withContext(Dispatchers.IO) { runCatching { decodeSampled(file) }.getOrNull() }
+                    filePreview = if (bitmap != null) {
+                        FilePreview(name = name, title = title, kind = kind, image = bitmap)
+                    } else {
+                        FilePreview(
+                            name = name,
+                            title = title,
+                            kind = kind,
+                            message = "This image could not be displayed",
+                        )
+                    }
+                }
+            }
+            else -> filePreview = FilePreview(
+                name = name,
+                title = title,
+                kind = kind,
+                message = "This file type cannot be shown here yet",
+            )
+        }
+    }
+
+    /** Close the text or image view and go back to the list. */
+    fun closePreview() {
+        filePreview = null
+    }
+
+    /**
+     * Delete this phone's copy. The master on the laptop is left alone: whether
+     * deleting a download should delete the original is a separate question and
+     * is not answered by a tap here.
+     */
+    fun deleteFile(name: String) {
+        filesStore.delete(name)
+        downloadedIds.remove(name)
+        downloadProgress.remove(name)
         // Drop the row too. A live row is restored by the next refresh; a row the
         // bridge no longer lists is gone for good, which is what was asked.
-        talks.removeAll { it.id == id }
-        if (player.playingId == id) player.stop()
+        files.removeAll { it.name == name }
+        if (filePreview?.name == name) filePreview = null
+        if (player.playingId == name) player.stop()
     }
 
     /**
      * A render just finished. Auto-play is a hijack unless the human is there for
      * it, so it runs only when the app is in front, no other audio is playing and
-     * this player is idle. Any of those failing means the talk is announced by a
+     * this player is idle. Any of those failing means the file is announced by a
      * notification instead, which does not take the phone over.
      */
-    private fun maybeAutoPlay(row: TalkRow) {
+    private fun maybeAutoPlay(row: FileRow) {
         val otherAudioPlaying = audioManager?.isMusicActive == true
         if (!PiRemoteApp.isResumed || otherAudioPlaying || player.playing) {
             notifier.postTalkReady(row.title)
             return
         }
-        playTalk(row.id)
+        playFile(row.name)
+    }
+
+    /** A text file for the preview, capped so a huge one cannot exhaust the screen. */
+    private fun readTextCapped(file: File, maxChars: Int = 200_000): String {
+        val text = file.readText()
+        if (text.length <= maxChars) return text
+        return "${text.take(maxChars)}\n\n… [${text.length - maxChars} more characters]"
+    }
+
+    /** Decode an image, downsampled so a phone screen never holds a full 12MP bitmap. */
+    private fun decodeSampled(file: File, maxDimension: Int = 2048): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= maxDimension || bounds.outHeight / (sample * 2) >= maxDimension) {
+            sample *= 2
+        }
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        return BitmapFactory.decodeFile(file.absolutePath, options)
     }
 
     override fun onCleared() {

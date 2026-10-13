@@ -1,5 +1,6 @@
 package com.maverock24.pimobile.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
@@ -41,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -48,29 +53,35 @@ import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 
 /**
- * The talks library body: what the bridge has rendered, plus what this phone
- * already holds. A heading row plays back the downloaded audio, with a scrubber
- * long enough to move through a thirty minute talk, and each row plays a ready
- * talk or offers the delete that reclaims its space.
+ * The files library body: every file the bridge has, plus what this phone already
+ * holds. A row plays an audio or video file, opens a text or image file, or says
+ * plainly that the kind cannot be shown yet. A playing row carries a scrubber
+ * long enough to move through a thirty minute talk.
  *
- * It is split from [TalksScreen] so the tab beside pins draws the same list
+ * It is split from [FilesScreen] so the tab beside pins draws the same list
  * rather than a second copy of it.
  */
 @Composable
-fun TalksView(
+fun FilesView(
     vm: ChatViewModel,
     modifier: Modifier = Modifier,
 ) {
     // Reading the library is cheap and it is the reason the view was opened, so
     // it happens on entry rather than on a manual refresh.
-    LaunchedEffect(Unit) { vm.refreshTalks() }
+    LaunchedEffect(Unit) { vm.refreshFiles() }
+
+    val preview = vm.filePreview
+    if (preview != null) {
+        FilePreviewView(preview = preview, onClose = { vm.closePreview() }, modifier = modifier)
+        return
+    }
 
     Column(modifier = modifier) {
         if (vm.token.isBlank()) {
             // Without a token there is nothing to ask, and saying so is more
             // useful than an empty list that looks like a failed render.
             Text(
-                text = "Pair the bridge in Settings to see rendered talks",
+                text = "Pair the bridge in Settings to see the file library",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(AnswerStyle.screenPadding),
@@ -78,9 +89,9 @@ fun TalksView(
         }
         // An error over a library that still has rows belongs above them. When the
         // list is empty the box below carries the error instead, so the failure is
-        // named once and never looks like the plain "No talks yet" case.
-        if (vm.talks.isNotEmpty()) {
-            vm.talksError?.let { error ->
+        // named once and never looks like the plain "No files yet" case.
+        if (vm.files.isNotEmpty()) {
+            vm.filesError?.let { error ->
                 Text(
                     text = error,
                     style = MaterialTheme.typography.bodySmall,
@@ -90,21 +101,21 @@ fun TalksView(
             }
         }
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (vm.talks.isEmpty()) {
+            if (vm.files.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(AnswerStyle.screenPadding),
                         contentAlignment = Alignment.Center,
                     ) {
-                        val error = vm.talksError
+                        val error = vm.filesError
                         Text(
                             text = when {
-                                vm.talksLoading -> "Loading talks…"
+                                vm.filesLoading -> "Loading files…"
                                 error != null -> error
-                                else -> "No talks yet"
+                                else -> "No files yet"
                             },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (!vm.talksLoading && error != null) {
+                            color = if (!vm.filesLoading && error != null) {
                                 MaterialTheme.colorScheme.error
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -113,18 +124,18 @@ fun TalksView(
                     }
                 }
             }
-            items(vm.talks, key = { it.id }) { row -> TalkRowCard(vm, row) }
+            items(vm.files, key = { it.name }) { row -> FileRowCard(vm, row) }
         }
     }
 }
 
 /**
  * The library as a full screen, reached from the app bar's play icon. It wraps
- * [TalksView] so the screen and the tab stay one implementation.
+ * [FilesView] so the screen and the tab stay one implementation.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TalksScreen(
+fun FilesScreen(
     vm: ChatViewModel,
     onBack: () -> Unit,
 ) {
@@ -141,40 +152,96 @@ fun TalksScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
-                title = { Text("Talks", style = MaterialTheme.typography.titleMedium) },
+                title = { Text("Files", style = MaterialTheme.typography.titleMedium) },
                 actions = {
-                    if (vm.talksLoading) {
+                    if (vm.filesLoading) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp).padding(end = 4.dp),
                             strokeWidth = 2.dp,
                         )
                     }
-                    IconButton(onClick = { vm.refreshTalks() }, modifier = Modifier.tactile()) {
+                    IconButton(onClick = { vm.refreshFiles() }, modifier = Modifier.tactile()) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh the library")
                     }
                 },
             )
         },
     ) { padding ->
-        TalksView(vm = vm, modifier = Modifier.fillMaxSize().padding(padding))
+        FilesView(vm = vm, modifier = Modifier.fillMaxSize().padding(padding))
     }
 }
 
 /**
- * The scrubber for the talk the player holds. It is drawn inside that talk's
- * own row so the row itself is the whole control, and only while that talk is
+ * What a text or image row opened: text is drawn selectable, an image is drawn
+ * whole, and a kind with nothing to draw yet carries the one sentence that says
+ * so. The header carries the back control, since this replaces the list.
+ */
+@Composable
+private fun FilePreviewView(
+    preview: FilePreview,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onClose, modifier = Modifier.tactile()) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text(
+                text = preview.title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(AnswerStyle.screenPadding),
+        ) {
+            when {
+                preview.image != null -> Image(
+                    bitmap = preview.image.asImageBitmap(),
+                    contentDescription = preview.title,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                preview.text != null -> SelectionContainer {
+                    Text(
+                        text = preview.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                else -> Text(
+                    text = preview.message ?: "Nothing to show",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The scrubber for the file the player holds. It is drawn inside that file's
+ * own row so the row itself is the whole control, and only while that file is
  * the one loaded, so a stopped library shows no slider at all.
  */
 @Composable
-private fun TalkScrubber(vm: ChatViewModel, id: String) {
+private fun FileScrubber(vm: ChatViewModel, name: String) {
     val duration = vm.player.durationMs
-    var position by remember(id) { mutableStateOf(0L) }
-    var scrubbing by remember(id) { mutableStateOf(false) }
-    var scrubValue by remember(id) { mutableStateOf(0f) }
+    var position by remember(name) { mutableStateOf(0L) }
+    var scrubbing by remember(name) { mutableStateOf(false) }
+    var scrubValue by remember(name) { mutableStateOf(0f) }
 
     // The player does not push its position, so the bar polls it while it is on
     // screen. Polling pauses under the thumb, so the bar does not fight the drag.
-    LaunchedEffect(id) {
+    LaunchedEffect(name) {
         while (isActive) {
             if (!scrubbing) position = vm.player.positionMs()
             delay(500)
@@ -202,12 +269,12 @@ private fun TalkScrubber(vm: ChatViewModel, id: String) {
     )
 }
 
-/** One library row, its controls chosen by the render state and what is stored. */
+/** One library row, its controls chosen by the kind, the render state and storage. */
 @Composable
-private fun TalkRowCard(vm: ChatViewModel, row: TalkRow) {
-    val downloaded = vm.downloadedIds.contains(row.id)
-    val progress = vm.downloadProgress[row.id]
-    val isPlayingThis = vm.player.playingId == row.id && vm.player.playing
+private fun FileRowCard(vm: ChatViewModel, row: FileRow) {
+    val downloaded = vm.downloadedIds.contains(row.name)
+    val progress = vm.downloadProgress[row.name]
+    val isPlayingThis = vm.player.playingId == row.name && vm.player.playing
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 6.dp),
@@ -221,8 +288,9 @@ private fun TalkRowCard(vm: ChatViewModel, row: TalkRow) {
                 overflow = TextOverflow.Ellipsis,
             )
             val details = listOfNotNull(
-                talkStateLabel(row.state),
-                talkDuration(row).takeIf { it.isNotBlank() },
+                fileKindLabel(row.kind),
+                row.state.takeIf { it != "ready" },
+                fileDuration(row).takeIf { it.isNotBlank() },
                 formatSize(row.bytes).takeIf { it.isNotBlank() },
                 row.voice,
             ).joinToString(" · ")
@@ -240,12 +308,12 @@ private fun TalkRowCard(vm: ChatViewModel, row: TalkRow) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            // The scrubber sits in the talk's own row and only while that talk
-            // is the one the player holds. A stopped talk shows no slider, so a
+            // The scrubber sits in the file's own row and only while that file
+            // is the one the player holds. A stopped file shows no slider, so a
             // stopped library is just rows.
-            if (vm.player.playingId == row.id) {
+            if (vm.player.playingId == row.name) {
                 Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
-                TalkScrubber(vm = vm, id = row.id)
+                FileScrubber(vm = vm, name = row.name)
             }
             Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
             when {
@@ -267,25 +335,49 @@ private fun TalkRowCard(vm: ChatViewModel, row: TalkRow) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                downloaded -> {
+                row.kind == "other" -> {
+                    // The one honest thing to do with a kind the app cannot draw
+                    // yet is to say so, rather than offering a tap that does nothing.
+                    Text(
+                        text = "This file cannot be shown here yet",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                row.kind == "audio" || row.kind == "video" -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap)) {
-                        Button(onClick = { vm.playOrPause(row.id) }, modifier = Modifier.tactile(haptics = true)) {
-                            Text(if (isPlayingThis) "Pause" else "Play")
-                        }
-                        OutlinedButton(onClick = { vm.deleteTalk(row.id) }, modifier = Modifier.tactile()) {
-                            Text("Delete")
+                        if (downloaded) {
+                            Button(onClick = { vm.playOrPause(row.name) }, modifier = Modifier.tactile(haptics = true)) {
+                                Text(if (isPlayingThis) "Pause" else "Play")
+                            }
+                            OutlinedButton(onClick = { vm.deleteFile(row.name) }, modifier = Modifier.tactile()) {
+                                Text("Delete")
+                            }
+                        } else {
+                            // A ready file that is not on the phone yet still plays on
+                            // the first tap: the download runs and the playback follows
+                            // it, so listening is one action rather than two.
+                            Button(
+                                onClick = { vm.downloadFile(row.name, autoPlay = true) },
+                                modifier = Modifier.tactile(haptics = true),
+                            ) {
+                                Text("Play")
+                            }
                         }
                     }
                 }
                 else -> {
-                    // A ready talk that is not on the phone yet still plays on the
-                    // first tap: the download runs and the playback follows it, so
-                    // listening is one action rather than two.
-                    Button(
-                        onClick = { vm.downloadTalk(row.id, autoPlay = true) },
-                        modifier = Modifier.tactile(haptics = true),
-                    ) {
-                        Text("Play")
+                    // Text and image: Open shows the file, downloading first when
+                    // this phone does not hold it yet.
+                    Row(horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap)) {
+                        Button(onClick = { vm.openFile(row.name) }, modifier = Modifier.tactile(haptics = true)) {
+                            Text("Open")
+                        }
+                        if (downloaded) {
+                            OutlinedButton(onClick = { vm.deleteFile(row.name) }, modifier = Modifier.tactile()) {
+                                Text("Delete")
+                            }
+                        }
                     }
                 }
             }
@@ -293,15 +385,16 @@ private fun TalkRowCard(vm: ChatViewModel, row: TalkRow) {
     }
 }
 
-private fun talkStateLabel(state: String): String = when (state) {
-    "rendering" -> "rendering"
-    "ready" -> "ready"
-    "failed" -> "failed"
-    else -> state
+private fun fileKindLabel(kind: String): String = when (kind) {
+    "audio" -> "audio"
+    "video" -> "video"
+    "image" -> "image"
+    "text" -> "text"
+    else -> "file"
 }
 
 /** A talk's length, marked as an estimate when the bridge estimated it. */
-private fun talkDuration(row: TalkRow): String {
+private fun fileDuration(row: FileRow): String {
     val seconds = row.durationSeconds
     if (seconds <= 0.0) return ""
     if (row.durationEstimated) {

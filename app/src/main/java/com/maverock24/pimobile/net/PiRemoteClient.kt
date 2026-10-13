@@ -96,21 +96,24 @@ class PiRemoteClient(private val config: () -> Pair<String, String>) {
     suspend fun commands(): JSONObject = execute(builder("/api/commands").get().build())
 
     /**
-     * The generated-talk library, newest first. Each row carries the render state
-     * (rendering / ready / failed) and, once ready, the size and an estimated
-     * duration. It is carried whole, so a library past forty talks is not cut.
+     * The file library, newest first: every file a pi session left in the
+     * agent's talks directory, talks included. Each row carries a kind inferred
+     * from the extension (audio, video, image, text, other) and, for a talk, its
+     * render state. It is carried whole, so a library past forty files is not cut.
      */
-    suspend fun talks(): JSONObject = execute(builder("/api/talks").get().build())
+    suspend fun files(): JSONObject = execute(builder("/api/files").get().build())
 
     /**
-     * Download one talk's MP3 to [dest], reporting bytes read against the total
+     * Download one library file to [dest], reporting bytes read against the total
      * as it goes. It stages through a `.part` file and renames on success, so a
-     * dropped connection never leaves a half file that plays as noise. [id] is
-     * checked by the caller to be the bridge's id shape before it reaches a URL.
+     * dropped connection never leaves a half file that plays as noise. [name] is
+     * checked by the caller to be the bridge's file-name shape before it reaches
+     * a URL; it is percent-encoded here so a space cannot break the path.
      */
-    suspend fun downloadTalk(id: String, dest: File, onProgress: (Long, Long) -> Unit): Unit =
+    suspend fun downloadFile(name: String, dest: File, onProgress: (Long, Long) -> Unit): Unit =
         withContext(Dispatchers.IO) {
-            val request = builder("/api/talks/$id.mp3").get().build()
+            val encoded = URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+            val request = builder("/api/files/$encoded").get().build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     throw BridgeException(

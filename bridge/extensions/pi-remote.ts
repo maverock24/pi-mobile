@@ -31,6 +31,10 @@
  *   POST /api/talks/<id>/link - mint a one-off, short-lived download link
  *                         (the key in that URL is the only unauthenticated
  *                         download path; the bearer token is never a query param)
+ *   GET  /api/files     - the whole library: every file a session left in the
+ *                         agent's talks directory, talks included, with a kind
+ *                         inferred from the extension
+ *   GET  /api/files/<name> - one library file, with byte-range support
  *
  * While a session serves the bridge it marks its own herdr pane with a
  * "remote ●/○" badge (● means a phone is attached), so you can see at a glance
@@ -84,6 +88,7 @@ import {
 	talksDir,
 	type TalkRecord,
 } from "../lib/talks.ts";
+import { filePayload, serveLibraryFile } from "../lib/files.ts";
 import {
 	decideState,
 	isTakeoverFile,
@@ -119,6 +124,8 @@ const MAX_TALK_SCRIPT_BYTES = 2 * 1024 * 1024;
 const TALK_FILE_RE = /^\/api\/talks\/([A-Za-z0-9_-]{1,64})\.mp3$/;
 const TALK_ITEM_RE = /^\/api\/talks\/([A-Za-z0-9_-]{1,64})$/;
 const TALK_LINK_RE = /^\/api\/talks\/([A-Za-z0-9_-]{1,64})\/link$/;
+/** The name is not constrained here; isSafeFileName in files.ts is the one check. */
+const FILE_ITEM_RE = /^\/api\/files\/([^/]+)$/;
 
 /** How much of a matched message a search hit carries around the match. */
 const SNIPPET_BEFORE = 40;
@@ -1248,6 +1255,29 @@ export default function (pi: ExtensionAPI) {
 			// Carried whole on purpose, like /api/commands: talksPayload trims each row
 			// and shrink() would otherwise cut the list at 40.
 			sendJson(res, 200, talksPayload());
+			return;
+		}
+
+		if (req.method === "GET" && url.pathname === "/api/files") {
+			// Carried whole for the same reason as /api/talks: filePayload trims each
+			// row, and shrink() would otherwise cut the list at 40 files silently.
+			sendJson(res, 200, filePayload());
+			return;
+		}
+
+		const fileItem = FILE_ITEM_RE.exec(url.pathname);
+		if (fileItem && (req.method === "GET" || req.method === "HEAD")) {
+			// The name is percent-encoded in the path, so it is decoded before the
+			// filesystem sees it. A malformed escape is a 404 rather than a throw.
+			let name = fileItem[1];
+			try {
+				name = decodeURIComponent(name);
+			} catch {
+				sendJson(res, 404, { error: "no such file" });
+				return;
+			}
+			const served = serveLibraryFile(req, res, name);
+			audit({ event: "file_download", name, device, status: served.status });
 			return;
 		}
 

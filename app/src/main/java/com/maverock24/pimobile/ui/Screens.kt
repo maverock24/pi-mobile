@@ -257,7 +257,7 @@ fun ChatScreen(
     partialText: String,
     onToggleMic: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenTalks: () -> Unit,
+    onOpenFiles: () -> Unit,
     // A notice's action is a value, because the notice outlives the composition
     // that raised it; this composition maps the value to the behaviour it has
     // now, so the action still runs after the screen is recreated.
@@ -410,8 +410,8 @@ fun ChatScreen(
                             vm.busy -> WorkingShimmer()
                         }
                     }
-                    IconButton(onClick = onOpenTalks, modifier = Modifier.tactile()) {
-                        Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = "Talks")
+                    IconButton(onClick = onOpenFiles, modifier = Modifier.tactile()) {
+                        Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = "Files")
                     }
                     IconButton(onClick = { searchOpen = !searchOpen }, modifier = Modifier.tactile()) {
                         Icon(
@@ -481,11 +481,11 @@ fun ChatScreen(
                     onConfirm = vm::notifyConfirmation,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
-            } else if (vm.viewMode == "talks") {
-                // Talks is its own view of the bridge's library, shown for the
+            } else if (vm.viewMode == "files") {
+                // Files is its own view of the bridge's library, shown for the
                 // same reason as pins: a phone that has not connected can still
-                // play what it already downloaded.
-                TalksView(
+                // open what it already downloaded.
+                FilesView(
                     vm = vm,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
@@ -960,7 +960,7 @@ private fun DeckCard(
 }
 
 /**
- * The switch between the transcript, the deck, the pins and the talks: one
+ * The switch between the transcript, the deck, the pins and the files: one
  * segmented row, the view in use drawn as the chosen segment. It sits in a row
  * of its own so it never lands on the composer.
  */
@@ -969,7 +969,7 @@ private fun ViewModeSwitch(
     mode: String,
     onChange: (String) -> Unit,
 ) {
-    val modes = listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins", "talks" to "Talks")
+    val modes = listOf("transcript" to "Transcript", "deck" to "Cards", "pins" to "Pins", "files" to "Files")
     SingleChoiceSegmentedButtonRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.panelPadding),
     ) {
