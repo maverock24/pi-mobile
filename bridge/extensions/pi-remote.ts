@@ -23,7 +23,7 @@
  *                         "custom": false, "cancel": false, "submit": false}
  *   GET  /api/diagnostics - the most recent crash trace a phone has reported
  *   POST /api/diagnostics - record one: {"trace": "..."}
- *   POST /api/talks     - register a generated talk and start the edge-tts render
+ *   POST /api/talks     - register a generated talk and start the Kokoro render
  *                         {"title": "...", "script"|"scriptPath": "...", "voice": "..."}
  *   GET  /api/talks     - the talk library, newest first, with render state
  *   GET  /api/talks/<id>.mp3 - the audio, with byte-range support
@@ -77,7 +77,10 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readPending, remoteDir, writeAnswer } from "../lib/remote-question.ts";
 import {
+	DEFAULT_TALK_VOICE,
 	estimateDurationSeconds,
+	kokoroCommand,
+	kokoroProblem,
 	listTalks,
 	newTalkId,
 	readTalk,
@@ -114,8 +117,6 @@ const MAX_STRING = 4000;
 const MAX_ARRAY = 40;
 const MAX_DEPTH = 8;
 
-/** edge-tts voice used when the caller does not name one. */
-const DEFAULT_TALK_VOICE = "en-US-AriaNeural";
 /** How long a one-off download link stays usable. Long enough for a car tap. */
 const TALK_LINK_TTL_MS = 5 * 60_000;
 /** A script longer than this is a client bug, and is refused rather than read. */
@@ -1064,32 +1065,6 @@ export default function (pi: ExtensionAPI) {
 		return { talks: listTalks().map(talkSummary) };
 	}
 
-	/** The edge-tts binary, overridable for a test harness or a non-standard install. */
-	function edgeTtsPath(): string {
-		return whichSync(process.env.PI_REMOTE_EDGE_TTS || "edge-tts");
-	}
-
-	/**
-	 * Fail before a render is promised when edge-tts cannot run. A missing binary
-	 * and a broken install are the same failure to the human, so both come back as
-	 * one actionable sentence naming what to install, never a stack trace. Running
-	 * `--version` proves the interpreter behind the shim still imports the module;
-	 * it touches no network.
-	 */
-	function edgeTtsProblem(): string | undefined {
-		const binary = edgeTtsPath();
-		if (!binary) {
-			return "edge-tts is not installed. Install it with `pipx install edge-tts` (or `pip install --user edge-tts`), then try again.";
-		}
-		const probe = spawnSync(binary, ["--version"], { encoding: "utf8", timeout: 5000 });
-		if (probe.error || probe.status !== 0) {
-			const tail = `${probe.stderr || ""}`.split("\n").map((line) => line.trim()).filter(Boolean).pop();
-			const detail = (tail || probe.error?.message || "unknown error").slice(0, 200);
-			return `edge-tts is installed at ${binary} but could not run (${detail}). Reinstall it with \`pipx install --force edge-tts\`, then try again.`;
-		}
-		return undefined;
-	}
-
 	/** Reads a script a caller named, with the same size bound the body path gets. */
 	function readTalkScriptFile(file: string): string {
 		const stat = fs.statSync(file);
@@ -1099,19 +1074,18 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	/**
-	 * Spawn edge-tts for one talk and record where it got to. The child belongs to
-	 * the bridge process, not to the HTTP request that started it, so closing the
-	 * phone does not cancel a render that is minutes from finishing.
+	 * Spawn the Kokoro renderer for one talk and record where it got to. The child
+	 * belongs to the bridge process, not to the HTTP request that started it, so
+	 * closing the phone does not cancel a render that is minutes from finishing.
 	 */
 	function startTalkRender(record: TalkRecord): void {
-		const binary = edgeTtsPath();
-		const args = ["--file", record.scriptPath, "--voice", record.voice, "--write-media", record.mp3Path];
+		const command = kokoroCommand(record.scriptPath, record.mp3Path, record.voice);
 		let stderr = "";
 		let child: ReturnType<typeof spawn>;
 		try {
-			child = spawn(binary, args, { stdio: ["ignore", "ignore", "pipe"] });
+			child = spawn(command.python, command.args, { stdio: ["ignore", "ignore", "pipe"] });
 		} catch (error) {
-			finishTalk(record, "failed", `edge-tts could not start: ${String((error as Error)?.message || error)}`);
+			finishTalk(record, "failed", `Kokoro could not start: ${String((error as Error)?.message || error)}`);
 			return;
 		}
 		child.stderr?.on("data", (chunk: Buffer) => {
@@ -1120,7 +1094,7 @@ export default function (pi: ExtensionAPI) {
 			stderr = `${stderr}${chunk.toString()}`.slice(-4000);
 		});
 		child.on("error", (error) => {
-			finishTalk(record, "failed", `edge-tts could not start: ${error.message}`);
+			finishTalk(record, "failed", `Kokoro could not start: ${error.message}`);
 		});
 		child.on("close", (code) => {
 			if (code === 0) {
@@ -1135,7 +1109,7 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 			const tail = stderr.split("\n").map((line) => line.trim()).filter(Boolean).pop();
-			finishTalk(record, "failed", tail ? tail.slice(0, 300) : `edge-tts exited with code ${code ?? "unknown"}`);
+			finishTalk(record, "failed", tail ? tail.slice(0, 300) : `Kokoro exited with code ${code ?? "unknown"}`);
 		});
 	}
 
@@ -1314,9 +1288,11 @@ export default function (pi: ExtensionAPI) {
 						sendJson(res, 413, { error: `script is longer than ${MAX_TALK_SCRIPT_BYTES} bytes` });
 						return;
 					}
-					// Check the renderer before promising a render, so a missing edge-tts is
-					// one actionable sentence here rather than a failed talk later.
-					const problem = edgeTtsProblem();
+					// Check Kokoro before promising a render, so a missing engine is one
+					// actionable sentence here rather than a failed talk later. There is no
+					// fall back to another engine: a talk the human asked to be Kokoro is
+					// worse rendered by something else than not rendered at all.
+					const problem = kokoroProblem();
 					if (problem) {
 						sendJson(res, 503, { error: problem });
 						return;

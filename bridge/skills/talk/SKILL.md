@@ -18,7 +18,7 @@ ambiguous.
 
 ## 1. Write the script
 
-Length is speech, not reading: edge-tts speaks at about **150 words per minute**,
+Length is speech, not reading: Kokoro speaks at about **150 words per minute**,
 so a talk of N minutes is about N x 150 words.
 
 - 30 minutes -> about **4500 words**
@@ -50,9 +50,9 @@ skill's directory (the parent of SKILL.md), which the skill prompt names as the
 bash render-talk.sh "Roman roads" "${PI_AGENT_DIR:-$HOME/.pi/agent}/talks/scripts/roman-roads.txt"
 ```
 
-A third argument overrides the voice (default `en-US-AriaNeural`). The helper
-registers the talk with the bridge, then waits for the background render and
-prints a download link. A 30 minute talk takes a few minutes, so give the command
+A third argument overrides the voice (default `af_heart`). The helper registers
+the talk with the bridge, then waits for the background Kokoro render and prints
+a download link. A 30 minute talk takes a few minutes, so give the command
 a generous timeout.
 
 ## 3. Tell the human
@@ -65,5 +65,6 @@ the rough length to the human in one short message, for example:
 The link is single-use and expires in about five minutes, so say so if the human
 will not tap it immediately; they can ask the bridge for a fresh one. If the
 helper exits with an error, repeat exactly what it printed. If the bridge says
-`edge-tts is not installed`, tell the human to run `pipx install edge-tts` (or
-`pip install --user edge-tts`) on the laptop and then try again.
+`Kokoro is required to render a talk`, tell the human to install Kokoro under
+`~/.local/share/kokoro` (a venv with the `kokoro` package) and run
+`bash bridge/install.sh`, then try again.

@@ -25,6 +25,7 @@ sources=(
 	"$here/lib/files.ts:$agent_dir/lib/files.ts"
 	"$here/skills/talk/SKILL.md:$agent_dir/skills/talk/SKILL.md"
 	"$here/skills/talk/render-talk.sh:$agent_dir/skills/talk/render-talk.sh"
+	"$here/skills/talk/render-kokoro.py:$agent_dir/skills/talk/render-kokoro.py"
 )
 
 missing=0

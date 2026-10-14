@@ -2,9 +2,9 @@
 # Register a written script with the pi-remote bridge and render it to MP3.
 #
 # The render itself runs inside the bridge process, so this script only hands
-# over the script, waits for the background edge-tts job, and prints the download
-# link. Nothing here vendors or bundles edge-tts: the bridge invokes a locally
-# installed one as a subprocess.
+# over the script, waits for the background Kokoro job, and prints the download
+# link. Nothing here vendors or bundles Kokoro: the bridge invokes a locally
+# installed renderer as a subprocess.
 #
 # Usage: render-talk.sh <title> <script-path> [voice]
 #
@@ -35,7 +35,7 @@ base="${PI_REMOTE_URL:-http://${PI_REMOTE_HOST:-127.0.0.1}:${PI_REMOTE_PORT:-878
 token_dir="$(dirname "${PI_REMOTE_TOKEN_FILE:-$HOME/.config/pi-remote/token}")"
 tokens_file="$token_dir/tokens.json"
 
-# edge-tts needs a Python interpreter anyway, so python3 is a safe dependency for
+# The script needs a Python interpreter anyway, so python3 is a safe dependency for
 # reading the token and building JSON without hand-escaping the title.
 token="$(python3 - "$tokens_file" <<'PY' || true
 import json, sys

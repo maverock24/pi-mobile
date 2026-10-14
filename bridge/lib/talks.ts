@@ -1,20 +1,23 @@
 /**
  * Storage and HTTP serving for generated talks.
  *
- * A talk is a script that a separately installed `edge-tts` renders to MP3. This
- * module owns where a talk lives on disk, how its metadata is written, and how
- * the MP3 is served with byte ranges. It deliberately imports no pi runtime, so
- * the range logic can be exercised by a plain node script.
+ * A talk is a script that a separately installed Kokoro renderer turns into an
+ * MP3. This module owns where a talk lives on disk, how its metadata is written,
+ * how the MP3 is served with byte ranges, and which renderer a talk would use. It
+ * deliberately imports no pi runtime, so all of that can be exercised by a plain
+ * node script.
  *
- * edge-tts is never vendored or bundled here: the bridge only invokes a locally
- * installed binary as a subprocess, which is what keeps its LGPL-3.0 client out
- * of this repository.
+ * Kokoro is never vendored or bundled here: the bridge only invokes a locally
+ * installed renderer as a subprocess. Kokoro is the only engine, because the
+ * human asked for it by name and a talk quietly rendered by something else is
+ * worse than an error, so nothing here falls back to another engine.
  *
  * Layout under <agent dir>/talks: <id>.json (metadata), <id>.txt (the script the
  * talk was rendered from), <id>.mp3 (the audio). One directory keeps a delete a
  * single unlink of three siblings, and a listing a single readdir.
  */
 
+import { spawnSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as http from "node:http";
@@ -56,6 +59,68 @@ export function agentDir(): string {
 
 export function talksDir(): string {
 	return path.join(agentDir(), "talks");
+}
+
+/** The Kokoro voice used when the caller does not name one. */
+export const DEFAULT_TALK_VOICE = "af_heart";
+
+/**
+ * The Python interpreter that has Kokoro importable. The install on this machine
+ * is a virtualenv under ~/.local/share/kokoro, and the override exists for a
+ * second render host whose install lives elsewhere.
+ */
+export function kokoroPythonPath(): string {
+	const configured = process.env.PI_REMOTE_KOKORO_PYTHON;
+	if (configured && configured.trim()) return configured.trim();
+	return path.join(os.homedir(), ".local", "share", "kokoro", "venv", "bin", "python");
+}
+
+/**
+ * The renderer script. install.sh copies it beside the talk skill, so the
+ * installed layout is <agent dir>/skills/talk/render-kokoro.py. The override
+ * exists so a check can point at a copy without installing first.
+ */
+export function kokoroScriptPath(): string {
+	const configured = process.env.PI_REMOTE_KOKORO;
+	if (configured && configured.trim()) return configured.trim();
+	return path.join(agentDir(), "skills", "talk", "render-kokoro.py");
+}
+
+/**
+ * The exact argv that renders one script to one MP3. The renderer chunks a long
+ * script itself and rejoins at sentence and paragraph boundaries, so the bridge
+ * hands over the whole script and one output path rather than a piece at a time.
+ */
+export function kokoroCommand(script: string, mp3: string, voice: string): { python: string; args: string[] } {
+	return {
+		python: kokoroPythonPath(),
+		args: [kokoroScriptPath(), script, mp3, voice],
+	};
+}
+
+/**
+ * Why a Kokoro render cannot start, or undefined when it can. A missing renderer
+ * and a broken one are the same failure to the human, so both come back as one
+ * actionable sentence naming the path that was checked, never a stack trace. The
+ * probe imports Kokoro, which proves the interpreter still has it; that loads no
+ * model and touches no network.
+ */
+export function kokoroProblem(): string | undefined {
+	const renderer = kokoroScriptPath();
+	if (!fs.existsSync(renderer)) {
+		return `Kokoro is required to render a talk but its renderer is missing at ${renderer}. Run bridge/install.sh, then try again.`;
+	}
+	const python = kokoroPythonPath();
+	if (!fs.existsSync(python)) {
+		return `Kokoro is required to render a talk but its Python is missing at ${python}. Install Kokoro there, then try again.`;
+	}
+	const probe = spawnSync(python, ["-c", "import kokoro"], { encoding: "utf8", timeout: 60_000 });
+	if (probe.error || probe.status !== 0) {
+		const tail = `${probe.stderr || ""}`.split("\n").map((line) => line.trim()).filter(Boolean).pop();
+		const detail = (tail || probe.error?.message || "unknown error").slice(0, 200);
+		return `Kokoro is installed at ${python} but could not be imported (${detail}). Reinstall it, then try again.`;
+	}
+	return undefined;
 }
 
 export function newTalkId(): string {
@@ -193,7 +258,7 @@ export function removeTalk(id: string): boolean {
 	return existed;
 }
 
-/** Spoken length from the word count, at the 150 words per minute edge-tts reads. */
+/** Spoken length from the word count, at the 150 words per minute Kokoro reads. */
 export function estimateDurationSeconds(script: string): number {
 	const words = script.trim().split(/\s+/).filter(Boolean).length;
 	if (words === 0) return 0;
