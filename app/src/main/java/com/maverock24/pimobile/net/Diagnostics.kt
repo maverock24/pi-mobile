@@ -91,9 +91,21 @@ object Diagnostics {
                 "timed out — Tailscale may be connected but blocked, or the laptop is asleep"
             is SSLException ->
                 "TLS failed — drop https:// unless you set up tailscale serve"
-            is java.net.ConnectException, is java.net.NoRouteToHostException, is java.net.SocketException ->
-                "no TCP route to the laptop — check that Tailscale is connected on the phone " +
-                    "and that the bridge is running"
+            // SocketException is the whole transport family, not only a missing
+            // route: it also covers a refused, reset or closed connection. Claiming
+            // "no TCP route" for all of them told the human the network was down
+            // when the request had failed for another reason, which is why a Files
+            // fetch could read as a route failure while the event stream stayed up.
+            // Only NoRouteToHostException actually means no route; the others are
+            // reported as what they are.
+            is java.net.NoRouteToHostException ->
+                "no TCP route to the laptop: check that Tailscale is connected on the phone"
+            is java.net.ConnectException ->
+                "the bridge refused the connection: it is probably not running on that port"
+            is java.net.SocketException ->
+                "the connection to the bridge failed" +
+                    (if (message.isBlank()) "" else " ($message)") +
+                    ": check the bridge on the laptop and the Tailscale link on the phone"
             else -> error.javaClass.simpleName + if (message.isBlank()) "" else ": $message"
         }
     }
