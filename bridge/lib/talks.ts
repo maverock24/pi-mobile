@@ -153,6 +153,30 @@ export function saveTalk(record: TalkRecord): void {
 	fs.renameSync(temp, target);
 }
 
+/** How much of a failed render's reason a phone row keeps. One sentence, not a paragraph. */
+const MAX_ERROR_LENGTH = 300;
+
+/**
+ * One readable line for a stored render error, never a stack trace. A renderer
+ * that fails on a Python client leaves the whole exception repr in stderr:
+ * module path, the `message='...'` wrapper, and often the request URL, whose
+ * query string can carry a token. Only the last line is served, with the URL
+ * tail, the Python module path and the wrapper removed and the result capped, so
+ * the phone reads a sentence instead of an internal address. Applied at the point
+ * of serving so records written by an earlier engine are cleaned too rather than
+ * only new ones.
+ */
+export function readableTalkError(raw: string | null): string | null {
+	if (raw === null) return null;
+	const line = raw.split("\n").map((part) => part.trim()).filter(Boolean).pop();
+	if (!line) return null;
+	const withoutUrl = line.replace(/,?\s*url=.*$/i, "");
+	const withoutModule = withoutUrl.replace(/^[a-z_][a-z0-9_.]*\.(?=[A-Z])/, "");
+	const named = withoutModule.replace(/,\s*message='([^']*)'/g, ", $1");
+	const summary = named.replace(/\s+/g, " ").trim();
+	return (summary || line).slice(0, MAX_ERROR_LENGTH);
+}
+
 /**
  * A talk inferred from an MP3 that has no metadata record. The filename is the
  * only description that is left, so the id is the file's basename and the title

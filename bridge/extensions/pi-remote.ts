@@ -84,6 +84,7 @@ import {
 	listTalks,
 	newTalkId,
 	readTalk,
+	readableTalkError,
 	removeTalk,
 	saveTalk,
 	serveFile,
@@ -1052,7 +1053,7 @@ export default function (pi: ExtensionAPI) {
 			durationSeconds: record.durationSeconds,
 			durationEstimated: record.durationEstimated,
 			voice: record.voice,
-			error: record.error === null ? null : record.error.length > MAX_STRING ? record.error.slice(0, MAX_STRING) : record.error,
+			error: readableTalkError(record.error),
 		};
 	}
 

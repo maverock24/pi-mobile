@@ -25,7 +25,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as http from "node:http";
-import { listTalks, prettifyTalkTitle, serveFile, talksDir, type FileServeResult, type TalkRecord } from "./talks.ts";
+import { listTalks, prettifyTalkTitle, readableTalkError, serveFile, talksDir, type FileServeResult, type TalkRecord } from "./talks.ts";
 
 export type FileKind = "audio" | "video" | "image" | "text" | "other";
 
@@ -260,7 +260,7 @@ export function fileSummary(record: FileRecord) {
 		durationSeconds: record.durationSeconds,
 		durationEstimated: record.durationEstimated,
 		voice: record.voice,
-		error: cut(record.error),
+		error: cut(readableTalkError(record.error)),
 	};
 }
 
