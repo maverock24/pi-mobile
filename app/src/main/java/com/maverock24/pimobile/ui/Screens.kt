@@ -114,6 +114,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
@@ -2633,11 +2634,16 @@ private fun pairingScanOptions(): ScanOptions = ScanOptions()
  * only scroller, so no option hides behind a scroll box of its own.
  */
 @Composable
-private fun QuestionCard(
+internal fun QuestionCard(
     pending: PendingQuestion,
     onSelect: (String, String) -> Unit,
     onTyped: (String, String) -> Unit,
     onCancel: () -> Unit,
+    // Car mode passes its own floor so a driver hits the same big targets here as
+    // everywhere else in that mode. The normal screens keep the default, so the
+    // widget they already use is unchanged.
+    controlHeight: Dp = AnswerStyle.buttonHeight,
+    modifier: Modifier = Modifier,
 ) {
     var typed by rememberSaveable { mutableStateOf("") }
     val targetId = pending.firstUnanswered?.id
@@ -2647,7 +2653,7 @@ private fun QuestionCard(
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(
             modifier = Modifier.padding(AnswerStyle.cardPadding),
@@ -2692,7 +2698,7 @@ private fun QuestionCard(
                                 onClick = { onSelect(question.id, option.value) },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(min = AnswerStyle.buttonHeight)
+                                    .heightIn(min = controlHeight)
                                     .tactile(
                                         haptics = true,
                                         depth = AnswerStyle.keyDepth,
@@ -2735,7 +2741,7 @@ private fun QuestionCard(
                                     },
                                     enabled = typed.isNotBlank(),
                                     modifier = Modifier
-                                        .heightIn(min = AnswerStyle.buttonHeight)
+                                        .heightIn(min = controlHeight)
                                         .tactile(
                                             haptics = true,
                                             enabled = typed.isNotBlank(),

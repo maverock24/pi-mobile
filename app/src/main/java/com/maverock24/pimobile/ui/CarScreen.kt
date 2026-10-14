@@ -138,17 +138,38 @@ fun CarScreen(
             }
             CarNotices(vm)
             Spacer(modifier = Modifier.height(AnswerStyle.lineGap))
-            CarPanelSwitch(panel = panel, onChange = { panel = it })
-            Spacer(modifier = Modifier.height(AnswerStyle.sectionGap))
-            when (panel) {
-                "listen" -> CarListenPanel(vm = vm, modifier = Modifier.weight(1f).fillMaxWidth())
-                else -> CarAskPanel(
-                    vm = vm,
-                    listening = listening,
-                    partialText = partialText,
-                    onToggleMic = onToggleMic,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+            // A question blocks the run in pi until it is answered, so while one
+            // is open it is the body of the screen rather than something behind a
+            // panel choice: the driver answers with the same big controls the rest
+            // of the mode uses, reusing the widget and its answers from the normal
+            // UI. Without this the questionnaire never appeared here and the
+            // session was stuck with no way to answer it.
+            val pending = vm.pendingQuestion
+            if (pending != null) {
+                QuestionCard(
+                    pending = pending,
+                    onSelect = { questionId, value -> vm.answerQuestion(questionId, value, false) },
+                    onTyped = { questionId, text -> vm.answerQuestion(questionId, text, true) },
+                    onCancel = vm::cancelQuestion,
+                    controlHeight = CarStyle.tap,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
                 )
+            } else {
+                CarPanelSwitch(panel = panel, onChange = { panel = it })
+                Spacer(modifier = Modifier.height(AnswerStyle.sectionGap))
+                when (panel) {
+                    "listen" -> CarListenPanel(vm = vm, modifier = Modifier.weight(1f).fillMaxWidth())
+                    else -> CarAskPanel(
+                        vm = vm,
+                        listening = listening,
+                        partialText = partialText,
+                        onToggleMic = onToggleMic,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
+                }
             }
         }
     }
