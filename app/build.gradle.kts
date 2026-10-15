@@ -63,6 +63,10 @@ android {
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        // The BouncyCastle jars each carry the same OSGi manifest under the
+        // versioned directory, and the packager refuses to choose one. It is
+        // OSGi metadata and is not used on Android.
+        resources.excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
     }
 }
 
@@ -84,4 +88,19 @@ dependencies {
     // QR scanning for pairing. ZXing only: no Google Play services component, and the
     // camera is used solely to decode the code /pair draws.
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // Web access: the phone serves one page to another computer on the WLAN.
+    // Ktor CIO is the HTTP layer (Kotlin-first, coroutine-based, maintained).
+    // The CIO engine refuses a TLS connector of its own, so the WLAN face
+    // terminates TLS in WebTlsFront (JSSE) and hands the decrypted bytes to CIO
+    // on loopback. 3.0.2 is the newest Ktor built with this app's Kotlin 2.0.21;
+    // Ktor 3.1 and later need a newer compiler.
+    implementation("io.ktor:ktor-server-cio:3.0.2")
+    // Assembles the self-signed X.509 certificate that the Android keystore key
+    // signs. The platform has no public certificate-builder API, so this one
+    // dependency earns its place. bcprov is pulled in transitively but is named
+    // here because the assembly code uses its ASN.1 types directly.
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.81.1")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.81.1")
+    // Unit tests only; nothing here reaches the APK.
+    testImplementation("junit:junit:4.13.2")
 }

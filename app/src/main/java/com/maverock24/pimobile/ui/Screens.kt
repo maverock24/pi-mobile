@@ -2096,6 +2096,8 @@ fun SettingsScreen(
                 }
             }
 
+            WebAccessSection()
+
             SettingsSection(
                 title = "Appearance",
                 subtitle = "${appearanceLabel(appearance)} · ${AnswerStyle.theme(theme).label}",
@@ -2332,7 +2334,7 @@ private fun appearanceLabel(value: String): String = when (value) {
 
 /** A field's name above its control. */
 @Composable
-private fun SectionLabel(text: String) {
+internal fun SectionLabel(text: String) {
     Text(text, style = MaterialTheme.typography.labelLarge)
 }
 
@@ -2397,7 +2399,7 @@ private fun LaptopCommand(command: String) {
  * divide-y list, so the two apps read the same way.
  */
 @Composable
-private fun SettingsSection(
+internal fun SettingsSection(
     title: String,
     subtitle: String,
     icon: ImageVector,

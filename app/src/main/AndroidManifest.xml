@@ -10,6 +10,12 @@
          foreground service. This is the app's first foreground permission. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Web access keeps a listening socket open with the screen off. The
+         connectedDevice type is the one that covers serving a connection, and
+         its documented prerequisite is one of the network-state permissions;
+         CHANGE_WIFI_STATE is the one declared here. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <!-- Pairing only: ZXing decodes the QR /pair draws. Not required for chat or
          dictation, so the app still installs on a device without a camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -66,5 +72,13 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!-- The web server while the human has it on. The notification it posts
+             is the only place a listener can be seen and stopped without opening
+             the app. Not exported: only this app starts it. -->
+        <service
+            android:name=".web.WebAccessService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>
