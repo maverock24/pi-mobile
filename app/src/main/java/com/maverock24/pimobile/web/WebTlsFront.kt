@@ -9,6 +9,7 @@ import java.security.KeyStore
 import java.util.Collections
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLServerSocket
@@ -85,8 +86,30 @@ class WebTlsFront(
             }
             open.add(client)
             open.add(backend)
-            pumps.execute { pump(client, backend) }
-            pumps.execute { pump(backend, client) }
+            // The HTTP layer only ever sees 127.0.0.1, so record the real peer
+            // against the loopback port this connection dialled. The HTTP layer
+            // reads the same port back as the request's remote port, which is
+            // what lets the phone show who is asking to be approved.
+            val backendPort = backend.localPort
+            WebPeers.register(backendPort, client.inetAddress?.hostAddress ?: "unknown")
+            val remaining = AtomicInteger(2)
+            val finished = {
+                if (remaining.decrementAndGet() == 0) WebPeers.forget(backendPort)
+            }
+            pumps.execute {
+                try {
+                    pump(client, backend)
+                } finally {
+                    finished()
+                }
+            }
+            pumps.execute {
+                try {
+                    pump(backend, client)
+                } finally {
+                    finished()
+                }
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 package com.maverock24.pimobile.ui
 
 import android.content.Intent
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -22,6 +23,7 @@ import androidx.core.content.ContextCompat
 import com.maverock24.pimobile.web.WebAccess
 import com.maverock24.pimobile.web.WebAccessService
 import com.maverock24.pimobile.web.WebAccessStatus
+import com.maverock24.pimobile.web.WebApprovalGate
 
 /**
  * The Settings section that turns the web server on and off.
@@ -34,15 +36,19 @@ import com.maverock24.pimobile.web.WebAccessStatus
 internal fun WebAccessSection() {
     val context = LocalContext.current
     val status by WebAccess.status.collectAsState()
+    val pending by WebApprovalGate.shared.pending.collectAsState()
     var expanded by rememberSaveable { mutableStateOf(false) }
 
     SettingsSection(
         title = "Web access",
-        subtitle = when (val current = status) {
-            WebAccessStatus.Off -> "Off"
-            WebAccessStatus.Starting -> "Starting"
-            is WebAccessStatus.On -> "On · ${current.url}"
-            is WebAccessStatus.Failed -> current.message
+        subtitle = when {
+            pending != null -> "A browser is asking to connect"
+            else -> when (val current = status) {
+                WebAccessStatus.Off -> "Off"
+                WebAccessStatus.Starting -> "Starting"
+                is WebAccessStatus.On -> "On · ${current.url}"
+                is WebAccessStatus.Failed -> current.message
+            }
         },
         icon = Icons.Filled.Share,
         expanded = expanded,
@@ -56,8 +62,7 @@ internal fun WebAccessSection() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         when (val current = status) {
-            is WebAccessStatus.On -> {
-                SectionLabel("Open this address on the other computer")
+            is WebAccessStatus.On -> {                SectionLabel("Open this address on the other computer")
                 SelectionContainer {
                     Text(current.url, style = MaterialTheme.typography.bodyLarge)
                 }
@@ -82,6 +87,29 @@ internal fun WebAccessSection() {
                 color = MaterialTheme.colorScheme.error,
             )
             else -> Unit
+        }
+        pending?.let { request ->
+            SectionLabel("A browser is asking to connect")
+            Text(
+                text = "From ${request.sourceAddress}. Request ${request.shortId}. " +
+                    "Allow it only if you opened this page yourself.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row {
+                Button(
+                    onClick = { WebApprovalGate.shared.approve(request.id) },
+                    modifier = Modifier.heightIn(min = AnswerStyle.buttonHeight),
+                ) {
+                    Text("Allow", style = MaterialTheme.typography.bodyLarge)
+                }
+                OutlinedButton(
+                    onClick = { WebApprovalGate.shared.deny(request.id) },
+                    modifier = Modifier.heightIn(min = AnswerStyle.buttonHeight),
+                ) {
+                    Text("Deny", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
         }
         val label = MaterialTheme.typography.bodyLarge
         val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)

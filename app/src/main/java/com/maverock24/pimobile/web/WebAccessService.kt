@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.maverock24.pimobile.MainActivity
 import com.maverock24.pimobile.R
+import com.maverock24.pimobile.data.SettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -84,7 +85,19 @@ class WebAccessService : Service() {
                 val address = wifiIpv4(this@WebAccessService)
                     ?: error("The phone is not on a Wi-Fi network")
                 val certificate = WebCertificateStore.load(this@WebAccessService, address)
-                val relay = WebRelayServer(assets)
+                val store = SettingsStore(this@WebAccessService)
+                val url = "https://$address:${WebAccess.PORT}"
+                val relay = WebRelayServer(
+                    loadAsset = { name ->
+                        assets.open(name).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    },
+                    // The browser reaches the phone on the TLS front's address and
+                    // port, so those are what the Host and Origin checks compare
+                    // against. The HTTP server behind it only sees loopback.
+                    expectedAuthority = "$address:${WebAccess.PORT}",
+                    expectedOrigin = url,
+                    upstream = BridgeUpstream(baseUrl = { store.baseUrl }, token = { store.token }),
+                )
                 val backendPort = relay.start()
                 // Assigned before the next step so a failure below still stops it.
                 server = relay
@@ -97,7 +110,6 @@ class WebAccessService : Service() {
                 )
                 tls.start()
                 front = tls
-                val url = "https://$address:${WebAccess.PORT}"
                 WebAccess.update(WebAccessStatus.On(url, certificate.fingerprint))
                 notify(notification(url))
                 while (isActive) {
