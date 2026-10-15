@@ -263,6 +263,200 @@ class WebRelayServerTest {
         }
     }
 
+    // ---- the core loop routes (stage 3) -----------------------------------
+
+    @Test
+    fun `every core loop route needs a session`() {
+        get("/api/history").use { assertEquals(401, it.code) }
+        get("/api/question").use { assertEquals(401, it.code) }
+        get("/api/events").use { assertEquals(401, it.code) }
+        post("/api/prompt", "{}", "application/json", mapOf("Origin" to origin)).use { assertEquals(401, it.code) }
+        post("/api/answer", "{}", "application/json", mapOf("Origin" to origin)).use { assertEquals(401, it.code) }
+    }
+
+    @Test
+    fun `the history proxy keeps text and drops paths and tool output`() {
+        val session = connect()
+        get("/api/history?limit=10", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(200, it.code)
+            val body = it.body!!.string()
+            assertTrue("keeps the prompt", body.contains("hello"))
+            assertTrue("keeps the answer", body.contains("hi there"))
+            assertFalse("drops the session file", body.contains("sessionFile"))
+            assertFalse("drops tool arguments", body.contains("cat /secret"))
+            assertFalse("drops tool results", body.contains("secret output"))
+            assertFalse("no bridge token", body.contains(FakeUpstream.TOKEN_MARKER))
+        }
+    }
+
+    @Test
+    fun `the question proxy reduces to the fields the card draws`() {
+        val session = connect()
+        get("/api/question", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(200, it.code)
+            val body = it.body!!.string()
+            assertTrue("keeps the question id", body.contains("q-1"))
+            assertTrue("keeps the options", body.contains("Green"))
+            assertTrue("keeps the option value", body.contains("\"value\":\"g\""))
+            assertFalse("drops the updated time", body.contains("updatedAt"))
+            assertFalse("no bridge token", body.contains(FakeUpstream.TOKEN_MARKER))
+        }
+    }
+
+    @Test
+    fun `a prompt without or with a wrong csrf token is refused`() {
+        val session = connect()
+        post("/api/prompt", """{"text":"hi"}""", "application/json", mapOf("Origin" to origin), session.cookie).use {
+            assertEquals(403, it.code)
+        }
+        post(
+            "/api/prompt",
+            """{"text":"hi"}""",
+            "application/json",
+            mapOf("Origin" to origin, "X-CSRF-Token" to "not-the-token"),
+            session.cookie,
+        ).use {
+            assertEquals(403, it.code)
+        }
+        assertTrue("a refused prompt never reaches the bridge", upstream.bodies.isEmpty())
+    }
+
+    @Test
+    fun `a prompt with the csrf token reaches the bridge and does not leak the token`() {
+        val session = connect()
+        post(
+            "/api/prompt",
+            """{"text":"hello bridge"}""",
+            "application/json",
+            mapOf("Origin" to origin, "X-CSRF-Token" to session.csrf),
+            session.cookie,
+        ).use {
+            assertEquals(200, it.code)
+            assertFalse("no bridge token", it.body!!.string().contains(FakeUpstream.TOKEN_MARKER))
+        }
+        assertEquals(1, upstream.bodies.size)
+        assertTrue("the prompt text goes upstream", upstream.bodies[0].contains("hello bridge"))
+        assertTrue("the upstream label names the web session", upstream.calls.last().startsWith("web:"))
+    }
+
+    @Test
+    fun `an answer without or with a wrong csrf token is refused`() {
+        val session = connect()
+        post(
+            "/api/answer",
+            """{"questionId":"q1","value":"g"}""",
+            "application/json",
+            mapOf("Origin" to origin),
+            session.cookie,
+        ).use {
+            assertEquals(403, it.code)
+        }
+        post(
+            "/api/answer",
+            """{"questionId":"q1","value":"g"}""",
+            "application/json",
+            mapOf("Origin" to origin, "X-CSRF-Token" to "not-the-token"),
+            session.cookie,
+        ).use {
+            assertEquals(403, it.code)
+        }
+        assertTrue("a refused answer never reaches the bridge", upstream.bodies.isEmpty())
+    }
+
+    @Test
+    fun `an answer with the csrf token reaches the bridge`() {
+        val session = connect()
+        post(
+            "/api/answer",
+            """{"questionId":"q1","value":"g","custom":false,"cancel":false}""",
+            "application/json",
+            mapOf("Origin" to origin, "X-CSRF-Token" to session.csrf),
+            session.cookie,
+        ).use {
+            assertEquals(200, it.code)
+            assertFalse("no bridge token", it.body!!.string().contains(FakeUpstream.TOKEN_MARKER))
+        }
+        assertTrue("the choice goes upstream", upstream.bodies[0].contains("\"value\":\"g\""))
+    }
+
+    @Test
+    fun `no new route leaks the bridge token`() {
+        val session = connect()
+        val responses = mutableListOf<String>()
+        get("/api/state", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
+        get("/api/history", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
+        get("/api/question", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
+        get("/api/events", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
+        post(
+            "/api/prompt",
+            """{"text":"hi"}""",
+            "application/json",
+            mapOf("Origin" to origin, "X-CSRF-Token" to session.csrf),
+            session.cookie,
+        ).use { responses.add(it.body!!.string()) }
+        post(
+            "/api/answer",
+            """{"questionId":"q1","value":"g"}""",
+            "application/json",
+            mapOf("Origin" to origin, "X-CSRF-Token" to session.csrf),
+            session.cookie,
+        ).use { responses.add(it.body!!.string()) }
+        responses.forEachIndexed { index, body ->
+            assertFalse("response $index leaked the bridge token", body.contains(FakeUpstream.TOKEN_MARKER))
+        }
+        assertTrue("every upstream call is labelled", upstream.calls.all { it.startsWith("web:") })
+    }
+
+    @Test
+    fun `the event stream forwards only the reduced message and question frames`() {
+        val session = connect()
+        get("/api/events", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(200, it.code)
+            val body = it.body!!.string()
+            assertTrue("message_start", body.contains("\"type\":\"message_start\""))
+            assertTrue("assistant text", body.contains("\"text\":\"Hello\""))
+            assertTrue("tool call flag", body.contains("\"toolCall\":true"))
+            assertTrue("text delta", body.contains("\"delta\":\" there\""))
+            assertTrue("question frame", body.contains("\"type\":\"question\""))
+            assertTrue("option value", body.contains("\"value\":\"g\""))
+            assertFalse("state is dropped", body.contains("sessionFile"))
+            assertFalse("pid is dropped", body.contains("\"pid\""))
+            assertFalse("tool execution is dropped", body.contains("tool_execution"))
+            assertFalse("tool arguments are dropped", body.contains("cmd"))
+            assertFalse("tool results are dropped", body.contains(FakeUpstream.TOKEN_MARKER))
+            assertFalse("thinking deltas are dropped", body.contains("thinking"))
+        }
+    }
+
+    @Test
+    fun `a bridge that is not up on the stream becomes a bad gateway`() {
+        val session = connect()
+        upstream.eventsStatus = 503
+        get("/api/events", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(502, it.code)
+        }
+    }
+
+    @Test
+    fun `a live event stream holds the server open`() {
+        val session = connect()
+        upstream.eventsHold = CountDownLatch(1)
+        val response = get("/api/events", cookie = session.cookie, headers = mapOf("Origin" to origin))
+        try {
+            assertEquals(200, response.code)
+            val source = response.body!!.source()
+            // Read until the first relayed frame, so the relay is inside the read
+            // loop, then check the server still counts the stream as in flight.
+            var line = source.readUtf8Line()
+            while (line != null && !line.startsWith("data:")) line = source.readUtf8Line()
+            assertTrue("a data frame arrived", line != null)
+            assertFalse("a live stream is not idle", server.isIdle(0, System.currentTimeMillis()))
+        } finally {
+            upstream.eventsHold?.countDown()
+            response.close()
+        }
+    }
+
     // ---- headers -----------------------------------------------------------
 
     @Test
@@ -360,22 +554,113 @@ class WebRelayServerTest {
 
     private class FakeUpstream : WebUpstream {
         var status = 200
+        var eventsStatus = 200
+
+        /** When set, the event stream blocks after its frames until this opens. */
+        var eventsHold: CountDownLatch? = null
         val calls = mutableListOf<String>()
+        val bodies = mutableListOf<String>()
+
         override suspend fun state(clientLabel: String): UpstreamResult {
             calls.add(clientLabel)
             if (status != 200) return UpstreamResult(status, """{"error":"boom"}""")
-            return UpstreamResult(
-                200,
-                """{"sessionId":"s-1","sessionName":"work","sessionFile":"/secret/session.json",""" +
-                    """"cwd":"/home/pi","mode":"normal","model":{"provider":"p","id":"m"},""" +
-                    """"thinkingLevel":"low","idle":true,"pendingMessages":false,"question":null,""" +
-                    """"pid":4242,"host":"laptop","port":8787,"boundHost":"100.1.2.3","boundPort":8787,""" +
-                    """"serverTime":"2026-01-01T00:00:00Z","token":"$TOKEN_MARKER"}""",
-            )
+            return UpstreamResult(200, STATE_BODY)
+        }
+
+        override suspend fun history(clientLabel: String, limit: Int): UpstreamResult {
+            calls.add(clientLabel)
+            if (status != 200) return UpstreamResult(status, """{"error":"boom"}""")
+            return UpstreamResult(200, HISTORY_BODY)
+        }
+
+        override suspend fun question(clientLabel: String): UpstreamResult {
+            calls.add(clientLabel)
+            if (status != 200) return UpstreamResult(status, """{"error":"boom"}""")
+            return UpstreamResult(200, QUESTION_BODY)
+        }
+
+        override suspend fun prompt(clientLabel: String, body: String): UpstreamResult {
+            calls.add(clientLabel)
+            bodies.add(body)
+            if (status != 200) return UpstreamResult(status, """{"error":"boom"}""")
+            return UpstreamResult(200, """{"ok":true,"busy":false,"deliverAs":"immediate","token":"$TOKEN_MARKER"}""")
+        }
+
+        override suspend fun answer(clientLabel: String, body: String): UpstreamResult {
+            calls.add(clientLabel)
+            bodies.add(body)
+            if (status != 200) return UpstreamResult(status, """{"error":"boom"}""")
+            return UpstreamResult(200, """{"ok":true,"token":"$TOKEN_MARKER"}""")
+        }
+
+        override suspend fun events(clientLabel: String): WebUpstreamStream {
+            calls.add(clientLabel)
+            if (eventsStatus != 200) return FakeStream(eventsStatus, emptyList(), null)
+            return FakeStream(200, EVENT_LINES, eventsHold)
+        }
+
+        private class FakeStream(
+            override val status: Int,
+            private val lines: List<String>,
+            private val hold: CountDownLatch?,
+        ) : WebUpstreamStream {
+            private var index = 0
+
+            override fun readLine(): String? {
+                if (index < lines.size) return lines[index++]
+                hold?.await(5, TimeUnit.SECONDS)
+                return null
+            }
+
+            override fun close() {
+                hold?.countDown()
+            }
         }
 
         companion object {
             const val TOKEN_MARKER = "bridge-secret-token"
+
+            val STATE_BODY =
+                """{"sessionId":"s-1","sessionName":"work","sessionFile":"/secret/session.json",""" +
+                    """"cwd":"/home/pi","mode":"normal","model":{"provider":"p","id":"m"},""" +
+                    """"thinkingLevel":"low","idle":true,"pendingMessages":false,"question":null,""" +
+                    """"pid":4242,"host":"laptop","port":8787,"boundHost":"100.1.2.3","boundPort":8787,""" +
+                    """"serverTime":"2026-01-01T00:00:00Z","token":"$TOKEN_MARKER"}"""
+
+            val HISTORY_BODY =
+                """{"sessionFile":"/secret/$TOKEN_MARKER","sessionId":"s-1","messages":[""" +
+                    """{"type":"message","id":"m1","message":{"role":"user","content":"hello"}},""" +
+                    """{"type":"message","id":"m2","message":{"role":"assistant","content":[""" +
+                    """{"type":"text","text":"hi there"},{"type":"toolCall","name":"bash","args":{"cmd":"cat /secret"}}]}},""" +
+                    """{"type":"message","id":"m3","message":{"role":"toolResult","content":[{"type":"text","text":"secret output"}]}}]}"""
+
+            val QUESTION_BODY =
+                """{"pending":{"id":"q-1","tool":"question","title":"Pick a colour","multiple":false,""" +
+                    """"updatedAt":"2026-01-01T00:00:00Z","secret":"$TOKEN_MARKER","questions":[""" +
+                    """{"id":"q1","label":"Colour","prompt":"Which?","allowOther":true,"options":[""" +
+                    """{"value":"g","label":"Green","description":"like grass"},{"value":"r","label":"Red","description":null}],""" +
+                    """"answer":null}]}}"""
+
+            val EVENT_LINES = listOf(
+                "retry: 3000",
+                "",
+                """data: {"seq":1,"at":"t","type":"state","data":{"sessionFile":"/secret","pid":1}}""",
+                "",
+                """data: {"seq":2,"at":"t","type":"tool_execution_start","data":{"toolName":"bash","args":{"cmd":"cat /secret"}}}""",
+                "",
+                """data: {"seq":3,"at":"t","type":"message_start","data":{"message":{"role":"assistant","content":[{"type":"text","text":"Hello"},{"type":"toolCall","name":"bash","args":{"cmd":"cat /secret"}}]}}}""",
+                "",
+                """data: {"seq":4,"at":"t","type":"message_update","data":{"assistantMessageEvent":{"type":"text_delta","delta":" there"}}}""",
+                "",
+                """data: {"seq":5,"at":"t","type":"message_update","data":{"assistantMessageEvent":{"type":"thinking","delta":"hmm"}}}""",
+                "",
+                """data: {"seq":6,"at":"t","type":"message_end","data":{"message":{"role":"assistant","content":[{"type":"text","text":"Hello there"}]}}}""",
+                "",
+                """data: {"seq":7,"at":"t","type":"question","data":{"pending":{"id":"q-1","tool":"question","title":"Pick","multiple":false,"questions":[{"id":"q1","label":"Colour","prompt":"Which?","options":[{"value":"g","label":"Green"}],"answer":null}]}}}""",
+                "",
+                """data: {"seq":8,"at":"t","type":"tool_execution_end","data":{"result":"$TOKEN_MARKER"}}""",
+                "",
+            )
         }
     }
 }

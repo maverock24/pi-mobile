@@ -1,15 +1,21 @@
 "use strict";
 
-// The session loop from design section 5.3. The CSRF secret is held in this
-// variable only, never in localStorage or sessionStorage, so a reload asks the
-// relay for a fresh one and a scripting bug cannot read a stored copy.
-let csrf = null;
+import { Relay, readJson } from "./lib/relay.js";
+import { createChatScreen } from "./screens/chat.js";
 
+// The shell: the session loop from design section 5.3 and the mount point for
+// the screens. It owns the Relay (and so the CSRF secret) and the approval flow,
+// and hands the chat screen into the page once a session exists. The screens
+// themselves know nothing about approval, which is what lets the later ones from
+// section 13 be dropped in beside the chat.
+
+const relay = new Relay();
 const statusEl = document.getElementById("status");
-const connectedEl = document.getElementById("connected");
-const stateEl = document.getElementById("state");
-const refreshButton = document.getElementById("refresh");
+const screenEl = document.getElementById("screen");
+const toolbarEl = document.getElementById("toolbar");
 const disconnectButton = document.getElementById("disconnect");
+
+let chat = null;
 
 function setStatus(text, bad) {
   statusEl.textContent = text;
@@ -17,15 +23,36 @@ function setStatus(text, bad) {
 }
 
 function showConnected(show) {
-  connectedEl.hidden = !show;
+  toolbarEl.hidden = !show;
 }
 
-async function readJson(response) {
-  try {
-    return await response.json();
-  } catch (error) {
-    return {};
+function unmountChat() {
+  if (chat) {
+    chat.stop();
+    chat.element.remove();
+    chat = null;
   }
+}
+
+function mountChat() {
+  unmountChat();
+  chat = createChatScreen({ relay, onUnauthorized: sessionLost });
+  screenEl.append(chat.element);
+  chat.start();
+}
+
+// A screen's request came back 401, so the session is gone. Drop it and ask the
+// phone to approve again rather than showing an error the human cannot act on.
+function sessionLost() {
+  // A screen can report the lost session more than once as its requests settle;
+  // only the first one starts a fresh approval.
+  if (!relay.csrf) {
+    return;
+  }
+  relay.csrf = null;
+  unmountChat();
+  showConnected(false);
+  requestApproval();
 }
 
 // Ask to be let in. The relay holds this fetch open until the phone answers, so
@@ -45,10 +72,10 @@ async function requestApproval() {
   }
   const body = await readJson(response);
   if (response.ok) {
-    csrf = body.csrf;
+    relay.csrf = body.csrf;
     setStatus("Approved. Connected.");
     showConnected(true);
-    loadState();
+    mountChat();
     return;
   }
   if (response.status === 403) {
@@ -62,44 +89,13 @@ async function requestApproval() {
   }
 }
 
-async function loadState() {
-  if (!csrf) {
-    return;
-  }
-  setStatus("Connected.");
-  let response;
-  try {
-    response = await fetch("/api/state");
-  } catch (error) {
-    setStatus("Could not reach the phone.", true);
-    return;
-  }
-  if (response.status === 401) {
-    csrf = null;
-    showConnected(false);
-    requestApproval();
-    return;
-  }
-  const body = await readJson(response);
-  if (!response.ok) {
-    setStatus("The phone is up but the bridge did not answer.", true);
-    stateEl.textContent = JSON.stringify(body, null, 2);
-    return;
-  }
-  stateEl.textContent = JSON.stringify(body, null, 2);
-}
-
 async function disconnect() {
-  if (!csrf) {
+  if (!relay.csrf) {
     return;
   }
-  await fetch("/api/logout", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-    body: "{}",
-  });
-  csrf = null;
-  stateEl.textContent = "";
+  await relay.post("/api/logout", {});
+  relay.csrf = null;
+  unmountChat();
   showConnected(false);
   requestApproval();
 }
@@ -119,14 +115,14 @@ async function start() {
   }
   const body = await readJson(response);
   if (response.ok && body.csrf) {
-    csrf = body.csrf;
+    relay.csrf = body.csrf;
+    setStatus("Connected.");
     showConnected(true);
-    loadState();
+    mountChat();
     return;
   }
   requestApproval();
 }
 
-refreshButton.addEventListener("click", loadState);
 disconnectButton.addEventListener("click", disconnect);
 start();

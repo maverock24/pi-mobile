@@ -7,31 +7,25 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <main>
-    <h1>Pi Remote web access</h1>
-    <p>
-      This page is served by the Pi Remote app on your phone, over TLS, to another
-      computer on the same Wi-Fi network.
-    </p>
-
-    <p id="status" class="status" role="status">Checking the session…</p>
-
-    <div id="connected" hidden>
-      <button id="refresh" type="button">Refresh bridge state</button>
+  <header class="shell-head">
+    <h1>Pi Remote</h1>
+    <div id="toolbar" hidden>
       <button id="disconnect" type="button" class="quiet">Disconnect</button>
-      <pre id="state"></pre>
     </div>
+  </header>
 
-    <p class="note">
-      Prompts, streamed answers and audio arrive in a later stage. This page proves
-      the session loop: approval on the phone, the cookie, the CSRF token and one
-      read-only bridge call.
-    </p>
-    <p class="note">
-      When the browser warns about the self-signed certificate, compare the
-      fingerprint it shows against the one in the app's Settings, then continue.
-    </p>
-  </main>
-  <script src="/app.js"></script>
+  <p id="status" class="status" role="status">Checking the session…</p>
+
+  <main id="screen"></main>
+
+  <p class="note">
+    The prompt loop, streamed answers and the question card are here. Audio,
+    files, pins, talks and settings arrive in the next stages.
+  </p>
+  <p class="note">
+    When the browser warns about the self-signed certificate, compare the
+    fingerprint it shows against the one in the app's Settings, then continue.
+  </p>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>
