@@ -80,6 +80,7 @@ internal class WebRelayServer(
     fun updateAuthorities(authorities: Set<String>, origins: Set<String>) {
         allowedAuthorities = authorities
         allowedOrigins = origins
+        WebDiagnostics.update { it.copy(allowedAddresses = authorities.sorted()) }
     }
 
     /** Starts the loopback server on [port] and returns the port it bound. */
@@ -129,6 +130,14 @@ internal class WebRelayServer(
                     }
                 }
 
+                // The listener's own state, readable from the browser before a
+                // session exists. This is the route the human opens when an
+                // address does not answer, so it carries no secret: the backend
+                // port, whether the certificate loaded, and why a connection last
+                // closed. It still passes the Host and target checks like every
+                // other route, so a rebound name cannot read it either.
+                get("/api/diagnostics") { diagnosticsRoute(call) }
+
                 post("/api/approve/request") { approveRequest(call) }
 
                 get("/api/state") { proxyState(call) }
@@ -158,6 +167,14 @@ internal class WebRelayServer(
         server.start(wait = false)
         val bound = server.engine.resolvedConnectors().first().port
         engine = server
+        // The port the TLS front forwards to, and the addresses this server
+        // answers for. Both are surfaced on /api/diagnostics so a front that
+        // cannot reach the backend, which closes connections with no response,
+        // is visible rather than silent. The addresses are updated again whenever
+        // the phone's interfaces change.
+        WebDiagnostics.update {
+            it.copy(backendPort = bound, allowedAddresses = allowedAuthorities.sorted())
+        }
         return bound
     }
 
@@ -184,6 +201,33 @@ internal class WebRelayServer(
     }
 
     // ---- routes -----------------------------------------------------------
+
+    /**
+     * The listener's real state: the ports, whether the certificate loaded, the
+     * addresses it answers for, and the last reason a connection closed. It needs
+     * no session because it is what the human reads when the session flow is the
+     * thing that is not working, and it exposes no token, cookie or session data.
+     */
+    private suspend fun diagnosticsRoute(call: ApplicationCall) {
+        val state = WebDiagnostics.value
+        respondJson(
+            call,
+            HttpStatusCode.OK,
+            jsonObject(
+                "ok" to jsonBool(true),
+                "certificateLoaded" to jsonBool(state.certificateLoaded),
+                "fingerprint" to jsonString(state.fingerprint),
+                "listenPort" to jsonNum(state.listenPort.toLong()),
+                "backendPort" to jsonNum(state.backendPort.toLong()),
+                "boundAddress" to jsonString(state.boundAddress),
+                "allowedAddresses" to JsonValue.Arr(state.allowedAddresses.map { jsonString(it) }),
+                "acceptedConnections" to jsonNum(state.acceptedConnections),
+                "handshakeFailures" to jsonNum(state.handshakeFailures),
+                "backendFailures" to jsonNum(state.backendFailures),
+                "lastCloseReason" to jsonString(state.lastCloseReason),
+            ),
+        )
+    }
 
     /**
      * Holds the connection until the phone answers, then writes the session

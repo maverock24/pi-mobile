@@ -59,6 +59,9 @@ class WebRelayServerTest {
 
     @Before
     fun setUp() {
+        // The listener state is per process, so a previous test's counts and
+        // ports are cleared before this server starts and writes its own.
+        WebDiagnostics.reset()
         gate = WebApprovalGate(ttlMs = 5_000)
         upstream = FakeUpstream()
         pinStore = FakePins()
@@ -713,6 +716,26 @@ class WebRelayServerTest {
     }
 
     // ---- headers -----------------------------------------------------------
+
+    @Test
+    fun `the diagnostics route reports the listener state without a session`() {
+        get("/api/diagnostics").use {
+            assertEquals(200, it.code)
+            val body = it.body!!.string()
+            assertTrue("the backend port is named: $body", body.contains("\"backendPort\":$port"))
+            assertTrue("the certificate state is named", body.contains("\"certificateLoaded\":false"))
+            assertTrue("the served address is named", body.contains(authority))
+            assertTrue("the last close reason is named", body.contains("\"lastCloseReason\""))
+            assertFalse("no bridge token", body.contains(FakeUpstream.TOKEN_MARKER))
+        }
+    }
+
+    @Test
+    fun `the diagnostics route still refuses a foreign host`() {
+        get("/api/diagnostics", headers = mapOf("Host" to "evil.example")).use {
+            assertEquals(403, it.code)
+        }
+    }
 
     @Test
     fun `every response carries the hardening headers and no CORS grant`() {

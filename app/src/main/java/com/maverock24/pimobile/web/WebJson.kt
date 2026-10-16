@@ -36,6 +36,9 @@ internal fun jsonString(value: String): JsonValue.Str = JsonValue.Str(value)
 
 internal fun jsonBool(value: Boolean): JsonValue.Bool = JsonValue.Bool(value)
 
+/** A number from a Long, so a counter or a port is emitted without a float. */
+internal fun jsonNum(value: Long): JsonValue.Num = JsonValue.Num(value.toString())
+
 /** Serialises this value. Strings are escaped; numbers are emitted verbatim. */
 internal fun JsonValue.render(): String = StringBuilder().also { write(it) }.toString()
 

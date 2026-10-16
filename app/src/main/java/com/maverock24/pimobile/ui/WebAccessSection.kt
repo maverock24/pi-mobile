@@ -28,6 +28,8 @@ import com.maverock24.pimobile.web.WebAccess
 import com.maverock24.pimobile.web.WebAccessService
 import com.maverock24.pimobile.web.WebAccessStatus
 import com.maverock24.pimobile.web.WebApprovalGate
+import com.maverock24.pimobile.web.WebDiagnostics
+import com.maverock24.pimobile.web.diagnosticsSummary
 
 /**
  * The Settings section that turns the web server on and off.
@@ -40,6 +42,7 @@ import com.maverock24.pimobile.web.WebApprovalGate
 internal fun WebAccessSection() {
     val context = LocalContext.current
     val status by WebAccess.status.collectAsState()
+    val diagnostics by WebDiagnostics.state.collectAsState()
     val pending by WebApprovalGate.shared.pending.collectAsState()
     var expanded by rememberSaveable { mutableStateOf(false) }
 
@@ -115,6 +118,21 @@ internal fun WebAccessSection() {
                         "continue, check that the fingerprint it shows is this one.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // What the listener is actually doing. This is the phone-side copy
+                // of GET /api/diagnostics, so a connection that closed with no
+                // response has a reason the human can read without a working
+                // browser, and a listener that is up but cannot answer does not
+                // look the same as one that is serving.
+                SectionLabel("Listener")
+                Text(
+                    text = diagnosticsSummary(diagnostics),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (diagnostics.lastCloseReason.isNotBlank()) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
             }
             is WebAccessStatus.Failed -> Text(

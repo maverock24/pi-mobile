@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.maverock24.pimobile.MainActivity
@@ -81,6 +82,10 @@ class WebAccessService : Service() {
 
     private fun startServer() {
         WebAccess.update(WebAccessStatus.Starting)
+        // Start with a clean sheet so a previous run's handshake failures do not
+        // read as this run's, and so a fresh listener that has served nobody says
+        // exactly that.
+        WebDiagnostics.reset()
         watchdog = scope.launch {
             try {
                 var addresses = phoneAddresses(this@WebAccessService)
@@ -110,8 +115,10 @@ class WebAccessService : Service() {
                 val tls = WebTlsFront(
                     keyStore = certificate.keyStore,
                     keyAlias = certificate.alias,
+                    certificate = certificate.certificate,
                     port = WebAccess.PORT,
                     backendPort = backendPort,
+                    log = { message -> Log.i(LOG_TAG, message) },
                 )
                 tls.start()
                 front = tls
@@ -236,6 +243,9 @@ class WebAccessService : Service() {
 
         private const val CHANNEL_ID = "web-access"
         private const val NOTIFICATION_ID = 42
+
+        /** Logcat tag for the listener's own account of what it did. */
+        private const val LOG_TAG = "WebAccess"
 
         /** How often the idle bookkeeping is checked. */
         private const val WATCH_INTERVAL_MS = 5_000L

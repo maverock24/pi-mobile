@@ -3,16 +3,26 @@ package com.maverock24.pimobile.web
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.URL
+import java.security.Key
+import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.KeyStoreSpi
+import java.security.PrivateKey
+import java.security.cert.Certificate
 import java.security.cert.X509Certificate
 import java.security.spec.ECGenParameterSpec
+import java.util.Collections
 import java.util.Date
+import java.util.Enumeration
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
@@ -27,21 +37,22 @@ import javax.net.ssl.X509TrustManager
  */
 class WebTlsFrontTest {
 
+    @Before
+    fun resetDiagnostics() {
+        // The listener state is per process, so a previous test's counts are
+        // cleared before this one starts.
+        WebDiagnostics.reset()
+    }
+
     @Test
     fun `the front binds every interface and answers on a non-loopback address`() {
-        val keyStore = scratchKeyStore("127.0.0.1")
+        val material = scratchCertificate("127.0.0.1")
         val frontPort = ServerSocket(0).use { it.localPort }
         val localIp = nonLoopbackIpv4()
         val authority = "$localIp:$frontPort"
-        val relay = WebRelayServer(
-            loadAsset = { "<html>PAGE</html>" },
-            allowedAuthorities = setOf(authority),
-            allowedOrigins = setOf("https://$authority"),
-            upstream = NoopUpstream,
-            gate = WebApprovalGate(ttlMs = 5_000),
-        )
+        val relay = relayFor(authority)
         val backendPort = runBlocking { relay.start() }
-        val front = WebTlsFront(keyStore, ALIAS, frontPort, backendPort)
+        val front = WebTlsFront(material.keyStore, ALIAS, material.certificate, frontPort, backendPort)
         front.start()
         try {
             // The wildcard bind is what makes every displayed address answer, not
@@ -60,20 +71,126 @@ class WebTlsFrontTest {
         }
     }
 
-    private fun scratchKeyStore(subjectAltIp: String): KeyStore {
-        val generator = KeyPairGenerator.getInstance("EC")
-        generator.initialize(ECGenParameterSpec("secp256r1"))
-        val pair = generator.generateKeyPair()
+    /**
+     * The regression for the empty response. AndroidKeyStore holds a key and no
+     * certificate, because the certificate is assembled separately and the key
+     * never leaves the keystore. JSSE's own key manager reads the chain to choose
+     * a server alias, so with this keystore it offers nothing and the handshake
+     * ends with no certificate sent. The front must serve the certificate it was
+     * handed and complete the handshake anyway.
+     */
+    @Test
+    fun `the front serves a certificate when the keystore holds a key with no chain`() {
+        val material = scratchCertificate("127.0.0.1")
+        // The same key the certificate names, which is what the keystore holds on
+        // the phone, but exposed with no chain as AndroidKeyStore does.
+        val keyOnly = keyOnlyKeyStore(material.keyPair)
+        val frontPort = ServerSocket(0).use { it.localPort }
+        val authority = "127.0.0.1:$frontPort"
+        val relay = relayFor(authority)
+        val backendPort = runBlocking { relay.start() }
+        val front = WebTlsFront(keyOnly, ALIAS, material.certificate, frontPort, backendPort)
+        front.start()
+        try {
+            val (code, body) = httpsGet("https://$authority/")
+            assertEquals("a keystore with no certificate chain still completes the handshake", 200, code)
+            assertEquals("<html>PAGE</html>", body)
+        } finally {
+            front.stop()
+            relay.stop()
+        }
+    }
+
+    @Test
+    fun `the diagnostics route reports the backend port and the loaded certificate`() {
+        val material = scratchCertificate("127.0.0.1")
+        val frontPort = ServerSocket(0).use { it.localPort }
+        val authority = "127.0.0.1:$frontPort"
+        val relay = relayFor(authority)
+        val backendPort = runBlocking { relay.start() }
+        val front = WebTlsFront(material.keyStore, ALIAS, material.certificate, frontPort, backendPort)
+        front.start()
+        try {
+            val (code, body) = httpsGet("https://$authority/api/diagnostics")
+            assertEquals(200, code)
+            assertTrue("the backend port is named: $body", body!!.contains("\"backendPort\":$backendPort"))
+            assertTrue("the listen port is named", body.contains("\"listenPort\":$frontPort"))
+            assertTrue("the certificate is reported loaded", body.contains("\"certificateLoaded\":true"))
+            assertTrue("the fingerprint is reported", body.contains(fingerprintOf(material.certificate)))
+            assertTrue("the served address is allowed", body.contains(authority))
+        } finally {
+            front.stop()
+            relay.stop()
+        }
+    }
+
+    private fun relayFor(authority: String): WebRelayServer {
+        val relay = WebRelayServer(
+            loadAsset = { "<html>PAGE</html>" },
+            allowedAuthorities = setOf(authority),
+            allowedOrigins = setOf("https://$authority"),
+            upstream = NoopUpstream,
+            gate = WebApprovalGate(ttlMs = 5_000),
+        )
+        return relay
+    }
+
+    private data class Material(
+        val keyStore: KeyStore,
+        val certificate: X509Certificate,
+        val keyPair: KeyPair,
+    )
+
+    private fun scratchCertificate(subjectAltIp: String): Material {
+        val pair = newP256KeyPair()
         val now = System.currentTimeMillis()
         val certificate = assembleSelfSigned(
             pair, "scratch", Date(now - 60_000), Date(now + 86_400_000), listOf(subjectAltIp),
         )
         val store = KeyStore.getInstance(KeyStore.getDefaultType())
         store.load(null, null)
-        // The same shape AndroidKeyStore presents: a key entry reachable with a
-        // null password, which is what WebTlsFront.init passes.
+        // The shape AndroidKeyStore presents to JSSE once the certificate is
+        // installed: a key entry reachable with a null password.
         store.setKeyEntry(ALIAS, pair.private, null, arrayOf(certificate))
-        return store
+        return Material(store, certificate, pair)
+    }
+
+    private fun newP256KeyPair(): KeyPair {
+        val generator = KeyPairGenerator.getInstance("EC")
+        generator.initialize(ECGenParameterSpec("secp256r1"))
+        return generator.generateKeyPair()
+    }
+
+    /**
+     * A keystore that holds a key but exposes no certificate chain, the shape
+     * AndroidKeyStore has for a key made with KeyGenParameterSpec.
+     */
+    private fun keyOnlyKeyStore(pair: KeyPair): KeyStore {
+        val wrapped = object : KeyStore(KeyOnlyKeyStore(pair.private), null, "keyonly") {}
+        // Marks the keystore initialized so aliases() does not throw.
+        wrapped.load(null, null)
+        return wrapped
+    }
+
+    private class KeyOnlyKeyStore(private val key: PrivateKey) : KeyStoreSpi() {
+        override fun engineGetKey(alias: String?, password: CharArray?): Key = key
+        override fun engineGetCertificateChain(alias: String?): Array<Certificate>? = null
+        override fun engineGetCertificate(alias: String?): Certificate? = null
+        override fun engineGetCreationDate(alias: String?): Date? = null
+        override fun engineSetKeyEntry(alias: String?, key: Key?, password: CharArray?, chain: Array<out Certificate>?) = Unit
+        override fun engineSetKeyEntry(alias: String?, key: ByteArray?, chain: Array<out Certificate>?) = Unit
+        override fun engineSetCertificateEntry(alias: String?, cert: Certificate?) = Unit
+        override fun engineDeleteEntry(alias: String?) = Unit
+        override fun engineAliases(): Enumeration<String> = Collections.enumeration(listOf(ALIAS))
+        override fun engineContainsAlias(alias: String?): Boolean = alias == ALIAS
+        override fun engineSize(): Int = 1
+        override fun engineIsKeyEntry(alias: String?): Boolean = alias == ALIAS
+        override fun engineIsCertificateEntry(alias: String?): Boolean = false
+        override fun engineGetCertificateAlias(cert: Certificate?): String? = null
+        override fun engineStore(stream: OutputStream?, password: CharArray?) = Unit
+        override fun engineLoad(stream: InputStream?, password: CharArray?) = Unit
+        override fun engineLoad(param: KeyStore.LoadStoreParameter?) = Unit
+        override fun engineStore(param: KeyStore.LoadStoreParameter?) = Unit
     }
 
     private fun httpsGet(url: String): Pair<Int, String?> {
