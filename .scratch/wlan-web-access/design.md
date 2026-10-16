@@ -934,3 +934,33 @@ as section 5 specifies. The hotspot reduces who can reach the listener; it does 
 the listener safe to leave unauthenticated, and the same code has to be sound if the human
 ever serves over a router instead. Removing reviewed defences to save effort is the one
 change this decision does not justify.
+
+## 16. Section 13 decided: the hand-written web UI stays, 2026-10-11
+
+The reviewer was asked to decide and chose **not** to migrate to Compose Multiplatform.
+
+The reasoning, so the question does not get reopened without new information:
+
+- **A migration would not remove the duplication it promises to remove.** Compose
+  Multiplatform targets the browser, but the parts of this app that cannot move are the
+  ones that matter to the web feature: media3 playback, the foreground service, the
+  Android keystore and the certificate handling. Those stay native either way, so the
+  migration buys a shared transcript and composer at the cost of everything else.
+- **It would put working software at risk.** Stages 1 to 5 work. A front-end migration
+  large enough to matter would land on top of that, and the feature that exists today
+  would be the thing that breaks.
+- **Simplicity.** The human has said repeatedly that they want the simplest thing that
+  works. A second front-end framework is not that, and the current web UI is small
+  enough to read.
+
+**The real cost of this choice is drift between two UIs, and it is accepted knowingly.**
+The mitigation, which future work must follow:
+
+- **The relay's API is the contract.** Both UIs talk to the same bridge routes through
+  the same relay, so a behaviour difference is a bug rather than a design choice.
+- **A new screen or a behaviour change lands in both UIs in the same change**, not as a
+  follow-up. Where that is impossible, say so in the commit message rather than leaving
+  the browser quietly behind.
+- **The distinctions that have already caused bugs are the ones to keep aligned**: an
+  empty list must look different from an unreachable bridge, and a prompt that triggers a
+  questionnaire must be answerable in both places. Both have already shipped broken once.
