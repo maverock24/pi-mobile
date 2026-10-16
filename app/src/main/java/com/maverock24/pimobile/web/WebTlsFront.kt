@@ -74,6 +74,12 @@ class WebTlsFront(
         }
     }
 
+    /**
+     * The address the listening socket bound, read back so a test can prove it is
+     * the wildcard and not one interface. Null before [start] and after [stop].
+     */
+    internal fun boundAddress(): InetAddress? = serverSocket?.inetAddress
+
     private fun acceptLoop(server: SSLServerSocket) {
         while (running.get()) {
             val client = try {

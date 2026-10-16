@@ -79,4 +79,32 @@ class SelfSignedCertificateTest {
     private fun newP256KeyPair() = KeyPairGenerator.getInstance("EC").apply {
         initialize(ECGenParameterSpec("secp256r1"))
     }.generateKeyPair()
+
+    @Test
+    fun `a certificate names every address it was built for`() {
+        val certificate = assembleSelfSigned(
+            keyPair = newP256KeyPair(),
+            commonName = "Pi Remote web access",
+            notBefore = Date(System.currentTimeMillis() - 60_000),
+            notAfter = Date(System.currentTimeMillis() + 60_000),
+            subjectAltIps = listOf("192.168.43.1", "10.0.0.2"),
+        )
+        assertEquals(setOf("192.168.43.1", "10.0.0.2"), subjectAltIpsOf(certificate))
+        assertTrue(addressesNotNamed(certificate, listOf("192.168.43.1", "10.0.0.2")).isEmpty())
+    }
+
+    @Test
+    fun `an address the certificate does not name is reported missing`() {
+        val certificate = assembleSelfSigned(
+            keyPair = newP256KeyPair(),
+            commonName = "Pi Remote web access",
+            notBefore = Date(System.currentTimeMillis() - 60_000),
+            notAfter = Date(System.currentTimeMillis() + 60_000),
+            subjectAltIps = listOf("192.168.1.10"),
+        )
+        // The hotspot address appeared after the certificate was built, which is
+        // the case the store re-signs for rather than serving a stale name.
+        assertEquals(listOf("192.168.43.1"), addressesNotNamed(certificate, listOf("192.168.43.1")))
+        assertTrue(addressesNotNamed(certificate, listOf("192.168.1.10")).isEmpty())
+    }
 }

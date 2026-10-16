@@ -7,6 +7,7 @@ import java.io.File
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.PrivateKey
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.security.spec.ECGenParameterSpec
@@ -42,26 +43,69 @@ object WebCertificateStore {
      * Returns the certificate to serve, generating both the keystore key and the
      * certificate when either is missing.
      *
-     * [subjectAltIps] are the addresses the phone is on right now. They are only
-     * used when a certificate is built: an existing one is kept even if the
-     * addresses have since changed, because a stable fingerprint is worth more
-     * than a name that matches, and the browser warns about the self-signed
-     * certificate regardless. Every candidate address is named, so the address
-     * the human picks is as likely as any other to match.
+     * [subjectAltIps] are the addresses the phone is on right now. A stored
+     * certificate that names them all is reused as-is, so the fingerprint the
+     * human already accepted does not move. A stored certificate that does not
+     * name every current address is re-signed: the app is about to tell the human
+     * to open those addresses, and a browser matches the URL against the
+     * certificate's names, so a certificate that has gone stale would add a name
+     * mismatch on top of the self-signed warning. Re-issuing keeps the keystore
+     * key (hardware-backed where the device has it) and changes only the
+     * fingerprint, which the Settings screen reads fresh each start.
      */
     fun load(context: Context, subjectAltIps: List<String>): WebCertificate {
         val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
         val certFile = File(File(context.filesDir, CERT_DIR), CERT_FILE)
-        if (keyStore.containsAlias(ALIAS) && certFile.isFile) {
-            val stored = readCertificate(certFile)
-            if (stored != null && isUsable(stored)) {
+        if (keyStore.containsAlias(ALIAS)) {
+            val stored = if (certFile.isFile) readCertificate(certFile) else null
+            if (stored != null && isUsable(stored) && addressesNotNamed(stored, subjectAltIps).isEmpty()) {
                 return WebCertificate(keyStore, ALIAS, stored, fingerprintOf(stored))
             }
+            // The key is kept and a fresh certificate is signed over it with every
+            // current address named. The alternative, reusing the stale names, is
+            // what made the browser warn about an address it could not match.
+            val certificate = reissue(keyStore, certFile, stored, subjectAltIps)
+            return WebCertificate(keyStore, ALIAS, certificate, fingerprintOf(certificate))
         }
-        // The key was reset, the certificate is gone or unreadable, or it is no
-        // longer valid. Build both again so the pair always belongs together.
+        // No key yet, so build both together; the pair always belongs together.
         val certificate = generate(keyStore, certFile, subjectAltIps)
         return WebCertificate(keyStore, ALIAS, certificate, fingerprintOf(certificate))
+    }
+
+    /**
+     * Signs a new certificate over the existing keystore key, naming
+     * [subjectAltIps]. The public key comes from the stored certificate because
+     * an Android keystore entry holds a key and not a certificate. Falls back to
+     * [generate] when there is no key, no stored certificate, or the key does not
+     * actually match it, which is the only case where the pair has to be rebuilt.
+     */
+    private fun reissue(
+        keyStore: KeyStore,
+        certFile: File,
+        stored: X509Certificate?,
+        subjectAltIps: List<String>,
+    ): X509Certificate {
+        val publicKey = stored?.publicKey ?: return generate(keyStore, certFile, subjectAltIps)
+        val privateKey = runCatching { keyStore.getKey(ALIAS, null) as? PrivateKey }.getOrNull()
+            ?: return generate(keyStore, certFile, subjectAltIps)
+        val keyPair = KeyPair(publicKey, privateKey)
+        val now = System.currentTimeMillis()
+        val certificate = assembleSelfSigned(
+            keyPair = keyPair,
+            commonName = COMMON_NAME,
+            notBefore = Date(now - ONE_DAY_MS),
+            notAfter = Date(now + TEN_YEARS_MS),
+            subjectAltIps = subjectAltIps,
+        )
+        // If the keystore key is not the one the stored certificate's public key
+        // belongs to, a browser cannot complete the handshake with this
+        // certificate, so rebuild the pair instead of serving it.
+        return runCatching {
+            certificate.verify(publicKey)
+            certFile.parentFile?.mkdirs()
+            certFile.writeBytes(certificate.encoded)
+            certificate
+        }.getOrElse { generate(keyStore, certFile, subjectAltIps) }
     }
 
     private fun generate(keyStore: KeyStore, certFile: File, subjectAltIps: List<String>): X509Certificate {

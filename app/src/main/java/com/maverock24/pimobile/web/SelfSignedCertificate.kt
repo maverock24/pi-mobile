@@ -44,6 +44,31 @@ internal fun fingerprintOf(certificate: X509Certificate): String =
     formatFingerprint(MessageDigest.getInstance("SHA-256").digest(certificate.encoded))
 
 /**
+ * The addresses a certificate names as IP subject alternative names. A browser
+ * matches the address in the URL against these, so a served certificate that
+ * does not name an address the app tells the human to open makes the browser
+ * warn about a name mismatch on top of the self-signed warning. The type tag is
+ * GeneralName.iPAddress (7), which is how Java exposes an IP SAN; a DNS name in
+ * the same list is not an address and is left out.
+ */
+internal fun subjectAltIpsOf(certificate: X509Certificate): Set<String> =
+    runCatching { certificate.subjectAlternativeNames }.getOrNull()
+        .orEmpty()
+        .filter { it.size >= 2 && it[0] == GeneralName.iPAddress }
+        .mapNotNull { it[1] as? String }
+        .toSet()
+
+/**
+ * The addresses in [addresses] that [certificate] does not name as an IP SAN,
+ * in the order they were asked for. The list is empty when the certificate
+ * covers every address, which is the only case where reusing it is safe.
+ */
+internal fun addressesNotNamed(certificate: X509Certificate, addresses: List<String>): List<String> {
+    val named = subjectAltIpsOf(certificate)
+    return addresses.filterNot { it in named }
+}
+
+/**
  * Builds a self-signed certificate for [keyPair], signed by its own private key.
  *
  * The X.509 structure is BouncyCastle's, because Android has no public API that

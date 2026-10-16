@@ -99,4 +99,16 @@ class WebAddressesTest {
         val candidate = WebAddress("192.168.43.1", "ap0", null)
         assertEquals("https://192.168.43.1:8788", candidate.url(8788))
     }
+
+    @Test
+    fun `the displayed url carries the scheme and the port the server binds`() {
+        // A bare address pasted into a browser would go to port 443, where
+        // nothing listens, so the string the app shows must carry both the scheme
+        // and the port the TLS front binds (WebAccess.PORT).
+        val candidate = WebAddress("192.168.43.1", "ap0", null)
+        val shown = candidate.url(WebAccess.PORT)
+        assertEquals("https://192.168.43.1:${WebAccess.PORT}", shown)
+        assertTrue("the scheme is https, not a bare address", shown.startsWith("https://"))
+        assertTrue("the port is the one the server binds", shown.endsWith(":${WebAccess.PORT}"))
+    }
 }
