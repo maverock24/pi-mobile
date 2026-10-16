@@ -112,9 +112,17 @@ internal class WebRelayServer(
             }
             routing {
                 // The bundled page and its modules, a literal map so no request
-                // can name a file the shell does not use.
+                // can name a file the shell does not use. The type comes from the
+                // asset's own name, not the request path, so the shell at "/" is
+                // still HTML. `no-store` matches the JSON and stream routes: the
+                // bundle changes with every app build, and a browser that kept an
+                // old shell could call routes the new one renamed (the design's
+                // reason for leaving offline caching out).
                 for ((path, asset) in ASSETS) {
-                    get(path) { call.respondText(loadAsset(asset), contentTypeFor(path)) }
+                    get(path) {
+                        call.response.header("Cache-Control", "no-store")
+                        call.respondText(loadAsset(asset), contentTypeFor(asset))
+                    }
                 }
 
                 get("/api/session") {
@@ -725,10 +733,33 @@ internal class WebRelayServer(
     private fun ApplicationCall.isJson(): Boolean =
         request.contentType().match(ContentType.Application.Json)
 
-    private fun contentTypeFor(path: String): ContentType = when {
-        path.endsWith(".css") -> ContentType.Text.CSS
-        path.endsWith(".js") -> ContentType.Text.JavaScript
-        path.endsWith(".html") -> ContentType.Text.Html
+    /**
+     * The content type for a bundled asset, from the file's own extension. The
+     * browser only renders the shell as a page when it is `text/html`, and under
+     * `script-src 'self'` it only runs a module it sees as JavaScript, so the
+     * type has to match the file. It is taken from the asset name rather than the
+     * request path because the route that names the shell is "/", which has no
+     * extension and was served as `application/octet-stream`, so the browser
+     * downloaded the page instead of showing it. Text types carry a charset so
+     * the page and its modules decode as UTF-8 whatever the browser's default is.
+     */
+    private fun contentTypeFor(assetName: String): ContentType = when (extensionOf(assetName)) {
+        "html", "htm" -> ContentType.Text.Html.withCharset(Charsets.UTF_8)
+        "css" -> ContentType.Text.CSS.withCharset(Charsets.UTF_8)
+        "js", "mjs" -> ContentType.Text.JavaScript.withCharset(Charsets.UTF_8)
+        "json" -> ContentType.Application.Json.withCharset(Charsets.UTF_8)
+        "svg" -> ContentType.Image.SVG
+        "png" -> ContentType.Image.PNG
+        "jpg", "jpeg" -> ContentType.Image.JPEG
+        "gif" -> ContentType.Image.GIF
+        "webp" -> ContentType("image", "webp")
+        "ico" -> ContentType.Image.XIcon
+        "woff" -> ContentType.Font.Woff
+        "woff2" -> ContentType.Font.Woff2
+        // ASSETS is a literal list of files shipped in the APK, so an extension
+        // not named here is a bundle mistake rather than untrusted input.
+        // OctetStream is the honest "unknown bytes" answer, and nosniff keeps the
+        // browser from guessing a kind the file is not.
         else -> ContentType.Application.OctetStream
     }
 

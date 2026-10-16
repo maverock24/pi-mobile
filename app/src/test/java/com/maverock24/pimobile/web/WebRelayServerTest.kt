@@ -745,6 +745,28 @@ class WebRelayServerTest {
             assertEquals("same-origin", it.header("Cross-Origin-Resource-Policy"))
             assertTrue(it.header("Content-Security-Policy")!!.contains("default-src 'self'"))
             assertNull(it.header("Access-Control-Allow-Origin"))
+            assertEquals("the shell is not left to the browser's cache", "no-store", it.header("Cache-Control"))
+        }
+    }
+
+    @Test
+    fun `the shell and its modules are served with the type their extension implies`() {
+        // The regression this guards: the type used to come from the request
+        // path, and the path that names the shell is "/", which has no
+        // extension, so the browser was told to download the page.
+        get("/").use {
+            assertEquals(200, it.code)
+            val type = it.header("Content-Type")!!
+            assertTrue("the shell must be HTML or the browser downloads it: $type", type.startsWith("text/html"))
+            assertTrue("the shell needs a charset: $type", type.contains("charset=", ignoreCase = true))
+        }
+        get("/app.js").use {
+            val type = it.header("Content-Type")!!
+            assertTrue("a module that is not JavaScript is blocked by script-src 'self': $type", type.startsWith("text/javascript"))
+            assertTrue("the module needs a charset: $type", type.contains("charset=", ignoreCase = true))
+        }
+        get("/style.css").use {
+            assertTrue("the stylesheet must be CSS", it.header("Content-Type")!!.startsWith("text/css"))
         }
     }
 
