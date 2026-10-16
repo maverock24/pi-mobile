@@ -964,3 +964,34 @@ The mitigation, which future work must follow:
 - **The distinctions that have already caused bugs are the ones to keep aligned**: an
   empty list must look different from an unreachable bridge, and a prompt that triggers a
   questionnaire must be answerable in both places. Both have already shipped broken once.
+
+## 17. Security on the hotspot, 2026-10-11
+
+The human asked how to make the server more secure, reading the browser's "Not secure"
+warning as meaning the traffic is unencrypted. **It is not.** Verified from another
+computer on the hotspot: the TLS handshake completes, the phone presents
+`CN=Pi Remote web access`, and the page is returned over that connection. The warning is
+about the certificate being self-signed, which the browser cannot verify, not about
+plaintext. Recorded because thinking the transport is plaintext leads to the wrong fixes.
+
+What actually raises security here, most valuable first:
+
+1. **Verify the two HIGH findings are genuinely closed.** Stage 2 claimed to close F1 and
+   F2, and the claim has never been re-checked against the code after five further commits
+   touched the same files. A review finding that was declared done and then rewritten
+   around is the most likely place for a real hole to survive, and it is cheap to check.
+2. **The hotspot password is the network boundary.** Only devices the human admits can
+   reach the listener at all, which is the reason the threat model shrank in section 15.
+   A weak or open hotspot undoes that.
+3. **The idle shutdown is a security property, not just tidiness.** A listener that stops
+   when nobody is using it (section 10) cannot be found later by a device that joins the
+   hotspot while the human is not looking at the app.
+4. **Make the fingerprint comparison easy.** The self-signed certificate means TLS cannot
+   alone stop an attacker who is already on the network from impersonating the phone.
+   Comparing the fingerprint the app shows against the browser's is what closes that, and
+   it only works if both are easy to find. Anything that makes the comparison harder makes
+   the TLS weaker in practice than it is on paper.
+5. **Trusting the certificate on the other computer is optional and cosmetic.** Installing
+   the phone's certificate as trusted removes the warning, but does not make the
+   connection more private than it already is, and it is a manual step per machine. Worth
+   doing only if the warning is annoying.
