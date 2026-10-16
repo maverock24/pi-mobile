@@ -433,6 +433,7 @@ class WebRelayServerTest {
         get("/api/pins", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
         get("/api/question", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
         get("/api/events", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
+        get("/api/files/t-1.mp3", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
         post(
             "/api/prompt",
             """{"text":"hi"}""",
@@ -587,6 +588,130 @@ class WebRelayServerTest {
         assertTrue("the pin is gone from the store", pinStore.pins.isEmpty())
     }
 
+    // ---- audio playback (stage 5) -----------------------------------------
+
+    @Test
+    fun `the audio route needs a session`() {
+        get("/api/files/t-1.mp3").use { assertEquals(401, it.code) }
+    }
+
+    @Test
+    fun `a range request is forwarded and answered as a 206 with content range`() {
+        val session = connect()
+        get(
+            "/api/files/t-1.mp3",
+            cookie = session.cookie,
+            headers = mapOf("Origin" to origin, "Range" to "bytes=10-19"),
+        ).use {
+            assertEquals(206, it.code)
+            assertEquals("the range comes back on the response", "bytes 10-19/100", it.header("Content-Range"))
+            assertEquals("a seeker is told the file is seekable", "bytes", it.header("Accept-Ranges"))
+            assertEquals("the slice length is the content length", "10", it.header("Content-Length"))
+            assertEquals("always the relay's own audio type", "audio/mpeg", it.header("Content-Type"))
+            val body = it.body!!.bytes()
+            assertEquals(10, body.size)
+            assertEquals(10.toByte(), body[0])
+            assertEquals(19.toByte(), body[9])
+        }
+        assertEquals("the browser's range is what goes upstream", "bytes=10-19", upstream.fileRanges.single())
+        assertEquals("t-1.mp3", upstream.fileNames.single())
+        assertTrue("the upstream label names the web session", upstream.calls.single().startsWith("web:"))
+    }
+
+    @Test
+    fun `a full file request is answered as a 200 with accept ranges`() {
+        val session = connect()
+        get("/api/files/t-1.mp3", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(200, it.code)
+            assertEquals("bytes", it.header("Accept-Ranges"))
+            assertEquals("100", it.header("Content-Length"))
+            assertEquals(100, it.body!!.bytes().size)
+            assertNull("a full body carries no content range", it.header("Content-Range"))
+        }
+        assertNull("no range is invented when the browser sent none", upstream.fileRanges.single())
+    }
+
+    @Test
+    fun `the audio route serves audio only and never the bridge content type`() {
+        val session = connect()
+        // A non-audio name is refused before the bridge is asked, so a document
+        // can never be served on the session origin (F1).
+        get("/api/files/evil.html", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(404, it.code)
+        }
+        assertTrue("a non-audio name never reaches the bridge", upstream.fileNames.isEmpty())
+        // An audio name is served with the relay's own audio type. The fake puts
+        // the token in the upstream content type, so proving the response type is
+        // audio/mpeg is also what proves no upstream header is copied through.
+        get("/api/files/t-1.mp3", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals("audio/mpeg", it.header("Content-Type"))
+            assertFalse("no upstream header leaks the bridge token", it.headers.toString().contains(FakeUpstream.TOKEN_MARKER))
+        }
+    }
+
+    @Test
+    fun `a bridge that will not serve the file is a bad gateway`() {
+        val session = connect()
+        upstream.fileStatus = 500
+        get("/api/files/t-1.mp3", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(502, it.code)
+        }
+    }
+
+    @Test
+    fun `a playing audio file holds the server open and goes idle when it ends`() {
+        val session = connect()
+        upstream.fileHold = CountDownLatch(1)
+        val response = get("/api/files/t-1.mp3", cookie = session.cookie, headers = mapOf("Origin" to origin))
+        try {
+            assertEquals(200, response.code)
+            // The body is still being produced, so the server counts the response
+            // as in flight, the same way a live event stream does. This is what
+            // keeps the server up while a talk plays rather than stopping it under
+            // the player, and it is checked before the body is consumed.
+            assertFalse("an open audio response is not idle", server.isIdle(0, System.currentTimeMillis()))
+        } finally {
+            upstream.fileHold?.countDown()
+            response.close()
+        }
+        // With the request gone the server goes idle after the grace window, so
+        // closing the browser lets it stop rather than lingering forever.
+        var idle = false
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!idle && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50)
+            idle = server.isIdle(0, System.currentTimeMillis())
+        }
+        assertTrue("the server goes idle once the audio request has ended", idle)
+    }
+
+    @Test
+    fun `a large file streams in chunks rather than waiting for the whole body`() {
+        val session = connect()
+        upstream.fileHold = CountDownLatch(1)
+        // The fake produces one 64 KiB chunk and then stalls, so the client can
+        // only read that chunk if the relay flushes as it goes. A relay that let
+        // the engine buffer the body would make this read block until the stall
+        // was released, which is the difference between a seek and a re-download.
+        upstream.fileStallAt = 64 * 1024
+        val response = get("/api/files/big.mp3", cookie = session.cookie, headers = mapOf("Origin" to origin))
+        try {
+            assertEquals(200, response.code)
+            // The fake stalls for 5 seconds, so a relay that did not flush would
+            // make this read wait until then. A flushed chunk arrives at once; the
+            // generous bound still separates the two.
+            val startedAt = System.nanoTime()
+            val first = response.body!!.source().readByteArray(64 * 1024)
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+            assertEquals("the first chunk arrives before the body ends", 64 * 1024, first.size)
+            assertTrue("the chunk was not held to the end of the body (took ${elapsedMs}ms)", elapsedMs < 3_000)
+            assertFalse("the response is still open mid-body", server.isIdle(0, System.currentTimeMillis()))
+        } finally {
+            upstream.fileHold?.countDown()
+            response.close()
+        }
+    }
+
     // ---- headers -----------------------------------------------------------
 
     @Test
@@ -685,11 +810,20 @@ class WebRelayServerTest {
     private class FakeUpstream : WebUpstream {
         var status = 200
         var eventsStatus = 200
+        var fileStatus = 200
 
         /** When set, the event stream blocks after its frames until this opens. */
         var eventsHold: CountDownLatch? = null
+
+        /** When set, the file body blocks until this opens, at [fileStallAt]. */
+        var fileHold: CountDownLatch? = null
+
+        /** The byte offset at which a held file body stalls; 0 stalls immediately. */
+        var fileStallAt = 0
         val calls = mutableListOf<String>()
         val bodies = mutableListOf<String>()
+        val fileNames = mutableListOf<String>()
+        val fileRanges = mutableListOf<String?>()
 
         override suspend fun state(clientLabel: String): UpstreamResult {
             calls.add(clientLabel)
@@ -713,6 +847,22 @@ class WebRelayServerTest {
             calls.add(clientLabel)
             if (status != 200) return UpstreamResult(status, """{"error":"boom"}""")
             return UpstreamResult(200, QUESTION_BODY)
+        }
+
+        override suspend fun file(clientLabel: String, name: String, range: String?): WebUpstreamFile {
+            calls.add(clientLabel)
+            fileNames.add(name)
+            fileRanges.add(range)
+            if (fileStatus != 200) return FakeFile(fileStatus, ByteArray(0), null, 0, null, fileStallAt)
+            val bytes = if (name == LARGE_NAME) LARGE_FILE_BYTES else FILE_BYTES
+            if (range == null) {
+                return FakeFile(200, bytes, null, bytes.size.toLong(), fileHold, fileStallAt)
+            }
+            val spec = range.removePrefix("bytes=").split("-")
+            val start = spec.getOrNull(0)?.toIntOrNull() ?: 0
+            val end = spec.getOrNull(1)?.takeIf { it.isNotEmpty() }?.toIntOrNull() ?: (bytes.size - 1)
+            val slice = bytes.copyOfRange(start, end + 1)
+            return FakeFile(206, slice, "bytes $start-$end/${bytes.size}", slice.size.toLong(), fileHold, fileStallAt)
         }
 
         override suspend fun prompt(clientLabel: String, body: String): UpstreamResult {
@@ -753,8 +903,51 @@ class WebRelayServerTest {
             }
         }
 
+        /**
+         * A file body that streams a fixed slice and, when [hold] is set, blocks
+         * at the end so a test can observe the response while it is open. The
+         * content type deliberately carries the token so a test proves the relay
+         * chooses its own audio type instead of copying the upstream one.
+         */
+        private class FakeFile(
+            override val status: Int,
+            private val bytes: ByteArray,
+            override val contentRange: String?,
+            override val contentLength: Long,
+            private val hold: CountDownLatch?,
+            private val stallAt: Int,
+        ) : WebUpstreamFile {
+            override val contentType: String = "text/html; tok=$TOKEN_MARKER"
+            private var index = 0
+
+            override fun read(buffer: ByteArray): Int {
+                // A held body stalls at [stallAt]: at 0 it stalls before the first
+                // byte, and at a chunk boundary it lets the first chunk through
+                // first, which is what proves the relay flushes as it goes.
+                if (hold != null && index >= stallAt) hold.await(5, TimeUnit.SECONDS)
+                if (index >= bytes.size) return -1
+                val count = minOf(buffer.size, bytes.size - index)
+                System.arraycopy(bytes, index, buffer, 0, count)
+                index += count
+                return count
+            }
+
+            override fun close() {
+                hold?.countDown()
+            }
+        }
+
         companion object {
             const val TOKEN_MARKER = "bridge-secret-token"
+
+            /** 100 deterministic audio bytes, so a range slice is checkable. */
+            val FILE_BYTES = ByteArray(100) { it.toByte() }
+
+            /** A name the fake serves a body larger than one chunk for. */
+            const val LARGE_NAME = "big.mp3"
+
+            /** 256 KiB, several chunks, so incremental delivery is observable. */
+            val LARGE_FILE_BYTES = ByteArray(256 * 1024) { it.toByte() }
 
             val STATE_BODY =
                 """{"sessionId":"s-1","sessionName":"work","sessionFile":"/secret/session.json",""" +

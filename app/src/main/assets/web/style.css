@@ -242,6 +242,10 @@ textarea { resize: vertical; width: 100%; }
 .file-meta { font-size: 0.85rem; color: var(--on-surface-variant); }
 .file-error { font-size: 0.85rem; color: var(--error); }
 .file-note { font-size: 0.85rem; color: var(--on-surface-variant); font-style: italic; }
+/* An audio row's controls: the native player carries the scrubber, so it sits in
+   the row beside the Stop button and is taken out when playback stops. */
+.file-actions { display: flex; align-items: center; gap: 0.5rem; }
+.file-audio { flex: 1; min-width: 10rem; height: 2rem; }
 .file-progress {
   height: 4px;
   border-radius: 2px;

@@ -8,8 +8,10 @@ import io.ktor.server.cio.CIOApplicationEngine
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.request.receiveText
+import io.ktor.server.request.uri
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -17,6 +19,7 @@ import io.ktor.server.routing.routing
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -39,6 +42,8 @@ class BridgeUpstreamTest {
     private val labelHeader = AtomicReference<String?>()
     private val cookieHeader = AtomicReference<String?>()
     private val requestBody = AtomicReference<String?>()
+    private val filePath = AtomicReference<String?>()
+    private val rangeHeader = AtomicReference<String?>()
     private val otherHits = AtomicInteger(0)
 
     @Volatile
@@ -59,6 +64,17 @@ class BridgeUpstreamTest {
                 }
                 get("/api/history") { capture(call); call.respondText("""{"messages":[]}""", ContentType.Application.Json) }
                 get("/api/files") { capture(call); call.respondText("""{"files":[]}""", ContentType.Application.Json) }
+                get("/api/files/{name}") {
+                    capture(call)
+                    filePath.set(call.request.uri)
+                    rangeHeader.set(call.request.headers["Range"])
+                    if (rangeHeader.get() != null) {
+                        call.response.header("Content-Range", "bytes 0-3/10")
+                        call.respondBytes(byteArrayOf(1, 2, 3, 4), ContentType.Audio.MPEG, HttpStatusCode.PartialContent)
+                    } else {
+                        call.respondBytes(ByteArray(10), ContentType.Audio.MPEG)
+                    }
+                }
                 get("/api/question") { capture(call); call.respondText("""{"pending":null}""", ContentType.Application.Json) }
                 get("/api/events") {
                     capture(call)
@@ -141,6 +157,25 @@ class BridgeUpstreamTest {
         assertEquals("Bearer tok", authHeader.get())
         assertEquals("web:abc", labelHeader.get())
         assertTrue(lines.any { it.startsWith("data: ") })
+    }
+
+    @Test
+    fun `the file route sends the token and the range, never the browser cookie`() = runBlocking {
+        val file = upstream().file("web:abc", "t-1.mp3", "bytes=0-3")
+        assertEquals(206, file.status)
+        assertEquals("Bearer tok", authHeader.get())
+        assertEquals("web:abc", labelHeader.get())
+        assertEquals("the browser's range goes upstream", "bytes=0-3", rangeHeader.get())
+        assertEquals("/api/files/t-1.mp3", filePath.get())
+        assertFalse("the request path carries no token", filePath.get()!!.contains("tok"))
+        assertNull("the browser's cookie is never forwarded", cookieHeader.get())
+        assertEquals("bytes 0-3/10", file.contentRange)
+        assertEquals(4L, file.contentLength)
+        val buffer = ByteArray(8)
+        assertEquals(4, file.read(buffer))
+        assertEquals(1.toByte(), buffer[0])
+        assertEquals("the body ends after its slice", -1, file.read(buffer))
+        file.close()
     }
 
     @Test

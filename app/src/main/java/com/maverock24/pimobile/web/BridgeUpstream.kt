@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /** The upstream status and body the relay received from the bridge. */
@@ -23,6 +24,22 @@ internal interface WebUpstreamStream : AutoCloseable {
 }
 
 /**
+ * One bridge library file, streamed rather than buffered: a thirty minute talk
+ * is tens of megabytes and the browser reads it as it plays. Only the headers a
+ * byte-range player needs are exposed, and the relay decides the content type
+ * itself rather than trusting the upstream one (the file rule in design 4.4).
+ */
+internal interface WebUpstreamFile : AutoCloseable {
+    val status: Int
+    val contentType: String?
+    val contentLength: Long
+    val contentRange: String?
+
+    /** Reads up to [buffer].size bytes, blocking, or -1 at the end of the body. */
+    fun read(buffer: ByteArray): Int
+}
+
+/**
  * The bridge calls the relay is allowed to make. It is an interface so the relay
  * tests can hand in a fake with no sockets, and the production implementation is
  * the only place the bridge token is put on the wire.
@@ -36,6 +53,12 @@ internal interface WebUpstream {
     suspend fun history(clientLabel: String, limit: Int): UpstreamResult
     suspend fun files(clientLabel: String): UpstreamResult
     suspend fun question(clientLabel: String): UpstreamResult
+    /**
+     * One library file by name, with the browser's `Range` forwarded when it
+     * sent one. `Range` is the only browser header the design lets reach the
+     * bridge here (section 4.5), because seeking in a long talk depends on it.
+     */
+    suspend fun file(clientLabel: String, name: String, range: String?): WebUpstreamFile
     suspend fun prompt(clientLabel: String, body: String): UpstreamResult
     suspend fun answer(clientLabel: String, body: String): UpstreamResult
     /** Opens the bridge event stream. Throws on connect failure. */
@@ -83,6 +106,29 @@ internal class BridgeUpstream(
     override suspend fun files(clientLabel: String): UpstreamResult = get(clientLabel, "/api/files")
 
     override suspend fun question(clientLabel: String): UpstreamResult = get(clientLabel, "/api/question")
+
+    override suspend fun file(clientLabel: String, name: String, range: String?): WebUpstreamFile {
+        val encoded = URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+        val builder = requestBuilder(clientLabel, "/api/files/$encoded").header("Accept", "*/*")
+        if (!range.isNullOrBlank()) builder.header("Range", range)
+        val call = streamClient.newCall(builder.get().build())
+        val response = withContext(Dispatchers.IO) { call.execute() }
+        val body = response.body
+        val source = body?.byteStream()
+        return object : WebUpstreamFile {
+            override val status: Int = response.code
+            override val contentType: String? = response.header("Content-Type")
+            override val contentLength: Long = body?.contentLength() ?: -1L
+            override val contentRange: String? = response.header("Content-Range")
+
+            override fun read(buffer: ByteArray): Int = source?.read(buffer) ?: -1
+
+            override fun close() {
+                response.close()
+                call.cancel()
+            }
+        }
+    }
 
     override suspend fun prompt(clientLabel: String, body: String): UpstreamResult =
         post(clientLabel, "/api/prompt", body)

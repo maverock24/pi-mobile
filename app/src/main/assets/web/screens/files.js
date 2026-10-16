@@ -10,11 +10,14 @@ import { readJson } from "../lib/relay.js";
 // three cases read differently, which is the bug the app already had and this
 // must not repeat.
 //
-// Audio playback is the next stage, and the design refuses any non-audio bytes
-// on the session origin, so this list is read-only here. Rather than a Play
-// control that does nothing, a row states what is missing.
+// An audio row plays through the phone's relay, the same source the phone's own
+// player uses. Pressing Play holds one <audio> element in that row, so the
+// scrubber lives in the talk's own row exactly as it does on the phone, and it
+// is taken out when playback stops. The design refuses any non-audio bytes on
+// the session origin, so a video or a text file still states that it cannot be
+// shown here rather than offering a control that does nothing.
 export function createFilesScreen({ relay, onUnauthorized, events }) {
-  const state = { rows: [], loading: false, error: null };
+  const state = { rows: [], loading: false, error: null, playingKey: null, audioEl: null };
 
   let unsubscribe = null;
   let refreshTimer = null;
@@ -45,7 +48,66 @@ export function createFilesScreen({ relay, onUnauthorized, events }) {
 
   root.append(head, notice, list);
 
+  // The row key a talk is played and tracked by. The id is stable across a
+  // refresh and the name is what the download path uses, so either identifies
+  // the same row when the library is re-fetched while it is playing.
+  function keyOf(row) {
+    return row.id || row.name || "";
+  }
+
+  // Takes the player out of the row without touching the list. Used both when
+  // Stop is pressed and when the talk it was playing has left the library.
+  function releaseAudio() {
+    state.playingKey = null;
+    const el = state.audioEl;
+    state.audioEl = null;
+    if (el) {
+      try {
+        el.pause();
+      } catch (error) {
+        // A browser that will not pause a broken element is not a failure here.
+      }
+      el.removeAttribute("src");
+      el.load();
+    }
+  }
+
+  function stopPlayback() {
+    releaseAudio();
+    render();
+  }
+
+  // Play one row. Only one row plays at a time, so any previous element is
+  // released first, and the row is re-rendered with the player in it.
+  function playRow(row) {
+    const key = keyOf(row);
+    if (state.playingKey === key) return;
+    releaseAudio();
+    const el = document.createElement("audio");
+    el.controls = true;
+    el.preload = "metadata";
+    el.className = "file-audio";
+    el.addEventListener("ended", stopPlayback);
+    // The session cookie rides along on this same-origin request with no code
+    // naming it, so the audio authenticates exactly like the page. The file name
+    // is in the path and there is no token in the URL, not in the query and not
+    // in a fragment, which is the one place a media route usually leaks one.
+    el.src = "/api/files/" + encodeURIComponent(row.name || row.id);
+    state.audioEl = el;
+    state.playingKey = key;
+    render();
+    // A browser that blocks the autoplay still shows the native controls, so the
+    // human can press play; that is not an error worth naming.
+    const started = el.play();
+    if (started && typeof started.catch === "function") started.catch(() => {});
+  }
+
   function render() {
+    // If the talk that was playing is no longer in the library, take the player
+    // out rather than leaving an element with no row to live in.
+    if (state.playingKey && !state.rows.some((row) => keyOf(row) === state.playingKey)) {
+      releaseAudio();
+    }
     status.textContent = state.loading ? "loading…" : state.rows.length + (state.rows.length === 1 ? " file" : " files");
     // An error over a list that still has rows belongs above it; when the list
     // is empty the empty state below names the error instead, so the failure is
@@ -105,10 +167,34 @@ export function createFilesScreen({ relay, onUnauthorized, events }) {
       const progress = document.createElement("div");
       progress.className = "file-progress";
       card.append(progress);
-    } else if (row.kind === "audio" || row.kind === "video") {
+    } else if (row.kind === "audio") {
+      const actions = document.createElement("div");
+      actions.className = "file-actions";
+      if (state.playingKey === keyOf(row)) {
+        // The player lives in the row while it plays and carries the scrubber,
+        // which is the phone's own layout: the row is the whole control.
+        if (state.audioEl) actions.append(state.audioEl);
+        const stop = document.createElement("button");
+        stop.type = "button";
+        stop.className = "quiet";
+        stop.textContent = "Stop";
+        stop.addEventListener("click", stopPlayback);
+        actions.append(stop);
+      } else {
+        const play = document.createElement("button");
+        play.type = "button";
+        play.textContent = "Play";
+        play.addEventListener("click", () => playRow(row));
+        actions.append(play);
+      }
+      card.append(actions);
+    } else if (row.kind === "video") {
+      // The relay serves audio only, so a video byte would be a non-audio
+      // document on the session origin. It is named as unavailable rather than
+      // given a Play that cannot work.
       const note = document.createElement("div");
       note.className = "file-note";
-      note.textContent = "Playing this in the browser arrives in the next stage.";
+      note.textContent = "Only audio plays in the browser. Open this on the phone.";
       card.append(note);
     } else {
       // Text, image and anything else: the design refuses non-audio bytes on
@@ -225,6 +311,7 @@ export function createFilesScreen({ relay, onUnauthorized, events }) {
   }
 
   function stop() {
+    releaseAudio();
     if (unsubscribe) {
       unsubscribe();
       unsubscribe = null;

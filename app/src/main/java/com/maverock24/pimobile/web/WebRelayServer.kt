@@ -1,7 +1,9 @@
 package com.maverock24.pimobile.web
 
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.withCharset
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationCallPipeline
@@ -14,16 +16,20 @@ import io.ktor.server.request.contentType
 import io.ktor.server.request.receiveText
 import io.ktor.server.request.uri
 import io.ktor.server.response.header
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import java.io.OutputStream
+import java.net.URLDecoder
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -128,6 +134,11 @@ internal class WebRelayServer(
                 get("/api/state") { proxyState(call) }
                 get("/api/history") { proxyHistory(call) }
                 get("/api/files") { proxyFiles(call) }
+                // One audio file, streamed with the browser's byte range. The
+                // route is a single path segment, so a name cannot walk out of
+                // the library, and the extension allowlist below is what keeps
+                // non-audio bytes off the session origin (F1).
+                get("/api/files/{name}") { proxyFile(call) }
                 get("/api/question") { proxyQuestion(call) }
                 get("/api/events") { proxyEvents(call) }
 
@@ -283,6 +294,104 @@ internal class WebRelayServer(
             return
         }
         respondJson(call, HttpStatusCode.OK, reduceFiles(result.body))
+    }
+
+    /**
+     * One library file, streamed through the relay so the bytes reach the browser
+     * from the phone rather than from a second download (see implementation-stage-5).
+     *
+     * Three rules make this safe on the session origin. The name must match the
+     * bridge's own file-name shape and an audio extension, so the route serves
+     * audio and nothing else (F1). The content type is chosen here from the
+     * extension, never copied from the bridge, so a bridge that answered
+     * `text/html` for an `.mp3` name could not put a document on this origin. And
+     * the `Range` header is the only browser header forwarded; the cookie and the
+     * bridge token never cross in either direction.
+     *
+     * A 206 keeps the upstream `Content-Range` and `Accept-Ranges`, which is what
+     * makes seeking in a long talk work; dropping either is the silent breakage
+     * the design warned about.
+     */
+    private suspend fun proxyFile(call: ApplicationCall) {
+        val session = sessionOf(call)
+        if (session == null) {
+            respondJson(call, HttpStatusCode.Unauthorized, errorJson("no session"))
+            return
+        }
+        val name = runCatching { URLDecoder.decode(call.parameters["name"].orEmpty(), "UTF-8") }
+            .getOrNull()
+            .orEmpty()
+        val type = audioContentType(name)
+        if (type == null) {
+            // Non-audio kinds are refused here rather than served as themselves:
+            // the design refuses any non-audio bytes on the session origin (F1),
+            // and the Files list already says a non-audio row cannot be shown.
+            respondJson(call, HttpStatusCode.NotFound, errorJson("this file cannot be played in the browser"))
+            return
+        }
+        val range = call.request.headers["Range"]?.takeIf { it.isNotBlank() }
+        val file = try {
+            upstream.file(sessionLabel(session), name, range)
+        } catch (_: Throwable) {
+            respondJson(call, HttpStatusCode.BadGateway, errorJson("the phone could not reach the bridge"))
+            return
+        }
+        when (file.status) {
+            200, 206 -> respondFile(call, file, type)
+            416 -> {
+                // The bridge answers a range it cannot satisfy with the size it
+                // knows, and a player uses that to re-ask. Pass the status and
+                // the header through with an empty body.
+                val contentRange = file.contentRange
+                file.close()
+                call.response.header("Accept-Ranges", "bytes")
+                contentRange?.let { call.response.header("Content-Range", it) }
+                respondJson(call, HttpStatusCode.RequestedRangeNotSatisfiable, errorJson("range not satisfiable"))
+            }
+            else -> {
+                file.close()
+                respondJson(call, HttpStatusCode.BadGateway, errorJson("the bridge did not serve the file"))
+            }
+        }
+    }
+
+    /**
+     * Streams an upstream file to the browser with the headers a range player
+     * needs, then closes the upstream call. The body is written in chunks so a
+     * long talk is not held in memory, and closing on any path is what stops an
+     * upstream read from outliving the browser request.
+     */
+    private suspend fun respondFile(call: ApplicationCall, file: WebUpstreamFile, type: ContentType) {
+        call.respond(object : OutgoingContent.WriteChannelContent() {
+            override val status: HttpStatusCode = HttpStatusCode.fromValue(file.status)
+            override val contentType: ContentType = type
+            override val contentLength: Long? = file.contentLength.takeIf { it >= 0 }
+            override val headers: Headers = Headers.build {
+                append("Accept-Ranges", "bytes")
+                file.contentRange?.let { append("Content-Range", it) }
+                append("Content-Disposition", "inline")
+            }
+
+            override suspend fun writeTo(channel: ByteWriteChannel) {
+                try {
+                    val buffer = ByteArray(FILE_CHUNK_BYTES)
+                    while (true) {
+                        val read = withContext(Dispatchers.IO) { file.read(buffer) }
+                        if (read < 0) break
+                        if (read == 0) continue
+                        channel.writeFully(buffer, 0, read)
+                        // Flush each chunk, as the event stream flushes each frame.
+                        // Without it the engine holds the body until the writer
+                        // finishes, which would make a long talk arrive all at once
+                        // and turn a seek into a re-download of everything before
+                        // the range.
+                        channel.flush()
+                    }
+                } finally {
+                    file.close()
+                }
+            }
+        })
     }
 
     /**
@@ -580,6 +689,34 @@ internal class WebRelayServer(
     }
 
     /**
+     * The relay's own content type for an audio name, from the extension alone.
+     * A name that is not the bridge's file-name shape, or whose extension is not
+     * one of the audio kinds, returns null and the route refuses it. The bridge's
+     * own header is never used, so an audio route can only ever be an audio
+     * document on the session origin (F1).
+     */
+    private fun audioContentType(name: String): ContentType? {
+        if (!SAFE_FILE_NAME.matches(name)) return null
+        return when (extensionOf(name)) {
+            "mp3" -> ContentType.Audio.MPEG
+            "m4a" -> ContentType.Audio.MP4
+            "aac" -> ContentType("audio", "aac")
+            "wav" -> ContentType("audio", "wav")
+            "ogg", "oga", "opus" -> ContentType.Audio.OGG
+            "flac" -> ContentType("audio", "flac")
+            "weba" -> ContentType("audio", "webm")
+            else -> null
+        }
+    }
+
+    /** The lowercased extension without its dot, or "" when there is none. */
+    private fun extensionOf(name: String): String {
+        val dot = name.lastIndexOf('.')
+        if (dot <= 0 || dot == name.length - 1) return ""
+        return name.substring(dot + 1).lowercase()
+    }
+
+    /**
      * Turns one bridge event line into the frame the browser gets, or null to
      * drop it. The event type is the filter: `state`, `tool_execution_*`, `talk`
      * and everything else are not part of the core loop and are not forwarded
@@ -770,6 +907,14 @@ internal class WebRelayServer(
         const val LABEL_ID_CHARS = 8
         const val HISTORY_DEFAULT = 120
         const val HISTORY_MAX = 500
+        const val FILE_CHUNK_BYTES = 64 * 1024
+
+        /**
+         * The bridge's own file-name shape (its `SAFE_NAME_RE`). A name that is
+         * not this could not be listed by `/api/files`, so it is not served here
+         * either; this is the second lock beside the single-segment route pattern.
+         */
+        val SAFE_FILE_NAME = Regex("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,127}$")
 
         /** The bundled page and its modules. Nothing else on disk is served. */
         val ASSETS = linkedMapOf(
