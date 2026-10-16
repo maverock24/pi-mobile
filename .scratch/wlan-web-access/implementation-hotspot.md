@@ -30,21 +30,21 @@ replaced that reading with the hotspot.
 replacement, `WebAddresses.kt`, enumerates `NetworkInterface.getNetworkInterfaces()`
 and keeps every non-loopback, non-link-local IPv4 address on an interface that is
 up. `ConnectivityManager` is now used only to *label* an interface with its
-transport (`transportLabels`, `WebAddresses.kt:118`); it is never a gate. The
+transport (`transportLabels`, `WebAddresses.kt:120`); it is never a gate. The
 service fails loudly only when the list is empty
 (`WebAccessService.kt:90`), which is genuinely no usable address.
 
-**2. Every candidate is shown, none is guessed.** `WebAddresses.kt:23` defines
-`WebAddress(address, interfaceName, transport)`. `webAddresses` (`:68`) returns all
+**2. Every candidate is shown, none is guessed.** `WebAddresses.kt:19` defines
+`WebAddress(address, interfaceName, transport)`. `webAddresses` (`:62`) returns all
 of them, unlabelled interfaces (usually the hotspot AP) first, VPN last. The
 interface name is carried through so the Settings screen can label each address;
 the tethering interface name varies by manufacturer (ap0, wlan1, swlan0, softap0),
-so nothing is matched by name. `ui/WebAccessSection.kt:76` lists every candidate
+so nothing is matched by name. `ui/WebAccessSection.kt:82` lists every candidate
 with its label and says that if one does not answer the human should try the next,
 which is section 14's rule that a wrong address is worse than none.
 
 **3. Binding.** `WebTlsFront` no longer takes a `bindAddress` and binds the wildcard
-address (`WebTlsFront.kt:66`, `createServerSocket(port, BACKLOG)` with no address).
+address (`WebTlsFront.kt:68`, `createServerSocket(port, BACKLOG)` with no address).
 Binding one guessed address was the same bug in a different place: the hotspot
 address has no fixed interface name and can appear after the server starts. This is
 a deviation from design 3.2, which bound the Wi-Fi address specifically to avoid
@@ -55,9 +55,9 @@ DNS-rebinding control, and the TLS handshake and session approval are unchanged.
 **4. The Host/Origin set widened to match.** `WebGuard.hostRefused` and
 `originRefused` now take a `Set<String>` of allowed authorities and origins instead
 of one string. `WebRelayServer` takes `allowedAuthorities`/`allowedOrigins` and
-exposes `updateAuthorities` (`WebRelayServer.kt:60`). The set is always literal
+exposes `updateAuthorities` (`WebRelayServer.kt:74`). The set is always literal
 addresses, never a name, so a rebound name still fails closed. The certificate
-names every candidate as a subject alternative name (`SelfSignedCertificate.kt:81`),
+names every candidate as a subject alternative name (`SelfSignedCertificate.kt:83`),
 for the same no-guessing reason.
 
 **5. The address list updates while the server runs.** The watchdog loop re-reads
@@ -67,8 +67,8 @@ the interfaces every five seconds and, when the set changes, calls
 set is empty, so every request is refused rather than answered for a stale address.
 
 **6. Doze exemption (design section 9 item 7).**
-`AndroidManifest.xml:19` declares `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
-`ui/WebAccessSection.kt:194` opens the system exemption dialog when the human
+`AndroidManifest.xml:23` declares `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
+`ui/WebAccessSection.kt:195` opens the system exemption dialog when the human
 starts the server, but only if the app is not already exempt, and wraps it in
 `runCatching`. The server is started either way, so a refusal or a device without
 that Settings screen costs the asleep case and never the ability to serve.
