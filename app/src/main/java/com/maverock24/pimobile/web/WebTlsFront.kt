@@ -205,6 +205,13 @@ class WebTlsFront(
             while (true) {
                 val read = input.read(buffer)
                 if (read < 0) break
+                if (handshake && forwarded == 0L) {
+                    // The first application byte is the handshake completing, so a
+                    // failure an earlier connection recorded is no longer the
+                    // listener's current state. A reason that never clears reads as
+                    // a live fault long after the listener started serving.
+                    recordServed()
+                }
                 forwarded += read
                 output.write(buffer, 0, read)
                 output.flush()
@@ -222,6 +229,19 @@ class WebTlsFront(
             closeQuietly(to)
             open.remove(from)
             open.remove(to)
+        }
+    }
+
+    /**
+     * Clears a failure a previous connection recorded, because the listener is
+     * serving now. [ListenerDiagnostics.lastCloseReason] is current state, not a
+     * history, so a success makes it no longer true and the Settings line stops
+     * showing a fault that has passed. The failure counts stay: they are a record
+     * of what happened.
+     */
+    private fun recordServed() {
+        WebDiagnostics.update { state ->
+            if (state.lastCloseReason.isBlank()) state else state.copy(lastCloseReason = "")
         }
     }
 

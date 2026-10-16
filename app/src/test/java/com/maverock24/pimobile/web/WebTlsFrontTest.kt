@@ -11,6 +11,7 @@ import java.io.OutputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
+import java.net.Socket
 import java.net.URL
 import java.security.Key
 import java.security.KeyPair
@@ -169,6 +170,53 @@ class WebTlsFrontTest {
     }
 
     /**
+     * A failure is a moment, not a state. An earlier connection that could not
+     * complete a handshake must not keep the Settings line reporting a fault once
+     * a later connection has been served, which is the reported bug: the TLS
+     * failure still shown after the browser reached the page.
+     */
+    @Test
+    fun `a served connection clears the reason an earlier handshake failed`() {
+        val material = scratchCertificate("127.0.0.1")
+        val frontPort = ServerSocket(0).use { it.localPort }
+        val authority = "127.0.0.1:$frontPort"
+        val relay = relayFor(authority)
+        val backendPort = runBlocking { relay.start() }
+        val front = WebTlsFront(material.keyStore, ALIAS, material.certificate, frontPort, backendPort)
+        front.start()
+        try {
+            // Bytes that are not a TLS ClientHello end the handshake before a byte
+            // is forwarded, which is the case the front records as a failure.
+            Socket("127.0.0.1", frontPort).use { socket ->
+                socket.soTimeout = 5_000
+                socket.getOutputStream().write("not a TLS client hello\n".toByteArray())
+                socket.getOutputStream().flush()
+                runCatching { socket.getInputStream().read() }
+            }
+            awaitUntil("the failed handshake is recorded") {
+                WebDiagnostics.value.lastCloseReason.isNotBlank()
+            }
+            assertTrue(
+                "the failure names the handshake: ${WebDiagnostics.value.lastCloseReason}",
+                WebDiagnostics.value.lastCloseReason.contains("TLS handshake failed"),
+            )
+
+            val (code, _) = httpsGet("https://$authority/")
+            assertEquals(200, code)
+            awaitUntil("a served connection clears the stale reason") {
+                WebDiagnostics.value.lastCloseReason.isBlank()
+            }
+            assertTrue(
+                "the failure count stays as a record of what happened",
+                WebDiagnostics.value.handshakeFailures >= 1,
+            )
+        } finally {
+            front.stop()
+            relay.stop()
+        }
+    }
+
+    /**
      * The app's own account of a failed handshake is the only place the reason
      * appears, because the browser sees a close with no response. The bare
      * exception name is not enough to act on, so the cause chain must survive.
@@ -181,6 +229,16 @@ class WebTlsFrontTest {
         assertTrue("the symptom is named: $chain", chain.contains("SSLHandshakeException"))
         assertTrue("the cause is named: $chain", chain.contains("InvalidKeyException"))
         assertTrue("the cause's message is named: $chain", chain.contains("cannot sign"))
+    }
+
+    /**
+     * Waits for a condition the front records on its own pump thread, so the test
+     * does not race the handshake it just provoked. Fails rather than hangs.
+     */
+    private fun awaitUntil(what: String, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!condition() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertTrue("timed out waiting until $what", condition())
     }
 
     private fun relayFor(authority: String): WebRelayServer {
