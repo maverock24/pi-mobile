@@ -57,7 +57,7 @@ internal fun assembleSelfSigned(
     commonName: String,
     notBefore: Date,
     notAfter: Date,
-    subjectAltIp: String?,
+    subjectAltIps: List<String>,
 ): X509Certificate {
     val subject = X500Principal("CN=$commonName")
     // A real issuer uses a random serial; here it only has to be unique, but
@@ -75,12 +75,12 @@ internal fun assembleSelfSigned(
     // An ECDSA key signs and does not encipher, so digitalSignature is the whole
     // usable key usage.
     builder.addExtension(Extension.keyUsage, true, KeyUsage(KeyUsage.digitalSignature))
-    if (subjectAltIp != null) {
+    if (subjectAltIps.isNotEmpty()) {
         // A bare address is its own subject alternative name type. The browser
-        // warns about a self-signed certificate anyway, but naming the address
-        // in the URL here keeps the warning from also being about a name
-        // mismatch.
-        val names = GeneralNames(GeneralName(GeneralName.iPAddress, subjectAltIp))
+        // warns about a self-signed certificate anyway, but naming every address
+        // the phone might be reached on keeps the warning from also being about a
+        // name mismatch whichever one the human types.
+        val names = GeneralNames(subjectAltIps.map { GeneralName(GeneralName.iPAddress, it) }.toTypedArray())
         builder.addExtension(Extension.subjectAlternativeName, false, names)
     }
     val signer = JcaContentSignerBuilder(SIGNATURE_ALGORITHM).build(keyPair.private)

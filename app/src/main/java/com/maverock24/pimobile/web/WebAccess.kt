@@ -11,21 +11,26 @@ import kotlinx.coroutines.flow.asStateFlow
  * process, so a plain StateFlow in an object is enough. There is no cross-process
  * state to keep, and nothing here outlives the process.
  */
-sealed interface WebAccessStatus {
+internal sealed interface WebAccessStatus {
     /** Nothing is listening. */
     data object Off : WebAccessStatus
 
     /** The human asked for the server and it is coming up. */
     data object Starting : WebAccessStatus
 
-    /** Listening, with the address to open and the fingerprint to compare. */
-    data class On(val url: String, val fingerprint: String) : WebAccessStatus
+    /**
+     * Listening, with every address the other computer might reach the phone on
+     * and the fingerprint to compare. The list is empty only in the moment after
+     * the hotspot or Wi-Fi goes down and before an address comes back; the
+     * addresses are re-read while the server runs so a stale one is not shown.
+     */
+    data class On(val addresses: List<WebAddress>, val fingerprint: String) : WebAccessStatus
 
     /** It could not start, or stopped on its own for a reason worth naming. */
     data class Failed(val message: String) : WebAccessStatus
 }
 
-object WebAccess {
+internal object WebAccess {
     /**
      * The port the human types at the other computer. It is fixed so the URL is
      * predictable, and the server fails loudly when it is taken rather than

@@ -31,7 +31,7 @@ class SelfSignedCertificateTest {
             commonName = "Pi Remote web access",
             notBefore = Date(System.currentTimeMillis() - 60_000),
             notAfter = Date(System.currentTimeMillis() + 60_000),
-            subjectAltIp = null,
+            subjectAltIps = emptyList(),
         )
         val expected = formatFingerprint(
             MessageDigest.getInstance("SHA-256").digest(certificate.encoded),
@@ -48,7 +48,7 @@ class SelfSignedCertificateTest {
             commonName = "Pi Remote web access",
             notBefore = Date(now - 60_000),
             notAfter = Date(now + 60_000),
-            subjectAltIp = "192.168.1.10",
+            subjectAltIps = listOf("192.168.1.10", "192.168.43.1"),
         )
 
         certificate.checkValidity(Date(now))
@@ -64,9 +64,15 @@ class SelfSignedCertificateTest {
 
         val alternativeNames = certificate.subjectAlternativeNames
         assertNotNull(alternativeNames)
+        // Every candidate address is named, so the human can pick the one that
+        // answers without the certificate warning also being about a name match.
         assertTrue(
-            "the bind address is present as an IP subject alternative name",
+            "the first candidate is an IP subject alternative name",
             alternativeNames!!.any { it.size >= 2 && it[0] == 7 && it[1] == "192.168.1.10" },
+        )
+        assertTrue(
+            "the second candidate is an IP subject alternative name",
+            alternativeNames.any { it.size >= 2 && it[0] == 7 && it[1] == "192.168.43.1" },
         )
     }
 

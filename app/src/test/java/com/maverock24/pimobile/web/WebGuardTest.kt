@@ -14,24 +14,31 @@ import org.junit.Test
 class WebGuardTest {
 
     @Test
-    fun `host must be present exactly once and match the bound authority`() {
-        assertFalse(hostRefused(listOf("192.168.1.10:8788"), "192.168.1.10:8788"))
+    fun `host must be present exactly once and match an allowed address`() {
+        val allowed = setOf("192.168.1.10:8788", "192.168.43.1:8788")
+        assertFalse(hostRefused(listOf("192.168.1.10:8788"), allowed))
+        // Every candidate address the phone holds is allowed, so the human can
+        // pick the one that answers without a second copy of the list.
+        assertFalse(hostRefused(listOf("192.168.43.1:8788"), allowed))
         // Host names are case-insensitive.
-        assertFalse(hostRefused(listOf("192.168.1.10:8788"), "192.168.1.10:8788"))
-        assertTrue("missing", hostRefused(emptyList(), "192.168.1.10:8788"))
-        assertTrue("duplicate", hostRefused(listOf("192.168.1.10:8788", "evil:1"), "192.168.1.10:8788"))
-        assertTrue("wrong name", hostRefused(listOf("evil.example"), "192.168.1.10:8788"))
-        assertTrue("wrong port", hostRefused(listOf("192.168.1.10:8789"), "192.168.1.10:8788"))
+        assertFalse(hostRefused(listOf("192.168.1.10:8788"), setOf("192.168.1.10:8788")))
+        assertTrue("missing", hostRefused(emptyList(), allowed))
+        assertTrue("duplicate", hostRefused(listOf("192.168.1.10:8788", "evil:1"), allowed))
+        assertTrue("name not an address", hostRefused(listOf("evil.example"), allowed))
+        assertTrue("unknown address", hostRefused(listOf("10.0.0.9:8788"), allowed))
+        assertTrue("wrong port", hostRefused(listOf("192.168.1.10:8789"), allowed))
     }
 
     @Test
     fun `origin is allowed when absent and refused when foreign`() {
-        val own = "https://192.168.1.10:8788"
-        assertFalse(originRefused(null, own))
-        assertFalse(originRefused("", own))
-        assertFalse(originRefused(own, own))
-        assertTrue(originRefused("https://evil.example", own))
-        assertTrue(originRefused("http://192.168.1.10:8788", own))
+        val allowed = setOf("https://192.168.1.10:8788", "https://192.168.43.1:8788")
+        assertFalse(originRefused(null, allowed))
+        assertFalse(originRefused("", allowed))
+        assertFalse(originRefused("https://192.168.1.10:8788", allowed))
+        assertFalse(originRefused("https://192.168.43.1:8788", allowed))
+        assertTrue(originRefused("https://evil.example", allowed))
+        assertTrue(originRefused("http://192.168.1.10:8788", allowed))
+        assertTrue(originRefused("https://10.0.0.9:8788", allowed))
     }
 
     @Test

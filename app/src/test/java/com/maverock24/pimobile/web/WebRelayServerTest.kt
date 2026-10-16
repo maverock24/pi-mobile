@@ -52,6 +52,11 @@ class WebRelayServerTest {
     private val authority: String get() = "127.0.0.1:$port"
     private val origin: String get() = "http://127.0.0.1:$port"
 
+    // A second address the phone might hold. The relay must answer on every
+    // candidate, not only the one this test happens to dial.
+    private val hotspotAuthority: String get() = "192.168.43.1:$port"
+    private val hotspotOrigin: String get() = "https://192.168.43.1:$port"
+
     @Before
     fun setUp() {
         gate = WebApprovalGate(ttlMs = 5_000)
@@ -60,8 +65,8 @@ class WebRelayServerTest {
         port = ServerSocket(0).use { it.localPort }
         server = WebRelayServer(
             loadAsset = { "<html></html>" },
-            expectedAuthority = authority,
-            expectedOrigin = origin,
+            allowedAuthorities = setOf(authority, hotspotAuthority),
+            allowedOrigins = setOf(origin, hotspotOrigin),
             upstream = upstream,
             pins = pinStore,
             gate = gate,
@@ -80,6 +85,42 @@ class WebRelayServerTest {
     @Test
     fun `a wrong host header is refused`() {
         get("/api/session", headers = mapOf("Host" to "evil.example")).use {
+            assertEquals(403, it.code)
+        }
+    }
+
+    @Test
+    fun `a request to any candidate address is allowed`() {
+        get(
+            "/api/session",
+            headers = mapOf("Host" to hotspotAuthority, "Origin" to hotspotOrigin),
+        ).use { assertEquals(401, it.code) }
+    }
+
+    @Test
+    fun `an address that is not a candidate is refused`() {
+        get("/api/session", headers = mapOf("Host" to "10.0.0.9:$port")).use {
+            assertEquals(403, it.code)
+        }
+    }
+
+    @Test
+    fun `the allowed addresses follow the interfaces`() {
+        server.updateAuthorities(setOf(authority), setOf(origin))
+        get("/api/session", headers = mapOf("Host" to hotspotAuthority)).use {
+            assertEquals("a hotspot address that went away is refused", 403, it.code)
+        }
+
+        server.updateAuthorities(setOf(authority, hotspotAuthority), setOf(origin, hotspotOrigin))
+        get(
+            "/api/session",
+            headers = mapOf("Host" to hotspotAuthority, "Origin" to hotspotOrigin),
+        ).use { assertEquals("a hotspot address that came up is allowed", 401, it.code) }
+
+        // With no address left, every request is refused rather than answered for
+        // a stale address.
+        server.updateAuthorities(emptySet(), emptySet())
+        get("/api/session", headers = mapOf("Host" to authority)).use {
             assertEquals(403, it.code)
         }
     }

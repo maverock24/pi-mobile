@@ -16,6 +16,11 @@
          CHANGE_WIFI_STATE is the one declared here. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Web access keeps serving only if the app is exempt from Doze, which
+         design section 9 item 7 chose. The permission backs the system dialog
+         the app opens when the server starts; a refusal is handled by starting
+         the server anyway, so the exemption is never a precondition. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Pairing only: ZXing decodes the QR /pair draws. Not required for chat or
          dictation, so the app still installs on a device without a camera. -->
     <uses-permission android:name="android.permission.CAMERA" />

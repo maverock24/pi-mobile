@@ -42,13 +42,14 @@ object WebCertificateStore {
      * Returns the certificate to serve, generating both the keystore key and the
      * certificate when either is missing.
      *
-     * [subjectAltIp] is the address the phone is on right now. It is only used
-     * when a certificate is built: an existing one is kept even if the address
-     * has since changed, because a stable fingerprint is worth more than a
-     * name that matches, and the browser warns about the self-signed certificate
-     * regardless.
+     * [subjectAltIps] are the addresses the phone is on right now. They are only
+     * used when a certificate is built: an existing one is kept even if the
+     * addresses have since changed, because a stable fingerprint is worth more
+     * than a name that matches, and the browser warns about the self-signed
+     * certificate regardless. Every candidate address is named, so the address
+     * the human picks is as likely as any other to match.
      */
-    fun load(context: Context, subjectAltIp: String?): WebCertificate {
+    fun load(context: Context, subjectAltIps: List<String>): WebCertificate {
         val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
         val certFile = File(File(context.filesDir, CERT_DIR), CERT_FILE)
         if (keyStore.containsAlias(ALIAS) && certFile.isFile) {
@@ -59,11 +60,11 @@ object WebCertificateStore {
         }
         // The key was reset, the certificate is gone or unreadable, or it is no
         // longer valid. Build both again so the pair always belongs together.
-        val certificate = generate(keyStore, certFile, subjectAltIp)
+        val certificate = generate(keyStore, certFile, subjectAltIps)
         return WebCertificate(keyStore, ALIAS, certificate, fingerprintOf(certificate))
     }
 
-    private fun generate(keyStore: KeyStore, certFile: File, subjectAltIp: String?): X509Certificate {
+    private fun generate(keyStore: KeyStore, certFile: File, subjectAltIps: List<String>): X509Certificate {
         if (keyStore.containsAlias(ALIAS)) keyStore.deleteEntry(ALIAS)
         val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER)
         generator.initialize(
@@ -79,7 +80,7 @@ object WebCertificateStore {
             commonName = COMMON_NAME,
             notBefore = Date(now - ONE_DAY_MS),
             notAfter = Date(now + TEN_YEARS_MS),
-            subjectAltIp = subjectAltIp,
+            subjectAltIps = subjectAltIps,
         )
         certFile.parentFile?.mkdirs()
         certFile.writeBytes(certificate.encoded)

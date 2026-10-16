@@ -24,13 +24,20 @@ import javax.net.ssl.SSLSocket
  * it. Each accepted, decrypted connection is piped to the loopback Ktor server,
  * so Ktor keeps the HTTP handling and this class only moves bytes.
  *
+ * The listening socket is bound to every interface, not to one address. The
+ * chosen transport, the phone's own hotspot, has no interface name that is the
+ * same across manufacturers and its address can appear after the server starts,
+ * so binding one guessed address is what left the hotspot unreachable in the
+ * first place. The allowed `Host` set and the TLS handshake are the controls; a
+ * socket bound to every interface is still only reachable on an address the
+ * phone actually holds.
+ *
  * Stop closes the listening socket first, so no new client can arrive, and then
  * the open pipes.
  */
 class WebTlsFront(
     private val keyStore: KeyStore,
     private val keyAlias: String,
-    private val bindAddress: String,
     private val port: Int,
     private val backendPort: Int,
 ) {
@@ -46,7 +53,7 @@ class WebTlsFront(
     @Volatile
     private var acceptThread: Thread? = null
 
-    /** Binds the WLAN address and starts accepting. Throws if the port is taken. */
+    /** Binds every interface and starts accepting. Throws if the port is taken. */
     fun start() {
         val managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
         // The Android keystore ignores the password: the key is the entry's, not
@@ -54,8 +61,11 @@ class WebTlsFront(
         managers.init(keyStore, null)
         val context = SSLContext.getInstance("TLS")
         context.init(managers.keyManagers, null, null)
+        // No address argument: the JSSE server socket then listens on the wildcard
+        // address, which is what answers on the hotspot and on any other interface
+        // the phone later brings up.
         val socket = context.serverSocketFactory
-            .createServerSocket(port, BACKLOG, InetAddress.getByName(bindAddress)) as SSLServerSocket
+            .createServerSocket(port, BACKLOG) as SSLServerSocket
         serverSocket = socket
         running.set(true)
         acceptThread = Thread({ acceptLoop(socket) }, "web-tls-accept").apply {

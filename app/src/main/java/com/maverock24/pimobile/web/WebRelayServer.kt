@@ -48,8 +48,9 @@ import java.util.concurrent.atomic.AtomicLong
  */
 internal class WebRelayServer(
     private val loadAsset: (String) -> String,
-    private val expectedAuthority: String,
-    private val expectedOrigin: String,
+    // Read on every request and replaced by the watchdog, so volatile.
+    @Volatile private var allowedAuthorities: Set<String>,
+    @Volatile private var allowedOrigins: Set<String>,
     private val upstream: WebUpstream,
     private val pins: WebPins = WebPins.Empty,
     private val gate: WebApprovalGate = WebApprovalGate.shared,
@@ -61,6 +62,19 @@ internal class WebRelayServer(
     private val inFlight = AtomicInteger(0)
     private val lastActivity = AtomicLong(0)
     private val servedAnything = AtomicBoolean(false)
+
+    /**
+     * Replaces the addresses the relay answers for when the phone's interfaces
+     * come up or go down. It is called with an empty set when no address is left,
+     * which refuses every request rather than falling back to a stale address.
+     * The listening socket itself does not move: the TLS front is bound to every
+     * interface, so only the allowed authorities, the origins and the shown
+     * addresses change here.
+     */
+    fun updateAuthorities(authorities: Set<String>, origins: Set<String>) {
+        allowedAuthorities = authorities
+        allowedOrigins = origins
+    }
 
     /** Starts the loopback server on [port] and returns the port it bound. */
     suspend fun start(port: Int = 0): Int {
@@ -528,7 +542,7 @@ internal class WebRelayServer(
      */
     private suspend fun refuseIfUnsafe(call: ApplicationCall): Boolean {
         val host = call.request.headers.getAll("Host") ?: emptyList()
-        if (hostRefused(host, expectedAuthority)) {
+        if (hostRefused(host, allowedAuthorities)) {
             respondJson(call, HttpStatusCode.Forbidden, errorJson("host not allowed"))
             return true
         }
@@ -536,7 +550,7 @@ internal class WebRelayServer(
             respondJson(call, HttpStatusCode.Forbidden, errorJson("target not allowed"))
             return true
         }
-        if (originRefused(call.request.headers["Origin"], expectedOrigin)) {
+        if (originRefused(call.request.headers["Origin"], allowedOrigins)) {
             respondJson(call, HttpStatusCode.Forbidden, errorJson("origin not allowed"))
             return true
         }

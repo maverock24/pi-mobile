@@ -1,6 +1,10 @@
 package com.maverock24.pimobile.ui
 
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -46,7 +50,9 @@ internal fun WebAccessSection() {
             else -> when (val current = status) {
                 WebAccessStatus.Off -> "Off"
                 WebAccessStatus.Starting -> "Starting"
-                is WebAccessStatus.On -> "On · ${current.url}"
+                is WebAccessStatus.On -> current.addresses.firstOrNull()
+                    ?.let { "On · ${it.url(WebAccess.PORT)}" }
+                    ?: "On · no address right now"
                 is WebAccessStatus.Failed -> current.message
             }
         },
@@ -55,16 +61,46 @@ internal fun WebAccessSection() {
         onToggle = { expanded = !expanded },
     ) {
         Text(
-            text = "Serve this page to another computer on the same Wi-Fi. The server runs " +
-                "only while you ask it to, and stops itself once the browser has been gone " +
-                "for a while, so no listener is left when nobody is using it.",
+            text = "Serve this page to another computer on the same Wi-Fi, including the " +
+                "phone's own hotspot. The server runs only while you ask it to, and stops " +
+                "itself once the browser has been gone for a while, so no listener is left " +
+                "when nobody is using it.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         when (val current = status) {
-            is WebAccessStatus.On -> {                SectionLabel("Open this address on the other computer")
-                SelectionContainer {
-                    Text(current.url, style = MaterialTheme.typography.bodyLarge)
+            is WebAccessStatus.On -> {
+                if (current.addresses.isEmpty()) {
+                    Text(
+                        text = "The phone has no address the other computer can reach right " +
+                            "now. Turn the hotspot or Wi-Fi back on and the address will " +
+                            "reappear here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else {
+                    SectionLabel("Open one of these addresses on the other computer")
+                    current.addresses.forEach { candidate ->
+                        SelectionContainer {
+                            Text(
+                                candidate.url(WebAccess.PORT),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                        Text(
+                            text = candidate.transport
+                                ?.let { "$it on ${candidate.interfaceName}" }
+                                ?: candidate.interfaceName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        text = "The hotspot's interface name differs by phone, so if one " +
+                            "address does not answer, try the next.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 SectionLabel("Certificate fingerprint (SHA-256)")
                 SelectionContainer {
@@ -137,6 +173,7 @@ internal fun WebAccessSection() {
                         context,
                         Intent(context, WebAccessService::class.java),
                     )
+                    requestDozeExemption(context)
                 },
                 modifier = size.tactile(haptics = true, depth = AnswerStyle.keyDepth),
             ) {
@@ -144,4 +181,21 @@ internal fun WebAccessSection() {
             }
         }
     }
+}
+
+/**
+ * Asks the human to exempt the app from battery optimization, which design
+ * section 9 item 7 chose so the server keeps answering while the phone sleeps in
+ * a pocket.
+ *
+ * The ask is best effort. A device may not have the Settings screen and the human
+ * may decline, so the server is started either way: the exemption improves the
+ * asleep case and a refusal only costs that, never the ability to serve.
+ */
+private fun requestDozeExemption(context: Context) {
+    val power = context.getSystemService(PowerManager::class.java) ?: return
+    if (power.isIgnoringBatteryOptimizations(context.packageName)) return
+    val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+        .setData(Uri.parse("package:${context.packageName}"))
+    runCatching { context.startActivity(request) }
 }

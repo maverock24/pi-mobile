@@ -72,7 +72,7 @@ class WebAccessService : Service() {
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
-            notification(url = null),
+            notification("Starting the server"),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
         )
         if (watchdog?.isActive != true) startServer()
@@ -83,20 +83,22 @@ class WebAccessService : Service() {
         WebAccess.update(WebAccessStatus.Starting)
         watchdog = scope.launch {
             try {
-                val address = wifiIpv4(this@WebAccessService)
-                    ?: error("The phone is not on a Wi-Fi network")
-                val certificate = WebCertificateStore.load(this@WebAccessService, address)
+                var addresses = phoneAddresses(this@WebAccessService)
+                // The gate is an address, not a connectivity state: the hotspot is
+                // up even when the Wi-Fi client is down, and any non-loopback IPv4
+                // the phone owns is somewhere the other computer might reach it.
+                if (addresses.isEmpty()) error("The phone has no reachable IPv4 address")
+                val certificate = WebCertificateStore.load(this@WebAccessService, addresses.map { it.address })
                 val store = SettingsStore(this@WebAccessService)
-                val url = "https://$address:${WebAccess.PORT}"
                 val relay = WebRelayServer(
                     loadAsset = { name ->
                         assets.open(name).bufferedReader(Charsets.UTF_8).use { it.readText() }
                     },
-                    // The browser reaches the phone on the TLS front's address and
-                    // port, so those are what the Host and Origin checks compare
-                    // against. The HTTP server behind it only sees loopback.
-                    expectedAuthority = "$address:${WebAccess.PORT}",
-                    expectedOrigin = url,
+                    // Every candidate address is an allowed authority and origin,
+                    // because the human picks the one that answers. A name is never
+                    // in the set, so the Host check still refuses a rebound name.
+                    allowedAuthorities = authoritiesOf(addresses),
+                    allowedOrigins = originsOf(addresses),
                     upstream = BridgeUpstream(baseUrl = { store.baseUrl }, token = { store.token }),
                     // The pins are the phone's own data, so the relay reads and
                     // writes them through the same store the app's Pins screen uses.
@@ -108,16 +110,16 @@ class WebAccessService : Service() {
                 val tls = WebTlsFront(
                     keyStore = certificate.keyStore,
                     keyAlias = certificate.alias,
-                    bindAddress = address,
                     port = WebAccess.PORT,
                     backendPort = backendPort,
                 )
                 tls.start()
                 front = tls
-                WebAccess.update(WebAccessStatus.On(url, certificate.fingerprint))
-                notify(notification(url))
+                WebAccess.update(WebAccessStatus.On(addresses, certificate.fingerprint))
+                notify(notification(servingText(addresses)))
                 while (isActive) {
                     delay(WATCH_INTERVAL_MS)
+                    addresses = refreshAddresses(addresses, relay, certificate.fingerprint)
                     if (relay.isIdle(WebAccess.IDLE_GRACE_MS, System.currentTimeMillis())) break
                 }
                 teardown()
@@ -131,6 +133,37 @@ class WebAccessService : Service() {
             }
         }
     }
+
+    /**
+     * Re-reads the phone's interfaces while the server runs. A hotspot coming up
+     * or going down changes the set, and the Settings screen must not keep showing
+     * an address that no longer answers (design section 14: a wrong address is
+     * worse than none). The listening socket does not move, because the TLS front
+     * is bound to every interface, so only the accepted addresses, the shown list
+     * and the notification change.
+     */
+    private fun refreshAddresses(
+        previous: List<WebAddress>,
+        relay: WebRelayServer,
+        fingerprint: String,
+    ): List<WebAddress> {
+        val current = phoneAddresses(this)
+        if (current == previous) return previous
+        relay.updateAuthorities(authoritiesOf(current), originsOf(current))
+        WebAccess.update(WebAccessStatus.On(current, fingerprint))
+        notify(notification(servingText(current)))
+        return current
+    }
+
+    private fun authoritiesOf(addresses: List<WebAddress>): Set<String> =
+        addresses.map { "${it.address}:${WebAccess.PORT}" }.toSet()
+
+    private fun originsOf(addresses: List<WebAddress>): Set<String> =
+        addresses.map { it.url(WebAccess.PORT) }.toSet()
+
+    private fun servingText(addresses: List<WebAddress>): String =
+        addresses.firstOrNull()?.let { "Serving ${it.url(WebAccess.PORT)}" }
+            ?: "No reachable address right now"
 
     /**
      * Stops the listeners and the service. [status] is what the Settings screen
@@ -165,7 +198,7 @@ class WebAccessService : Service() {
         super.onDestroy()
     }
 
-    private fun notification(url: String?, failed: String? = null): Notification {
+    private fun notification(text: String): Notification {
         val openApp = PendingIntent.getActivity(
             this,
             0,
@@ -178,7 +211,6 @@ class WebAccessService : Service() {
             Intent(this, WebAccessService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val text = failed ?: url?.let { "Serving $it" } ?: "Starting the server"
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_run)
             .setContentTitle("Web access is on")

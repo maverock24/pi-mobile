@@ -9,25 +9,29 @@ package com.maverock24.pimobile.web
  */
 
 /**
- * The `Host` header must be present exactly once and equal the address the
- * server was told it is served on. A page that rebinds its own domain to the
- * phone's address arrives with its own name in `Host`, and a duplicated header
- * is a smuggling attempt, so both fail closed. The comparison ignores case
- * because host names are case-insensitive; the port is part of the string.
+ * The `Host` header must be present exactly once and equal one of the addresses
+ * the server is served on. A page that rebinds its own domain to the phone's
+ * address arrives with its own name in `Host`, and a duplicated header is a
+ * smuggling attempt, so both fail closed. The allowed set is the phone's own
+ * literal addresses, which changes as its interfaces come and go but is never a
+ * name, so a rebound name still fails. The comparison ignores case because host
+ * names are case-insensitive; the port is part of the string.
  */
-internal fun hostRefused(hosts: List<String>, expectedAuthority: String): Boolean {
+internal fun hostRefused(hosts: List<String>, allowedAuthorities: Set<String>): Boolean {
     if (hosts.size != 1) return true
-    return !hosts[0].trim().equals(expectedAuthority.trim(), ignoreCase = true)
+    val host = hosts[0].trim()
+    return allowedAuthorities.none { it.trim().equals(host, ignoreCase = true) }
 }
 
 /**
  * `Origin` is only meaningful when a browser sends it, which it does for a
  * fetch. A missing value is allowed (a top-level navigation carries none), but
- * any value that is not this server's own origin is refused.
+ * any value that is not one of this server's own origins is refused.
  */
-internal fun originRefused(origin: String?, expectedOrigin: String): Boolean {
+internal fun originRefused(origin: String?, allowedOrigins: Set<String>): Boolean {
     if (origin.isNullOrBlank()) return false
-    return !origin.trim().trimEnd('/').equals(expectedOrigin.trim().trimEnd('/'), ignoreCase = true)
+    val value = origin.trim().trimEnd('/')
+    return allowedOrigins.none { it.trim().trimEnd('/').equals(value, ignoreCase = true) }
 }
 
 /**
