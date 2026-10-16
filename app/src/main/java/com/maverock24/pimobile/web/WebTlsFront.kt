@@ -74,6 +74,14 @@ class WebTlsFront(
         // error now, where the service can show it, not a per-connection surprise.
         val privateKey = keyStore.getKey(keyAlias, null) as? PrivateKey
             ?: error("The web access key is missing from the keystore ($keyAlias)")
+        // The certificate and the key have to belong together. A pair that does not
+        // completes no handshake, so it is refused here, where the service reports
+        // it, rather than left to accept every connection and close it with no
+        // certificate shown, which is the failure this listener exists to make
+        // visible.
+        check(certificateMatchesKey(certificate, privateKey)) {
+            "The web access certificate does not match the keystore key ($keyAlias)"
+        }
         val context = SSLContext.getInstance("TLS")
         // The key manager is built by hand rather than from the keystore alone.
         // JSSE's own X509 key manager chooses a server alias by reading the
@@ -132,7 +140,7 @@ class WebTlsFront(
                 // the client is closed with no response. This was silent before,
                 // and a browser shows it only as an empty response with no reason.
                 recordClose(
-                    "$peer: no backend listening on 127.0.0.1:$backendPort ($error)",
+                    "$peer: no backend listening on 127.0.0.1:$backendPort (${failureChain(error)})",
                     backendFailure = true,
                 )
                 closeQuietly(client)
@@ -193,7 +201,7 @@ class WebTlsFront(
             // before any byte crossed is how the two are told apart. stop() sets
             // running to false first, so its closes are never counted.
             if (handshake && forwarded == 0L && running.get()) {
-                recordClose("$peer: TLS handshake failed ($error)", handshakeFailure = true)
+                recordClose("$peer: TLS handshake failed (${failureChain(error)})", handshakeFailure = true)
             }
         } finally {
             closeQuietly(from)
@@ -300,4 +308,28 @@ private class ServerKeyManager(
     ): String? = null
 
     override fun getClientAliases(keyType: String?, issuers: Array<out Principal>?): Array<String>? = null
+}
+
+/** How deep [failureChain] walks a cause chain before giving up. */
+private const val MAX_FAILURE_CAUSES = 8
+
+/**
+ * A throwable and its causes as one line.
+ *
+ * A failed handshake comes back as an SSLHandshakeException whose own message
+ * repeats the symptom; the reason, such as a signature the keystore key could not
+ * make or a certificate the client refused, is a cause underneath. Recording the
+ * whole chain is what turns "TLS handshake failed" into something a reader can
+ * act on, and the phone is the only place the reason can appear, because the
+ * browser sees only a close with no response.
+ */
+internal fun failureChain(error: Throwable): String {
+    val parts = mutableListOf<String>()
+    var current: Throwable? = error
+    while (current != null && parts.size < MAX_FAILURE_CAUSES) {
+        val message = current.message?.takeIf { it.isNotBlank() } ?: "no message"
+        parts += "${current.javaClass.simpleName}: $message"
+        current = current.cause?.takeIf { it !== current }
+    }
+    return parts.joinToString(" <- ")
 }

@@ -2,6 +2,7 @@ package com.maverock24.pimobile.web
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -101,6 +102,26 @@ class WebTlsFrontTest {
         }
     }
 
+    /**
+     * The store is meant to rebuild a mismatched pair, but the front must not
+     * accept one if it is ever handed it: a listener with a certificate that is
+     * not its key's accepts every connection and then closes it with no
+     * certificate, which a browser shows only as an empty response.
+     */
+    @Test
+    fun `the front refuses to start when the certificate and the key do not match`() {
+        val material = scratchCertificate("127.0.0.1")
+        // A key under the alias that is not the certificate's key, which is what a
+        // keystore reset, or a key remade while the stored certificate stayed
+        // behind, leaves behind.
+        val wrongKey = keyOnlyKeyStore(newP256KeyPair())
+        val frontPort = ServerSocket(0).use { it.localPort }
+        val front = WebTlsFront(wrongKey, ALIAS, material.certificate, frontPort, 1)
+        val failure = runCatching { front.start() }.exceptionOrNull()
+        assertTrue("start refuses a mismatched pair: $failure", failure is IllegalStateException)
+        assertNull("nothing is left listening", front.boundAddress())
+    }
+
     @Test
     fun `the diagnostics route reports the backend port and the loaded certificate`() {
         val material = scratchCertificate("127.0.0.1")
@@ -122,6 +143,21 @@ class WebTlsFrontTest {
             front.stop()
             relay.stop()
         }
+    }
+
+    /**
+     * The app's own account of a failed handshake is the only place the reason
+     * appears, because the browser sees a close with no response. The bare
+     * exception name is not enough to act on, so the cause chain must survive.
+     */
+    @Test
+    fun `a handshake failure chain names the cause and not only the symptom`() {
+        val cause = java.security.InvalidKeyException("the keystore key cannot sign with this digest")
+        val error = javax.net.ssl.SSLHandshakeException("TLS handshake failed").apply { initCause(cause) }
+        val chain = failureChain(error)
+        assertTrue("the symptom is named: $chain", chain.contains("SSLHandshakeException"))
+        assertTrue("the cause is named: $chain", chain.contains("InvalidKeyException"))
+        assertTrue("the cause's message is named: $chain", chain.contains("cannot sign"))
     }
 
     private fun relayFor(authority: String): WebRelayServer {

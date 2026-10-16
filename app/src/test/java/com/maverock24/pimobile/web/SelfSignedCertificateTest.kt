@@ -107,4 +107,88 @@ class SelfSignedCertificateTest {
         assertEquals(listOf("192.168.43.1"), addressesNotNamed(certificate, listOf("192.168.43.1")))
         assertTrue(addressesNotNamed(certificate, listOf("192.168.1.10")).isEmpty())
     }
+
+    @Test
+    fun `the key match check accepts the key the certificate was made for`() {
+        val keyPair = newP256KeyPair()
+        val certificate = validCertificate(keyPair, listOf("192.168.43.1"))
+        assertTrue(certificateMatchesKey(certificate, keyPair.private))
+    }
+
+    @Test
+    fun `the key match check rejects a key the certificate was not made for`() {
+        val certificate = validCertificate(newP256KeyPair(), listOf("192.168.43.1"))
+        // A key remade under the alias while the stored certificate stayed behind
+        // is the pair that presents one key and signs with another, and TLS only
+        // fails it at handshake time.
+        assertTrue(!certificateMatchesKey(certificate, newP256KeyPair().private))
+    }
+
+    @Test
+    fun `a certificate that belongs to the key and names every address is reused`() {
+        val keyPair = newP256KeyPair()
+        val certificate = validCertificate(keyPair, listOf("192.168.43.1", "10.0.0.2"))
+        assertEquals(
+            CertificateDisposition.REUSE,
+            certificateDisposition(certificate, keyPair.private, listOf("192.168.43.1", "10.0.0.2")),
+        )
+    }
+
+    @Test
+    fun `a certificate that does not name every address is re-signed over the same key`() {
+        val keyPair = newP256KeyPair()
+        val certificate = validCertificate(keyPair, listOf("192.168.1.10"))
+        assertEquals(
+            CertificateDisposition.REISSUE,
+            certificateDisposition(certificate, keyPair.private, listOf("192.168.1.10", "192.168.43.1")),
+        )
+    }
+
+    @Test
+    fun `a certificate that does not belong to the keystore key is rebuilt`() {
+        val certificate = validCertificate(newP256KeyPair(), listOf("192.168.43.1"))
+        assertEquals(
+            CertificateDisposition.REGENERATE,
+            certificateDisposition(certificate, newP256KeyPair().private, listOf("192.168.43.1")),
+        )
+    }
+
+    @Test
+    fun `a missing key or certificate is rebuilt together`() {
+        val keyPair = newP256KeyPair()
+        val certificate = validCertificate(keyPair, listOf("192.168.43.1"))
+        assertEquals(
+            CertificateDisposition.REGENERATE,
+            certificateDisposition(null, keyPair.private, listOf("192.168.43.1")),
+        )
+        assertEquals(
+            CertificateDisposition.REGENERATE,
+            certificateDisposition(certificate, null, listOf("192.168.43.1")),
+        )
+    }
+
+    @Test
+    fun `an expired certificate is rebuilt`() {
+        val keyPair = newP256KeyPair()
+        val past = System.currentTimeMillis() - 120_000
+        val certificate = assembleSelfSigned(
+            keyPair = keyPair,
+            commonName = "Pi Remote web access",
+            notBefore = Date(past - 60_000),
+            notAfter = Date(past),
+            subjectAltIps = listOf("192.168.43.1"),
+        )
+        assertEquals(
+            CertificateDisposition.REGENERATE,
+            certificateDisposition(certificate, keyPair.private, listOf("192.168.43.1")),
+        )
+    }
+
+    private fun validCertificate(keyPair: java.security.KeyPair, addresses: List<String>) = assembleSelfSigned(
+        keyPair = keyPair,
+        commonName = "Pi Remote web access",
+        notBefore = Date(System.currentTimeMillis() - 60_000),
+        notAfter = Date(System.currentTimeMillis() + 60_000),
+        subjectAltIps = addresses,
+    )
 }

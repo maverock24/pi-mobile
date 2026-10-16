@@ -44,64 +44,60 @@ object WebCertificateStore {
      * certificate when either is missing.
      *
      * [subjectAltIps] are the addresses the phone is on right now. A stored
-     * certificate that names them all is reused as-is, so the fingerprint the
-     * human already accepted does not move. A stored certificate that does not
-     * name every current address is re-signed: the app is about to tell the human
-     * to open those addresses, and a browser matches the URL against the
-     * certificate's names, so a certificate that has gone stale would add a name
-     * mismatch on top of the self-signed warning. Re-issuing keeps the keystore
-     * key (hardware-backed where the device has it) and changes only the
-     * fingerprint, which the Settings screen reads fresh each start.
+     * certificate that names them all and belongs to the keystore key is reused
+     * as-is, so the fingerprint the human already accepted does not move. A stored
+     * certificate that does not name every current address is re-signed over the
+     * same key: the app is about to tell the human to open those addresses, and a
+     * browser matches the URL against the certificate's names. A stored
+     * certificate that no longer belongs to the keystore key, or a key that cannot
+     * sign, is discarded along with the key and rebuilt, because such a pair
+     * completes no handshake and only fails per-connection.
      */
     fun load(context: Context, subjectAltIps: List<String>): WebCertificate {
         val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
         val certFile = File(File(context.filesDir, CERT_DIR), CERT_FILE)
-        if (keyStore.containsAlias(ALIAS)) {
-            val stored = if (certFile.isFile) readCertificate(certFile) else null
-            if (stored != null && isUsable(stored) && addressesNotNamed(stored, subjectAltIps).isEmpty()) {
-                return WebCertificate(keyStore, ALIAS, stored, fingerprintOf(stored))
-            }
-            // The key is kept and a fresh certificate is signed over it with every
-            // current address named. The alternative, reusing the stale names, is
-            // what made the browser warn about an address it could not match.
-            val certificate = reissue(keyStore, certFile, stored, subjectAltIps)
-            return WebCertificate(keyStore, ALIAS, certificate, fingerprintOf(certificate))
+        val stored = if (certFile.isFile) readCertificate(certFile) else null
+        val key = readKey(keyStore)
+        // The disposition is the one place the three cases are decided, so the
+        // choice is testable without a phone: the match check is what stops a
+        // keystore that was reset or a key remade apart from the certificate from
+        // being served.
+        val certificate = when (certificateDisposition(stored, key, subjectAltIps)) {
+            CertificateDisposition.REUSE -> requireNotNull(stored)
+            CertificateDisposition.REISSUE ->
+                reissue(keyStore, requireNotNull(stored), requireNotNull(key), certFile, subjectAltIps)
+            CertificateDisposition.REGENERATE -> generate(keyStore, certFile, subjectAltIps)
         }
-        // No key yet, so build both together; the pair always belongs together.
-        val certificate = generate(keyStore, certFile, subjectAltIps)
         return WebCertificate(keyStore, ALIAS, certificate, fingerprintOf(certificate))
     }
 
+    /** The keystore key, or null when the alias is missing or the entry cannot be read. */
+    private fun readKey(keyStore: KeyStore): PrivateKey? =
+        runCatching { keyStore.getKey(ALIAS, null) as? PrivateKey }.getOrNull()
+
     /**
-     * Signs a new certificate over the existing keystore key, naming
-     * [subjectAltIps]. The public key comes from the stored certificate because
-     * an Android keystore entry holds a key and not a certificate. Falls back to
-     * [generate] when there is no key, no stored certificate, or the key does not
-     * actually match it, which is the only case where the pair has to be rebuilt.
+     * Signs a new certificate over [key] with every address named. The public key
+     * comes from [stored] because an Android keystore entry holds a key and not a
+     * certificate, and the caller has already proved the two belong together. If
+     * signing or writing fails anyway, the pair is rebuilt rather than left half
+     * written.
      */
     private fun reissue(
         keyStore: KeyStore,
+        stored: X509Certificate,
+        key: PrivateKey,
         certFile: File,
-        stored: X509Certificate?,
         subjectAltIps: List<String>,
     ): X509Certificate {
-        val publicKey = stored?.publicKey ?: return generate(keyStore, certFile, subjectAltIps)
-        val privateKey = runCatching { keyStore.getKey(ALIAS, null) as? PrivateKey }.getOrNull()
-            ?: return generate(keyStore, certFile, subjectAltIps)
-        val keyPair = KeyPair(publicKey, privateKey)
         val now = System.currentTimeMillis()
-        val certificate = assembleSelfSigned(
-            keyPair = keyPair,
-            commonName = COMMON_NAME,
-            notBefore = Date(now - ONE_DAY_MS),
-            notAfter = Date(now + TEN_YEARS_MS),
-            subjectAltIps = subjectAltIps,
-        )
-        // If the keystore key is not the one the stored certificate's public key
-        // belongs to, a browser cannot complete the handshake with this
-        // certificate, so rebuild the pair instead of serving it.
         return runCatching {
-            certificate.verify(publicKey)
+            val certificate = assembleSelfSigned(
+                keyPair = KeyPair(stored.publicKey, key),
+                commonName = COMMON_NAME,
+                notBefore = Date(now - ONE_DAY_MS),
+                notAfter = Date(now + TEN_YEARS_MS),
+                subjectAltIps = subjectAltIps,
+            )
             certFile.parentFile?.mkdirs()
             certFile.writeBytes(certificate.encoded)
             certificate
@@ -136,7 +132,4 @@ object WebCertificateStore {
             CertificateFactory.getInstance("X.509").generateCertificate(stream) as X509Certificate
         }
     }.getOrNull()
-
-    private fun isUsable(certificate: X509Certificate): Boolean =
-        runCatching { certificate.checkValidity() }.isSuccess
 }

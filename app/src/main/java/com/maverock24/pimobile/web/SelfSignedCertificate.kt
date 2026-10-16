@@ -11,7 +11,9 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import java.math.BigInteger
 import java.security.KeyPair
 import java.security.MessageDigest
+import java.security.PrivateKey
 import java.security.SecureRandom
+import java.security.Signature
 import java.security.cert.X509Certificate
 import java.util.Date
 import javax.security.auth.x500.X500Principal
@@ -66,6 +68,64 @@ internal fun subjectAltIpsOf(certificate: X509Certificate): Set<String> =
 internal fun addressesNotNamed(certificate: X509Certificate, addresses: List<String>): List<String> {
     val named = subjectAltIpsOf(certificate)
     return addresses.filterNot { it in named }
+}
+
+/**
+ * What to do with the certificate material found in the keystore and in app
+ * storage. The key and the certificate are regenerated apart, so which one is
+ * stale decides whether the key survives.
+ */
+internal enum class CertificateDisposition { REUSE, REISSUE, REGENERATE }
+
+/** The fixed bytes the key-match check signs; only that the same bytes are signed and checked matters. */
+private val MATCH_CHALLENGE = "pi-remote-web-access key match".toByteArray(Charsets.UTF_8)
+
+/**
+ * Whether [privateKey] is the key [certificate] was issued for.
+ *
+ * The private key lives in the keystore and the certificate lives in app storage,
+ * so the two can come apart: a keystore reset, or a key remade while the stored
+ * certificate stayed behind, leaves a pair that presents one key and signs with
+ * another. TLS only discovers that during the handshake, and then only as a close
+ * with no certificate shown. The check signs a fixed challenge and verifies it
+ * under the certificate's own public key, which is the property the handshake
+ * needs. A key that cannot sign at all, such as one made with a digest it was not
+ * given, fails here rather than at handshake time.
+ *
+ * The signer is provider-less on purpose, like the certificate assembly, because
+ * only the platform's own [Signature] can use an Android keystore key.
+ */
+internal fun certificateMatchesKey(certificate: X509Certificate, privateKey: PrivateKey): Boolean =
+    runCatching {
+        val signer = Signature.getInstance(SIGNATURE_ALGORITHM)
+        signer.initSign(privateKey)
+        signer.update(MATCH_CHALLENGE)
+        val signed = signer.sign()
+        val verifier = Signature.getInstance(SIGNATURE_ALGORITHM)
+        verifier.initVerify(certificate.publicKey)
+        verifier.update(MATCH_CHALLENGE)
+        verifier.verify(signed)
+    }.getOrDefault(false)
+
+/**
+ * Chooses between reusing the stored certificate, re-signing it over the same
+ * keystore key, and rebuilding both.
+ *
+ * A missing key, an expired certificate, or a certificate that no longer belongs
+ * to the key is a pair that has to be rebuilt, because re-signing over the key
+ * would still carry the other key's public key. Only a name that has moved is
+ * re-signed over the same key.
+ */
+internal fun certificateDisposition(
+    stored: X509Certificate?,
+    privateKey: PrivateKey?,
+    addresses: List<String>,
+): CertificateDisposition {
+    if (stored == null || privateKey == null) return CertificateDisposition.REGENERATE
+    if (runCatching { stored.checkValidity() }.isFailure) return CertificateDisposition.REGENERATE
+    if (!certificateMatchesKey(stored, privateKey)) return CertificateDisposition.REGENERATE
+    if (addressesNotNamed(stored, addresses).isNotEmpty()) return CertificateDisposition.REISSUE
+    return CertificateDisposition.REUSE
 }
 
 /**
