@@ -37,6 +37,7 @@ class WebRelayServerTest {
 
     private lateinit var gate: WebApprovalGate
     private lateinit var upstream: FakeUpstream
+    private lateinit var pinStore: FakePins
     private lateinit var server: WebRelayServer
     private var port = 0
 
@@ -55,12 +56,14 @@ class WebRelayServerTest {
     fun setUp() {
         gate = WebApprovalGate(ttlMs = 5_000)
         upstream = FakeUpstream()
+        pinStore = FakePins()
         port = ServerSocket(0).use { it.localPort }
         server = WebRelayServer(
             loadAsset = { "<html></html>" },
             expectedAuthority = authority,
             expectedOrigin = origin,
             upstream = upstream,
+            pins = pinStore,
             gate = gate,
             peerAddress = { port, host -> peerResolver(port, host) },
         )
@@ -385,6 +388,8 @@ class WebRelayServerTest {
         val responses = mutableListOf<String>()
         get("/api/state", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
         get("/api/history", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
+        get("/api/files", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
+        get("/api/pins", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
         get("/api/question", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
         get("/api/events", cookie = session.cookie, headers = mapOf("Origin" to origin)).use { responses.add(it.body!!.string()) }
         post(
@@ -419,6 +424,10 @@ class WebRelayServerTest {
             assertTrue("text delta", body.contains("\"delta\":\" there\""))
             assertTrue("question frame", body.contains("\"type\":\"question\""))
             assertTrue("option value", body.contains("\"value\":\"g\""))
+            assertTrue("talk frame", body.contains("\"type\":\"talk\""))
+            assertTrue("talk state", body.contains("\"state\":\"ready\""))
+            assertTrue("talk removed frame", body.contains("\"type\":\"talk_removed\""))
+            assertFalse("the talk created time is dropped", body.contains("createdAt"))
             assertFalse("state is dropped", body.contains("sessionFile"))
             assertFalse("pid is dropped", body.contains("\"pid\""))
             assertFalse("tool execution is dropped", body.contains("tool_execution"))
@@ -455,6 +464,86 @@ class WebRelayServerTest {
             upstream.eventsHold?.countDown()
             response.close()
         }
+    }
+
+    // ---- the files and pins screens (stage 4) -----------------------------
+
+    @Test
+    fun `every files and pins route needs a session`() {
+        get("/api/files").use { assertEquals(401, it.code) }
+        get("/api/pins").use { assertEquals(401, it.code) }
+        post("/api/pins/rename", "{}", "application/json", mapOf("Origin" to origin)).use { assertEquals(401, it.code) }
+        post("/api/pins/delete", "{}", "application/json", mapOf("Origin" to origin)).use { assertEquals(401, it.code) }
+    }
+
+    @Test
+    fun `the files proxy keeps the row fields and drops the private ones`() {
+        val session = connect()
+        get("/api/files", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(200, it.code)
+            val body = it.body!!.string()
+            assertTrue("keeps the title", body.contains("A talk"))
+            assertTrue("keeps the render state", body.contains("\"state\":\"rendering\""))
+            assertTrue("keeps the failed row error", body.contains("Kokoro could not start"))
+            assertTrue("keeps the duration", body.contains("\"durationSeconds\""))
+            assertFalse("drops the file extension", body.contains("\"ext\""))
+            assertFalse("drops the created time", body.contains("createdAt"))
+            assertFalse("no bridge token", body.contains(FakeUpstream.TOKEN_MARKER))
+        }
+    }
+
+    @Test
+    fun `a bridge that is down on files is a bad gateway, not an empty library`() {
+        val session = connect()
+        upstream.status = 500
+        get("/api/files", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(502, it.code)
+            assertTrue("the failure is named", it.body!!.string().contains("error"))
+        }
+    }
+
+    @Test
+    fun `the pins list comes from the phone store`() {
+        val session = connect()
+        get("/api/pins", cookie = session.cookie, headers = mapOf("Origin" to origin)).use {
+            assertEquals(200, it.code)
+            val body = it.body!!.string()
+            assertTrue("keeps the pin title", body.contains("Old title"))
+            assertTrue("keeps the prompt", body.contains("what is it"))
+            assertTrue("keeps the answer", body.contains("the answer"))
+            assertFalse("no bridge token", body.contains(FakeUpstream.TOKEN_MARKER))
+        }
+    }
+
+    @Test
+    fun `a pin rename and delete need the csrf token and change the phone store`() {
+        val session = connect()
+        post(
+            "/api/pins/rename",
+            """{"id":"p-1","title":"New title"}""",
+            "application/json",
+            mapOf("Origin" to origin),
+            session.cookie,
+        ).use { assertEquals(403, it.code) }
+        assertEquals("a refused rename never reaches the store", "Old title", pinStore.title)
+
+        post(
+            "/api/pins/rename",
+            """{"id":"p-1","title":"New title"}""",
+            "application/json",
+            mapOf("Origin" to origin, "X-CSRF-Token" to session.csrf),
+            session.cookie,
+        ).use { assertEquals(200, it.code) }
+        assertEquals("New title", pinStore.title)
+
+        post(
+            "/api/pins/delete",
+            """{"id":"p-1"}""",
+            "application/json",
+            mapOf("Origin" to origin, "X-CSRF-Token" to session.csrf),
+            session.cookie,
+        ).use { assertEquals(200, it.code) }
+        assertTrue("the pin is gone from the store", pinStore.pins.isEmpty())
     }
 
     // ---- headers -----------------------------------------------------------
@@ -573,6 +662,12 @@ class WebRelayServerTest {
             return UpstreamResult(200, HISTORY_BODY)
         }
 
+        override suspend fun files(clientLabel: String): UpstreamResult {
+            calls.add(clientLabel)
+            if (status != 200) return UpstreamResult(status, """{"error":"boom"}""")
+            return UpstreamResult(200, FILES_BODY)
+        }
+
         override suspend fun question(clientLabel: String): UpstreamResult {
             calls.add(clientLabel)
             if (status != 200) return UpstreamResult(status, """{"error":"boom"}""")
@@ -641,6 +736,14 @@ class WebRelayServerTest {
                     """{"value":"g","label":"Green","description":"like grass"},{"value":"r","label":"Red","description":null}],""" +
                     """"answer":null}]}}"""
 
+            // Two rows: a talk still rendering, and a failed file with an error.
+            // `ext` and `createdAt` carry the marker so the reduction that drops
+            // them is what keeps the token out of the response.
+            val FILES_BODY =
+                """{"files":[""" +
+                    """{"id":"t-1","name":"t-1.mp3","title":"A talk","kind":"audio","ext":"$TOKEN_MARKER","state":"rendering","bytes":0,"createdAt":"$TOKEN_MARKER","durationSeconds":0,"durationEstimated":false,"voice":null,"error":null},""" +
+                    """{"id":"t-2","name":"t-2.mp3","title":"A failed talk","kind":"audio","ext":"$TOKEN_MARKER","state":"failed","bytes":10,"createdAt":"$TOKEN_MARKER","durationSeconds":12.5,"durationEstimated":true,"voice":"af","error":"Kokoro could not start: boom"}]}"""
+
             val EVENT_LINES = listOf(
                 "retry: 3000",
                 "",
@@ -658,9 +761,32 @@ class WebRelayServerTest {
                 "",
                 """data: {"seq":7,"at":"t","type":"question","data":{"pending":{"id":"q-1","tool":"question","title":"Pick","multiple":false,"questions":[{"id":"q1","label":"Colour","prompt":"Which?","options":[{"value":"g","label":"Green"}],"answer":null}]}}}""",
                 "",
-                """data: {"seq":8,"at":"t","type":"tool_execution_end","data":{"result":"$TOKEN_MARKER"}}""",
+                """data: {"seq":8,"at":"t","type":"talk","data":{"id":"t-1","title":"A talk","state":"ready","createdAt":"$TOKEN_MARKER"}}""",
+                "",
+                """data: {"seq":9,"at":"t","type":"talk_removed","data":{"id":"t-1"}}""",
+                "",
+                """data: {"seq":10,"at":"t","type":"tool_execution_end","data":{"result":"$TOKEN_MARKER"}}""",
                 "",
             )
         }
+    }
+
+    /** An in-memory stand-in for the phone's PinsStore, so the relay's pins
+     * surface is tested without Android. */
+    private class FakePins : WebPins {
+        val pins = mutableListOf(WebPin(id = "p-1", title = "Old title", prompt = "what is it", answer = "the answer"))
+
+        val title: String? get() = pins.firstOrNull()?.title
+
+        override suspend fun list(): List<WebPin> = pins.toList()
+
+        override suspend fun rename(id: String, title: String): Boolean {
+            val index = pins.indexOfFirst { it.id == id }
+            if (index < 0 || title.isBlank()) return false
+            pins[index] = pins[index].copy(title = title)
+            return true
+        }
+
+        override suspend fun delete(id: String): Boolean = pins.removeAll { it.id == id }
     }
 }

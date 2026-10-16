@@ -1,17 +1,126 @@
+/*
+
+The browser face of the app. The colours are the phone's own, taken from
+AnswerStyle.kt: the four dark palettes (midnight, indigo, amber, forest) and the
+single light scheme, which ignores the theme exactly as the phone's light mode
+does. lib/theme.js sets data-mode and data-theme on <html>; the rules below map
+those to variables so every screen reads one set of names.
+
+*/
+
 :root {
   color-scheme: dark light;
-  --line: rgba(128, 128, 128, 0.35);
-  --line-strong: rgba(128, 128, 128, 0.5);
-  --surface: rgba(128, 128, 128, 0.08);
-  --accent: #4da3ff;
+  --bg: #070d18;
+  --surface: #0b1422;
+  --surface-variant: #121926;
+  --on-bg: #ebf0f4;
+  --on-surface: #e6ebf0;
+  --on-surface-variant: #7e94a9;
+  --outline: #172236;
+  --accent: #0ad6ff;
+  --error: #e35f5f;
+  --line: rgba(23, 34, 54, 0.9);
+  --line-strong: rgba(126, 148, 169, 0.4);
+  --sky-top: #091120;
+  --sky-mid: #050b14;
+  --sky-bottom: #040911;
+  --sky-horizon: rgba(9, 52, 83, 0.6);
+  --sky-middle: rgba(6, 81, 107, 0.35);
 }
+
+[data-mode="dark"][data-theme="indigo"] {
+  --bg: #080d16;
+  --surface: #0e1420;
+  --surface-variant: #151a23;
+  --on-bg: #ebeef4;
+  --on-surface: #e6e9f0;
+  --on-surface-variant: #7e8ca9;
+  --outline: #1b2232;
+  --accent: #7aa2f7;
+  --line: rgba(27, 34, 50, 0.9);
+  --line-strong: rgba(126, 140, 169, 0.4);
+  --sky-top: #0b111e;
+  --sky-mid: #060b13;
+  --sky-bottom: #050910;
+  --sky-horizon: rgba(9, 15, 83, 0.6);
+  --sky-middle: rgba(6, 31, 107, 0.35);
+}
+
+[data-mode="dark"][data-theme="amber"] {
+  --bg: #150f0a;
+  --surface: #1e1610;
+  --surface-variant: #201c18;
+  --on-bg: #f4efeb;
+  --on-surface: #f0eae6;
+  --on-surface-variant: #937962;
+  --outline: #2e261f;
+  --accent: #f9a91f;
+  --error: #dd3c3c;
+  --line: rgba(46, 38, 31, 0.9);
+  --line-strong: rgba(147, 121, 98, 0.4);
+  --sky-top: #1c140d;
+  --sky-mid: #120c08;
+  --sky-bottom: #0f0906;
+  --sky-horizon: rgba(83, 74, 9, 0.6);
+  --sky-middle: rgba(107, 78, 6, 0.35);
+}
+
+[data-mode="dark"][data-theme="forest"] {
+  --bg: #0a1510;
+  --surface: #101e18;
+  --surface-variant: #18201d;
+  --on-bg: #ebf4f0;
+  --on-surface: #e6f0eb;
+  --on-surface-variant: #62937e;
+  --outline: #1f2e28;
+  --accent: #2eb877;
+  --error: #dd3c3c;
+  --line: rgba(31, 46, 40, 0.9);
+  --line-strong: rgba(98, 147, 126, 0.4);
+  --sky-top: #0d1c16;
+  --sky-mid: #08120e;
+  --sky-bottom: #060f0b;
+  --sky-horizon: rgba(9, 83, 67, 0.6);
+  --sky-middle: rgba(6, 107, 68, 0.35);
+}
+
+[data-mode="light"] {
+  --bg: #f6f7fa;
+  --surface: #f6f7fa;
+  --surface-variant: #f1f3f7;
+  --on-bg: #14181f;
+  --on-surface: #14181f;
+  --on-surface-variant: #5c6572;
+  --outline: #dfe3ea;
+  --accent: #3562d6;
+  --error: #dd3c3c;
+  --line: rgba(223, 227, 234, 0.9);
+  --line-strong: rgba(92, 101, 114, 0.35);
+  --sky-top: #f6f7fa;
+  --sky-mid: #f6f7fa;
+  --sky-bottom: #f6f7fa;
+  --sky-horizon: rgba(53, 98, 214, 0.06);
+  --sky-middle: rgba(53, 98, 214, 0.04);
+}
+
+* { box-sizing: border-box; }
+
 body {
   margin: 0 auto;
-  max-width: 78ch;
-  padding: 1.5rem 1.25rem 3rem;
+  max-width: 92ch;
+  padding: 1.25rem 1.25rem 3rem;
   font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--on-bg);
+  background: var(--sky-bottom);
+  background-image:
+    radial-gradient(120% 55% at 50% 100%, var(--sky-horizon), transparent 62%),
+    radial-gradient(80% 40% at 50% 55%, var(--sky-middle), transparent 60%),
+    linear-gradient(var(--sky-top), var(--sky-mid) 55%, var(--sky-bottom));
+  background-attachment: fixed;
 }
+
 h1 { font-size: 1.3rem; line-height: 1.3; margin: 0; }
+h2 { font-size: 1.05rem; margin: 0; }
 code, pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.9em;
@@ -19,8 +128,9 @@ code, pre {
 pre {
   padding: 0.75rem 1rem;
   overflow-x: auto;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
+  background: var(--surface-variant);
 }
 button {
   font: inherit;
@@ -31,29 +141,45 @@ button {
   color: inherit;
   cursor: pointer;
 }
-button.quiet { opacity: 0.7; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.quiet { opacity: 0.75; }
+button.on { border-color: var(--accent); color: var(--accent); }
 input, textarea {
   font: inherit;
   padding: 0.5rem 0.65rem;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: transparent;
+  background: var(--surface);
   color: inherit;
 }
-textarea { resize: vertical; width: 100%; box-sizing: border-box; }
+textarea { resize: vertical; width: 100%; }
 .status { font-weight: 600; }
-.status.bad { color: #d9534f; }
+.status.bad { color: var(--error); }
 .note { opacity: 0.75; font-size: 0.9rem; }
-.notice.bad { color: #d9534f; }
+.notice.bad { color: var(--error); }
+.empty { opacity: 0.75; }
+.empty.bad { color: var(--error); opacity: 1; }
+.bad { color: var(--error); }
 
 .shell-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+
+/* The screens live behind one row of tabs, so every screen is one tap away and
+   the browser reads like the phone's own view switcher rather than a console. */
+.nav { display: flex; gap: 0.4rem; margin: 0.75rem 0; flex-wrap: wrap; }
+.nav button { padding: 0.35rem 0.85rem; }
+
+.screen-head { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.6rem; }
+.screen-title { font-weight: 600; font-size: 1.05rem; }
+.screen-status { opacity: 0.7; font-size: 0.85rem; }
+.screen-head button { margin-left: auto; }
 
 /* The chat screen: a desktop layout, capped measure, transcript above the
    composer, question card between them so a blocked run is hard to miss. */
 .chat { display: flex; flex-direction: column; gap: 0.75rem; }
 .chat-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; opacity: 0.85; }
 .chat-busy { margin-left: auto; font-style: italic; }
-.conn-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: #d9534f; }
+.conn-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--error); }
 .conn-dot.on { background: #3fbf6f; }
 
 .transcript {
@@ -66,12 +192,13 @@ textarea { resize: vertical; width: 100%; box-sizing: border-box; }
   padding: 0.75rem;
   border: 1px solid var(--line);
   border-radius: 10px;
+  background: var(--surface);
 }
-.msg { border-left: 3px solid var(--line); padding: 0.15rem 0 0.15rem 0.6rem; }
+.msg { border-left: 3px solid var(--line-strong); padding: 0.15rem 0 0.15rem 0.6rem; }
 .msg.role-user { border-left-color: var(--accent); }
 .msg.role-assistant { border-left-color: #3fbf6f; }
 .msg.role-question { border-left-color: #d9a93f; opacity: 0.9; }
-.msg.failed { border-left-color: #d9534f; }
+.msg.failed { border-left-color: var(--error); }
 .msg-role { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; }
 .msg-body { white-space: pre-wrap; word-break: break-word; }
 .msg.streaming .msg-body::after { content: "▋"; opacity: 0.6; }
@@ -83,6 +210,7 @@ textarea { resize: vertical; width: 100%; box-sizing: border-box; }
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  background: var(--surface);
 }
 .question-status { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
 .question-title { font-weight: 600; }
@@ -97,3 +225,95 @@ textarea { resize: vertical; width: 100%; box-sizing: border-box; }
 
 .composer { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-end; }
 .composer textarea { min-height: 3rem; }
+
+/* Files: one card per row, the same fields the phone's row carries. */
+.files { display: flex; flex-direction: column; gap: 0.5rem; }
+.file-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.file-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-variant);
+  padding: 0.7rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.file-title { font-weight: 600; }
+.file-meta { font-size: 0.85rem; color: var(--on-surface-variant); }
+.file-error { font-size: 0.85rem; color: var(--error); }
+.file-note { font-size: 0.85rem; color: var(--on-surface-variant); font-style: italic; }
+.file-progress {
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--line);
+  position: relative;
+}
+.file-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: var(--accent);
+  animation: file-sweep 1.2s ease-in-out infinite;
+}
+@keyframes file-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+/* Pins: the list, then one pin opened, matching the phone's two views. */
+.pins { display: flex; flex-direction: column; gap: 0.5rem; }
+.pins-body { display: flex; flex-direction: column; gap: 0.5rem; }
+.pin-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  gap: 0.25rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-variant);
+}
+.pin-title { font-weight: 600; }
+.pin-snippet { font-size: 0.85rem; color: var(--on-surface-variant); }
+.pin-detail { display: flex; flex-direction: column; gap: 0.6rem; }
+.pin-detail-head { display: flex; align-items: center; gap: 0.75rem; }
+.pin-detail-title { font-weight: 600; font-size: 1.05rem; }
+.pin-prompt {
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-variant);
+  padding: 0.7rem 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pin-answer { white-space: pre-wrap; word-break: break-word; }
+.pin-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.pin-delete-ask { color: var(--error); font-size: 0.9rem; }
+.pin-title-edit { min-width: 14rem; }
+
+/* Settings: sections the phone has, kept to what a browser session can act on. */
+.settings { display: flex; flex-direction: column; gap: 1rem; }
+.settings-section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 0.85rem 1rem;
+}
+.settings-section h2 { margin-bottom: 0.15rem; }
+.settings-sub { margin: 0 0 0.6rem; font-size: 0.85rem; color: var(--on-surface-variant); }
+.settings-body { display: flex; flex-direction: column; gap: 0.5rem; }
+.settings-field { display: flex; gap: 0.75rem; font-size: 0.92rem; }
+.settings-field-name { min-width: 6rem; color: var(--on-surface-variant); }
+.settings-field-value { word-break: break-all; }
+.settings-note { margin: 0; font-size: 0.85rem; color: var(--on-surface-variant); }
+.section-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--on-surface-variant); }
+.segmented { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.theme-row .theme-button { display: flex; align-items: center; gap: 0.4rem; }
+.theme-swatch { width: 0.85rem; height: 0.85rem; border-radius: 50%; border: 1px solid var(--line-strong); }
+.theme-swatch[data-theme="midnight"] { background: #0ad6ff; }
+.theme-swatch[data-theme="indigo"] { background: #7aa2f7; }
+.theme-swatch[data-theme="amber"] { background: #f9a91f; }
+.theme-swatch[data-theme="forest"] { background: #2eb877; }

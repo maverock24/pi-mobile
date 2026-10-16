@@ -34,6 +34,7 @@ internal interface WebUpstreamStream : AutoCloseable {
 internal interface WebUpstream {
     suspend fun state(clientLabel: String): UpstreamResult
     suspend fun history(clientLabel: String, limit: Int): UpstreamResult
+    suspend fun files(clientLabel: String): UpstreamResult
     suspend fun question(clientLabel: String): UpstreamResult
     suspend fun prompt(clientLabel: String, body: String): UpstreamResult
     suspend fun answer(clientLabel: String, body: String): UpstreamResult
@@ -78,6 +79,8 @@ internal class BridgeUpstream(
 
     override suspend fun history(clientLabel: String, limit: Int): UpstreamResult =
         get(clientLabel, "/api/history?limit=$limit")
+
+    override suspend fun files(clientLabel: String): UpstreamResult = get(clientLabel, "/api/files")
 
     override suspend fun question(clientLabel: String): UpstreamResult = get(clientLabel, "/api/question")
 

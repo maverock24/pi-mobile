@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.maverock24.pimobile.MainActivity
 import com.maverock24.pimobile.R
+import com.maverock24.pimobile.data.PinsStore
 import com.maverock24.pimobile.data.SettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -97,6 +98,9 @@ class WebAccessService : Service() {
                     expectedAuthority = "$address:${WebAccess.PORT}",
                     expectedOrigin = url,
                     upstream = BridgeUpstream(baseUrl = { store.baseUrl }, token = { store.token }),
+                    // The pins are the phone's own data, so the relay reads and
+                    // writes them through the same store the app's Pins screen uses.
+                    pins = StoredPins(PinsStore(this@WebAccessService)),
                 )
                 val backendPort = relay.start()
                 // Assigned before the next step so a failure below still stops it.

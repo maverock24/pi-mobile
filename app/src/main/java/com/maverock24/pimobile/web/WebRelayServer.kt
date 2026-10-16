@@ -51,6 +51,7 @@ internal class WebRelayServer(
     private val expectedAuthority: String,
     private val expectedOrigin: String,
     private val upstream: WebUpstream,
+    private val pins: WebPins = WebPins.Empty,
     private val gate: WebApprovalGate = WebApprovalGate.shared,
     private val sessions: WebSessions = WebSessions(),
     private val peerAddress: (Int, String) -> String = { port, host -> WebPeers.lookup(port) ?: host },
@@ -112,11 +113,19 @@ internal class WebRelayServer(
 
                 get("/api/state") { proxyState(call) }
                 get("/api/history") { proxyHistory(call) }
+                get("/api/files") { proxyFiles(call) }
                 get("/api/question") { proxyQuestion(call) }
                 get("/api/events") { proxyEvents(call) }
 
                 post("/api/prompt") { proxyPrompt(call) }
                 post("/api/answer") { proxyAnswer(call) }
+
+                // The pins are the phone's own data, so these are relay-local like
+                // the session routes, not proxied bridge routes. Rename and delete
+                // are mutations, so they carry the same CSRF and JSON checks.
+                get("/api/pins") { listPins(call) }
+                post("/api/pins/rename") { renamePin(call) }
+                post("/api/pins/delete") { deletePin(call) }
 
                 post("/api/logout") { logout(call) }
             }
@@ -236,6 +245,86 @@ internal class WebRelayServer(
             return
         }
         respondJson(call, HttpStatusCode.OK, reduceHistory(result.body))
+    }
+
+    /**
+     * The library the Files screen draws, reduced to the fields the phone's rows
+     * show. A bridge that is down or that answers with a non-200 is a bad gateway,
+     * which is a different thing from an empty library and must stay different.
+     */
+    private suspend fun proxyFiles(call: ApplicationCall) {
+        val session = sessionOf(call)
+        if (session == null) {
+            respondJson(call, HttpStatusCode.Unauthorized, errorJson("no session"))
+            return
+        }
+        val result = try {
+            upstream.files(sessionLabel(session))
+        } catch (_: Throwable) {
+            respondJson(call, HttpStatusCode.BadGateway, errorJson("the phone could not reach the bridge"))
+            return
+        }
+        if (result.status != HttpStatusCode.OK.value) {
+            respondJson(call, HttpStatusCode.BadGateway, errorJson("the bridge did not answer"))
+            return
+        }
+        respondJson(call, HttpStatusCode.OK, reduceFiles(result.body))
+    }
+
+    /**
+     * The phone's pins, relay-local. A session is required because a pin carries
+     * the prompt and the answer, which are the session's own record.
+     */
+    private suspend fun listPins(call: ApplicationCall) {
+        val session = sessionOf(call)
+        if (session == null) {
+            respondJson(call, HttpStatusCode.Unauthorized, errorJson("no session"))
+            return
+        }
+        val list = runCatching { pins.list() }.getOrDefault(emptyList()).map { pin ->
+            jsonObject(
+                "id" to jsonString(pin.id),
+                "title" to jsonString(pin.title),
+                "prompt" to jsonString(pin.prompt),
+                "answer" to jsonString(pin.answer),
+            )
+        }
+        respondJson(call, HttpStatusCode.OK, jsonObject("pins" to JsonValue.Arr(list)))
+    }
+
+    /** Changes a pin's title. A mutation, so it needs the session, JSON and CSRF. */
+    private suspend fun renamePin(call: ApplicationCall) {
+        requireMutation(call) ?: return
+        val body = runCatching { parseJson(call.receiveText()) }.getOrNull() as? JsonValue.Obj
+        val id = body?.stringOrNull("id")?.takeIf { it.isNotBlank() }
+        val title = body?.stringOrNull("title")?.trim()
+        if (id == null || title.isNullOrBlank()) {
+            respondJson(call, HttpStatusCode.BadRequest, errorJson("a pin id and a title are required"))
+            return
+        }
+        val changed = runCatching { pins.rename(id, title) }.getOrDefault(false)
+        if (changed) {
+            respondJson(call, HttpStatusCode.OK, jsonObject("ok" to jsonBool(true)))
+        } else {
+            respondJson(call, HttpStatusCode.NotFound, errorJson("no such pin"))
+        }
+    }
+
+    /** Removes a pin. A mutation, so it needs the session, JSON and CSRF. */
+    private suspend fun deletePin(call: ApplicationCall) {
+        requireMutation(call) ?: return
+        val body = runCatching { parseJson(call.receiveText()) }.getOrNull() as? JsonValue.Obj
+        val id = body?.stringOrNull("id")?.takeIf { it.isNotBlank() }
+        if (id == null) {
+            respondJson(call, HttpStatusCode.BadRequest, errorJson("a pin id is required"))
+            return
+        }
+        val removed = runCatching { pins.delete(id) }.getOrDefault(false)
+        if (removed) {
+            respondJson(call, HttpStatusCode.OK, jsonObject("ok" to jsonBool(true)))
+        } else {
+            respondJson(call, HttpStatusCode.NotFound, errorJson("no such pin"))
+        }
     }
 
     /**
@@ -494,6 +583,11 @@ internal class WebRelayServer(
             "message_start", "message_end" -> reduceStreamMessage(data) ?: return null
             "message_update" -> reduceStreamUpdate(data) ?: return null
             "question" -> reduceStreamQuestion(data) ?: return null
+            // The Files screen refreshes on a talk render advancing or a talk
+            // being removed, so these two summaries are forwarded reduced and
+            // nothing else is. They are not `state` and carry no paths or pid.
+            "talk" -> reduceTalk(data) ?: return null
+            "talk_removed" -> reduceTalkRemoved(data) ?: return null
             "prompt_accepted", "agent_start", "agent_end", "agent_settled" -> data
             else -> return null
         }
@@ -565,6 +659,33 @@ internal class WebRelayServer(
             out.add(JsonValue.Obj(fields))
         }
         return jsonObject("messages" to JsonValue.Arr(out))
+    }
+
+    /**
+     * The library rows, reduced to the fields the phone's rows show. `ext` and
+     * `createdAt` are dropped because no row draws them; the rest, including the
+     * render `state` and the `error`, are what the phone shows for a file that is
+     * rendering or has failed.
+     */
+    private fun reduceFiles(body: String): JsonValue {
+        val root = runCatching { parseJson(body) }.getOrNull() as? JsonValue.Obj
+        val rows = (root?.fields?.get("files") as? JsonValue.Arr)?.items ?: emptyList()
+        val out = rows.mapNotNull { row -> (row as? JsonValue.Obj)?.let { reduceFields(it, FILE_FIELDS) } }
+        return jsonObject("files" to JsonValue.Arr(out))
+    }
+
+    /** One talk row for the Files refresh, the same fields `/api/files` exposes. */
+    private fun reduceTalk(data: JsonValue): JsonValue? {
+        val obj = data as? JsonValue.Obj ?: return null
+        if (obj.stringOrNull("id").isNullOrBlank()) return null
+        return reduceFields(obj, FILE_FIELDS)
+    }
+
+    /** A removed talk, reduced to the id the Files row keys on. */
+    private fun reduceTalkRemoved(data: JsonValue): JsonValue? {
+        val id = (data as? JsonValue.Obj)?.stringOrNull("id") ?: return null
+        if (id.isBlank()) return null
+        return jsonObject("id" to jsonString(id))
     }
 
     /**
@@ -643,7 +764,12 @@ internal class WebRelayServer(
             "/style.css" to "web/style.css",
             "/app.js" to "web/app.js",
             "/lib/relay.js" to "web/lib/relay.js",
+            "/lib/events.js" to "web/lib/events.js",
+            "/lib/theme.js" to "web/lib/theme.js",
             "/screens/chat.js" to "web/screens/chat.js",
+            "/screens/files.js" to "web/screens/files.js",
+            "/screens/pins.js" to "web/screens/pins.js",
+            "/screens/settings.js" to "web/screens/settings.js",
         )
 
         /**
@@ -668,6 +794,25 @@ internal class WebRelayServer(
         )
 
         val PENDING_FIELDS = listOf("id", "tool", "title", "multiple")
+
+        /**
+         * The file row fields the Files screen draws. `state` is the bridge's own
+         * word for a render and the `error` is the reason a failed one carries, so
+         * both are kept: a rendering file and a failed file have to read as
+         * themselves, not as an empty list.
+         */
+        val FILE_FIELDS = listOf(
+            "id",
+            "name",
+            "title",
+            "kind",
+            "state",
+            "bytes",
+            "durationSeconds",
+            "durationEstimated",
+            "voice",
+            "error",
+        )
         val QUESTION_FIELDS = listOf("id", "label", "prompt", "answer")
         val OPTION_FIELDS = listOf("value", "label", "description")
     }

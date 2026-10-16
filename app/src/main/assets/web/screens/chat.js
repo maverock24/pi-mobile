@@ -11,7 +11,7 @@ import { readJson } from "../lib/relay.js";
 // It is built as one screen with a small, explicit interface (element, start,
 // stop) so the later screens from section 13 can be added the same way instead
 // of this being a one-off console.
-export function createChatScreen({ relay, onUnauthorized }) {
+export function createChatScreen({ relay, onUnauthorized, events }) {
   const state = {
     messages: [],
     liveAnswer: null,
@@ -26,7 +26,7 @@ export function createChatScreen({ relay, onUnauthorized }) {
     notice: null,
   };
 
-  let source = null;
+  let unsubscribe = null;
   let poll = null;
   let streamedBody = null;
 
@@ -526,6 +526,14 @@ export function createChatScreen({ relay, onUnauthorized }) {
 
   // ---- lifecycle ------------------------------------------------------
 
+  function onStreamOpen() {
+    state.connected = true;
+    renderHead();
+    refreshState();
+    reloadHistory();
+    loadQuestion();
+  }
+
   function start() {
     renderHead();
     renderTranscript();
@@ -537,36 +545,28 @@ export function createChatScreen({ relay, onUnauthorized }) {
         sendPrompt();
       }
     });
-    source = new EventSource("/api/events");
-    source.onopen = () => {
-      state.connected = true;
-      renderHead();
-      refreshState();
-      reloadHistory();
-      loadQuestion();
-    };
-    source.onerror = () => {
-      // EventSource reconnects on its own; the poll below is the safety net for
-      // a question that arrived while the stream was down (finding UX3).
-      state.connected = false;
-      renderHead();
-    };
-    source.onmessage = (event) => {
-      try {
-        handleEvent(JSON.parse(event.data));
-      } catch (error) {
-        // A frame the relay did not reduce is not for this screen.
-      }
-    };
+    // The shell owns the one event stream, so a screen switch does not drop it.
+    // Subscribing after the stream is already open replays the open signal, so
+    // returning to this screen refetches state and history.
+    unsubscribe = events.subscribe({
+      onopen: onStreamOpen,
+      onerror: () => {
+        // EventSource reconnects on its own; the poll below is the safety net
+        // for a question that arrived while the stream was down (finding UX3).
+        state.connected = false;
+        renderHead();
+      },
+      onmessage: handleEvent,
+    });
     poll = window.setInterval(() => {
       refreshState();
     }, 5000);
   }
 
   function stop() {
-    if (source) {
-      source.close();
-      source = null;
+    if (unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
     }
     if (poll) {
       window.clearInterval(poll);

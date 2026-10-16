@@ -58,6 +58,7 @@ class BridgeUpstreamTest {
                     }
                 }
                 get("/api/history") { capture(call); call.respondText("""{"messages":[]}""", ContentType.Application.Json) }
+                get("/api/files") { capture(call); call.respondText("""{"files":[]}""", ContentType.Application.Json) }
                 get("/api/question") { capture(call); call.respondText("""{"pending":null}""", ContentType.Application.Json) }
                 get("/api/events") {
                     capture(call)
@@ -117,6 +118,10 @@ class BridgeUpstreamTest {
 
         upstream().question("web:abc")
         assertEquals("Bearer tok", authHeader.get())
+
+        upstream().files("web:abc")
+        assertEquals("Bearer tok", authHeader.get())
+        assertNull("the browser's cookie is never forwarded", cookieHeader.get())
 
         upstream().prompt("web:abc", """{"text":"hi"}""")
         assertEquals("Bearer tok", authHeader.get())

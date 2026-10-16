@@ -1,21 +1,36 @@
 "use strict";
 
 import { Relay, readJson } from "./lib/relay.js";
+import { createEventBus } from "./lib/events.js";
+import { createTheme } from "./lib/theme.js";
 import { createChatScreen } from "./screens/chat.js";
+import { createFilesScreen } from "./screens/files.js";
+import { createPinsScreen } from "./screens/pins.js";
+import { createSettingsScreen } from "./screens/settings.js";
 
-// The shell: the session loop from design section 5.3 and the mount point for
-// the screens. It owns the Relay (and so the CSRF secret) and the approval flow,
-// and hands the chat screen into the page once a session exists. The screens
-// themselves know nothing about approval, which is what lets the later ones from
-// section 13 be dropped in beside the chat.
+// The shell: the session loop from design section 5.3, the one event stream the
+// screens share, and the nav that mounts one screen at a time. It owns the Relay
+// (and so the CSRF secret), the approval flow and the appearance choice, and
+// hands each screen what it needs. The screens know nothing about approval,
+// which is what lets them be added beside the chat (section 13).
 
 const relay = new Relay();
+const events = createEventBus();
+const theme = createTheme();
 const statusEl = document.getElementById("status");
 const screenEl = document.getElementById("screen");
 const toolbarEl = document.getElementById("toolbar");
+const navEl = document.getElementById("nav");
 const disconnectButton = document.getElementById("disconnect");
 
-let chat = null;
+const SCREENS = [
+  { name: "chat", label: "Chat" },
+  { name: "files", label: "Files" },
+  { name: "pins", label: "Pins" },
+  { name: "settings", label: "Settings" },
+];
+
+let current = null;
 
 function setStatus(text, bad) {
   statusEl.textContent = text;
@@ -24,21 +39,56 @@ function setStatus(text, bad) {
 
 function showConnected(show) {
   toolbarEl.hidden = !show;
+  navEl.hidden = !show;
 }
 
-function unmountChat() {
-  if (chat) {
-    chat.stop();
-    chat.element.remove();
-    chat = null;
+// Builds the screen a nav button names. The chat and files screens take the
+// shared event stream; pins and settings are request-only.
+function buildScreen(name) {
+  if (name === "files") {
+    return createFilesScreen({ relay, onUnauthorized: sessionLost, events });
+  }
+  if (name === "pins") {
+    return createPinsScreen({ relay, onUnauthorized: sessionLost, onOpenChat: () => mount("chat") });
+  }
+  if (name === "settings") {
+    return createSettingsScreen({ relay, onUnauthorized: sessionLost, theme });
+  }
+  return createChatScreen({ relay, onUnauthorized: sessionLost, events });
+}
+
+function reflectNav() {
+  for (const button of navEl.querySelectorAll("button")) {
+    button.classList.toggle("on", button.dataset.screen === (current && current.name));
   }
 }
 
-function mountChat() {
-  unmountChat();
-  chat = createChatScreen({ relay, onUnauthorized: sessionLost });
-  screenEl.append(chat.element);
-  chat.start();
+function unmount() {
+  if (current) {
+    current.stop();
+    current.element.remove();
+    current = null;
+  }
+}
+
+function mount(name) {
+  unmount();
+  const screen = buildScreen(name);
+  screenEl.append(screen.element);
+  screen.start();
+  current = { name, element: screen.element, stop: screen.stop };
+  reflectNav();
+}
+
+function buildNav() {
+  for (const item of SCREENS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.screen = item.name;
+    button.textContent = item.label;
+    button.addEventListener("click", () => mount(item.name));
+    navEl.append(button);
+  }
 }
 
 // A screen's request came back 401, so the session is gone. Drop it and ask the
@@ -50,7 +100,8 @@ function sessionLost() {
     return;
   }
   relay.csrf = null;
-  unmountChat();
+  events.stop();
+  unmount();
   showConnected(false);
   requestApproval();
 }
@@ -75,7 +126,8 @@ async function requestApproval() {
     relay.csrf = body.csrf;
     setStatus("Approved. Connected.");
     showConnected(true);
-    mountChat();
+    events.start();
+    mount("chat");
     return;
   }
   if (response.status === 403) {
@@ -95,12 +147,14 @@ async function disconnect() {
   }
   await relay.post("/api/logout", {});
   relay.csrf = null;
-  unmountChat();
+  events.stop();
+  unmount();
   showConnected(false);
   requestApproval();
 }
 
 async function start() {
+  buildNav();
   showConnected(false);
   let response;
   try {
@@ -118,7 +172,8 @@ async function start() {
     relay.csrf = body.csrf;
     setStatus("Connected.");
     showConnected(true);
-    mountChat();
+    events.start();
+    mount("chat");
     return;
   }
   requestApproval();
