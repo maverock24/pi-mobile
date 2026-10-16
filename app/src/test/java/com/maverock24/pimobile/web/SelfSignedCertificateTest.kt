@@ -184,6 +184,40 @@ class SelfSignedCertificateTest {
         )
     }
 
+    @Test
+    fun `a key that can make the raw-digest signature TLS asks for is accepted`() {
+        // The handshake signs a raw digest, not a hash it computed itself, so this
+        // is the property that decides whether the keystore key can serve TLS at all.
+        assertTrue(keySignsRawDigest(newP256KeyPair().private))
+    }
+
+    @Test
+    fun `a key that cannot make the raw-digest signature TLS asks for is refused`() {
+        // A key TLS cannot sign with must be rejected. RSA cannot make an ECDSA
+        // signature at all, which stands in for the keystore key whose digests do
+        // not include NONE, the shape the build machine cannot create.
+        val rsa = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        assertTrue(!keySignsRawDigest(rsa.private))
+    }
+
+    @Test
+    fun `a certificate whose key cannot serve TLS is rebuilt`() {
+        val keyPair = newP256KeyPair()
+        val certificate = validCertificate(keyPair, listOf("192.168.43.1"))
+        // The key match and the names are both fine, so only the TLS capability can
+        // send this to REGENERATE, which is what replaces a key made before the
+        // digest set was corrected.
+        assertEquals(
+            CertificateDisposition.REGENERATE,
+            certificateDisposition(
+                certificate,
+                keyPair.private,
+                listOf("192.168.43.1"),
+                keyCanServeTls = { false },
+            ),
+        )
+    }
+
     private fun validCertificate(keyPair: java.security.KeyPair, addresses: List<String>) = assembleSelfSigned(
         keyPair = keyPair,
         commonName = "Pi Remote web access",

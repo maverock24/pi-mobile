@@ -13,6 +13,7 @@ import java.security.KeyPair
 import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.SecureRandom
+import java.security.Security
 import java.security.Signature
 import java.security.cert.X509Certificate
 import java.util.Date
@@ -32,6 +33,13 @@ import javax.security.auth.x500.X500Principal
  */
 internal const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
 internal const val CURVE = "secp256r1"
+
+/**
+ * The signature algorithm the TLS stack asks the keystore key for. On Android the
+ * handshake does not sign a hash it computed itself: it hands the transcript digest
+ * to the key as a raw, NONE-digest ECDSA signature.
+ */
+private const val RAW_DIGEST_SIGNATURE = "NONEwithECDSA"
 
 /**
  * The SHA-256 fingerprint as the colon-separated uppercase hex the browser
@@ -108,22 +116,57 @@ internal fun certificateMatchesKey(certificate: X509Certificate, privateKey: Pri
     }.getOrDefault(false)
 
 /**
+ * Whether [privateKey] can make the raw-digest signature the TLS handshake asks
+ * for. An Android keystore key is only usable with the digests it was created
+ * with, so a key made without `DIGEST_NONE` is refused during the handshake, after
+ * the listener is already up, and the connection closes with no certificate shown.
+ * The failure is invisible from the app otherwise, because the TLS engine swallows
+ * the keystore's own exception, so the property is checked when the pair is chosen
+ * and again before the socket binds.
+ *
+ * Every provider that offers the algorithm is tried, because the TLS stack does
+ * the same: the first provider may be the TLS engine, which cannot use a
+ * non-exportable keystore key, and a later provider can.
+ */
+internal fun keySignsRawDigest(privateKey: PrivateKey): Boolean {
+    val digest = MessageDigest.getInstance("SHA-256").digest(MATCH_CHALLENGE)
+    return Security.getProviders("Signature.$RAW_DIGEST_SIGNATURE").any { provider ->
+        runCatching {
+            val signer = Signature.getInstance(RAW_DIGEST_SIGNATURE, provider)
+            signer.initSign(privateKey)
+            signer.update(digest)
+            signer.sign()
+            true
+        }.getOrDefault(false)
+    }
+}
+
+/**
  * Chooses between reusing the stored certificate, re-signing it over the same
  * keystore key, and rebuilding both.
  *
  * A missing key, an expired certificate, or a certificate that no longer belongs
  * to the key is a pair that has to be rebuilt, because re-signing over the key
  * would still carry the other key's public key. Only a name that has moved is
- * re-signed over the same key.
+ * re-signed over the same key. A key that cannot make the raw-digest signature TLS
+ * needs is rebuilt too, which is how a key made before the digest set was corrected
+ * is replaced on the next start instead of being reused into a listener that
+ * accepts every connection and then hangs up.
+ *
+ * [keyCanServeTls] is a parameter so the decision is tested without a device: the
+ * Android keystore is the only place a key with the wrong digests exists, and it
+ * cannot be built on the build machine.
  */
 internal fun certificateDisposition(
     stored: X509Certificate?,
     privateKey: PrivateKey?,
     addresses: List<String>,
+    keyCanServeTls: (PrivateKey) -> Boolean = ::keySignsRawDigest,
 ): CertificateDisposition {
     if (stored == null || privateKey == null) return CertificateDisposition.REGENERATE
     if (runCatching { stored.checkValidity() }.isFailure) return CertificateDisposition.REGENERATE
     if (!certificateMatchesKey(stored, privateKey)) return CertificateDisposition.REGENERATE
+    if (!keyCanServeTls(privateKey)) return CertificateDisposition.REGENERATE
     if (addressesNotNamed(stored, addresses).isNotEmpty()) return CertificateDisposition.REISSUE
     return CertificateDisposition.REUSE
 }

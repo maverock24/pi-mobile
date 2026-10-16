@@ -122,6 +122,29 @@ class WebTlsFrontTest {
         assertNull("nothing is left listening", front.boundAddress())
     }
 
+    /**
+     * The handshake signs a raw digest with the keystore key, so a key that cannot
+     * do that accepts every connection and then closes it with no certificate, which
+     * a browser shows only as an empty response. The front must refuse such a key at
+     * start, where the service names the reason, rather than bind a dead listener.
+     */
+    @Test
+    fun `the front refuses to start when the key cannot sign a raw digest`() {
+        val material = scratchCertificate("127.0.0.1")
+        val frontPort = ServerSocket(0).use { it.localPort }
+        val front = WebTlsFront(
+            material.keyStore,
+            ALIAS,
+            material.certificate,
+            frontPort,
+            1,
+            keyCanServeTls = { false },
+        )
+        val failure = runCatching { front.start() }.exceptionOrNull()
+        assertTrue("start refuses a key TLS cannot use: $failure", failure is IllegalStateException)
+        assertNull("nothing is left listening", front.boundAddress())
+    }
+
     @Test
     fun `the diagnostics route reports the backend port and the loaded certificate`() {
         val material = scratchCertificate("127.0.0.1")

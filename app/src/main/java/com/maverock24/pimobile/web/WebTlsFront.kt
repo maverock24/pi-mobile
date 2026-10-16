@@ -49,6 +49,12 @@ class WebTlsFront(
     private val port: Int,
     private val backendPort: Int,
     private val log: (String) -> Unit = {},
+    /**
+     * Whether the key can make the raw-digest signature the handshake asks for.
+     * It is a parameter so the start check is tested off-device, where the only
+     * key that fails it cannot be built.
+     */
+    private val keyCanServeTls: (PrivateKey) -> Boolean = ::keySignsRawDigest,
 ) {
     private val running = AtomicBoolean(false)
     private val open = Collections.synchronizedSet(mutableSetOf<Socket>())
@@ -81,6 +87,14 @@ class WebTlsFront(
         // visible.
         check(certificateMatchesKey(certificate, privateKey)) {
             "The web access certificate does not match the keystore key ($keyAlias)"
+        }
+        // The handshake signs a raw digest with this key, so a key that cannot do
+        // that completes no handshake. The TLS engine swallows the keystore's own
+        // exception and reports only that the handshake failed, so the reason is
+        // named here, where the service shows it, rather than left to a listener
+        // that accepts every connection and closes it with no certificate.
+        check(keyCanServeTls(privateKey)) {
+            "The web access key cannot sign a raw digest, which TLS requires ($keyAlias)"
         }
         val context = SSLContext.getInstance("TLS")
         // The key manager is built by hand rather than from the keystore alone.

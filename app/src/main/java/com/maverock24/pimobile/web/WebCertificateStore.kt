@@ -110,7 +110,14 @@ object WebCertificateStore {
         generator.initialize(
             KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
                 .setAlgorithmParameterSpec(ECGenParameterSpec(CURVE))
-                .setDigests(KeyProperties.DIGEST_SHA256)
+                // SHA-256 is what this app signs the certificate and the key-match
+                // challenge with. NONE is what the TLS stack asks for: on Android the
+                // handshake hands its own digest to the key as a NONEwithECDSA
+                // signature, and a keystore key is only usable with the digests it was
+                // created with. Leaving NONE out fails every handshake after the
+                // listener is up, with no certificate sent, which a browser shows only
+                // as an empty response.
+                .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_NONE)
                 .build(),
         )
         val keyPair: KeyPair = generator.generateKeyPair()
