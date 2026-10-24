@@ -22,6 +22,8 @@ import com.maverock24.pimobile.data.PinsStore
 import com.maverock24.pimobile.data.SettingsStore
 import com.maverock24.pimobile.data.TranscriptEntry
 import com.maverock24.pimobile.data.TranscriptStore
+import com.maverock24.pimobile.data.clearDirectory
+import com.maverock24.pimobile.data.directoryBytes
 import com.maverock24.pimobile.data.mergeTranscript
 import com.maverock24.pimobile.net.BridgeException
 import com.maverock24.pimobile.net.Diagnostics
@@ -474,6 +476,25 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Download progress per file name, 0f to 1f, present only while one is running. */
     val downloadProgress = mutableStateMapOf<String, Float>()
+
+    /**
+     * What the app's own copies take on this phone: everything in the download
+     * directory and everything in the cache directory. It is read on demand
+     * rather than tracked, because it only changes on a download and on a
+     * clear, and both of those read it again afterwards.
+     */
+    var localCopiesBytes by mutableStateOf(0L)
+        private set
+
+    /**
+     * The names the bridge listed the last time it answered. A row that is not
+     * in here is one only this phone knows, kept so it still plays offline; it
+     * is what tells a clear which rows have no library entry to come back from.
+     */
+    private var lastRemoteNames: Set<String> = emptySet()
+
+    /** The app's cache, the other place it stores bytes and the other half of a clear. */
+    private val cacheDir = app.cacheDir
 
     /** True while the bridge is being asked for the library. */
     var filesLoading by mutableStateOf(false)
@@ -2144,6 +2165,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun applyFiles(remote: List<FileRow>) {
         val remoteNames = remote.mapTo(HashSet()) { it.name }
+        lastRemoteNames = remoteNames
         val merged = ArrayList<FileRow>(remote)
         // A file saved on the phone but no longer listed by the bridge still plays
         // offline, so it stays, after the live rows rather than being dropped.
@@ -2381,6 +2403,68 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         files.removeAll { it.name == name }
         if (filePreview?.name == name) filePreview = null
         if (player.playingId == name) player.stop()
+    }
+
+    /**
+     * Read the footprint of the app's own copies again. Both halves are a walk
+     * of a directory, so it runs off the main thread.
+     */
+    fun measureLocalCopies() {
+        safeLaunch {
+            localCopiesBytes = withContext(Dispatchers.IO) { localCopiesOnDisk() }
+        }
+    }
+
+    private fun localCopiesOnDisk(): Long =
+        runCatching { filesStore.totalBytes() }.getOrElse { 0L } +
+            runCatching { directoryBytes(cacheDir) }.getOrElse { 0L }
+
+    /**
+     * Delete every copy this app keeps on this phone: the downloaded episodes and
+     * their records, and the cache directory. Nothing on the laptop goes. See
+     * [clearDirectory] for the two rules that keep this inside the app's own
+     * directories, and note that the bridge's library is only ever read over
+     * HTTP, so there is no path from the phone to a file there at all.
+     *
+     * Rows the bridge still lists stay in the library after this, which is what
+     * makes a cleared episode one tap from being downloaded again. A row only
+     * this phone knew about has nothing left behind it and is dropped.
+     */
+    fun clearLocalCopies() {
+        // A download that is still writing would put its bytes into a file this
+        // has just unlinked, and its row would then claim bytes that are gone.
+        // Asking for a moment is honest and costs a sentence.
+        if (downloadProgress.isNotEmpty()) {
+            notifyError("A download is still running. Clear again once it has finished.")
+            return
+        }
+        // Stopping first is deliberate: the file the player is reading is about to
+        // be deleted, and a stop the human asked for reads differently from audio
+        // that disappears mid-sentence.
+        val wasPlaying = player.playingId != null
+        if (wasPlaying) player.stop()
+        safeLaunch {
+            val (freed, kept) = withContext(Dispatchers.IO) {
+                val bytes = runCatching { filesStore.clearAll() }.getOrElse { 0L } +
+                    runCatching { clearDirectory(cacheDir) }.getOrElse { 0L }
+                // Read the store back rather than assuming it is empty: a download
+                // that landed while the clear ran is genuinely on the phone, and one
+                // whose bytes went is filtered out by the same reader.
+                bytes to runCatching { filesStore.list() }.getOrElse { emptyList() }
+            }
+            downloadedIds.clear()
+            kept.forEach { downloadedIds.add(it.name) }
+            localCopiesBytes = (localCopiesBytes - freed).coerceAtLeast(0L)
+            files.removeAll { it.name !in lastRemoteNames }
+            filePreview = null
+            notifyConfirmation(
+                when {
+                    freed <= 0L -> "Nothing was stored on this phone to clear"
+                    wasPlaying -> "Cleared ${formatSize(freed)}. Playback stopped."
+                    else -> "Cleared ${formatSize(freed)}"
+                },
+            )
+        }
     }
 
     /**

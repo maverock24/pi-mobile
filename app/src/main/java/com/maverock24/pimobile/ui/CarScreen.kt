@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -312,9 +314,13 @@ private fun CarAskPanel(
 }
 
 /**
- * The listening half: the current audio with one big play/pause, then a short
- * list of files worth playing. The list is capped at three and puts the files
- * already on the phone first, because those play on the first tap.
+ * The listening half: the current audio with one big play/pause, then the whole
+ * episode list. The list scrolls because it is as long as the library, and every
+ * row carries its title, its category and what a tap will do, so a driver reads
+ * one row and acts on it rather than comparing rows.
+ *
+ * The play/pause card stays above the list and does not scroll with it, so the
+ * control that was here before the list is still one touch away from the panel.
  */
 @Composable
 private fun CarListenPanel(vm: ChatViewModel, modifier: Modifier = Modifier) {
@@ -368,64 +374,154 @@ private fun CarListenPanel(vm: ChatViewModel, modifier: Modifier = Modifier) {
             }
         }
         Spacer(modifier = Modifier.height(AnswerStyle.sectionGap))
-        Text(
-            text = "Play something",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
-        // Audio and video rows that are ready to play. A render that is still
-        // going or has failed is left out rather than offered as a control that
-        // cannot work yet.
-        val playable = vm.files
-            .filter { (it.kind == "audio" || it.kind == "video") && it.state != "rendering" && it.state != "failed" }
-            .sortedByDescending { vm.downloadedIds.contains(it.name) }
-            .take(3)
-        if (playable.isEmpty()) {
+        // Audio and video rows, newest first as the bridge sends them. A render
+        // that has failed or is still going is listed with that said on it rather
+        // than hidden: an episode the driver asked for that is not there is worse
+        // than one that says why it cannot play yet.
+        val episodes = vm.files.filter { it.kind == "audio" || it.kind == "video" }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = "No audio to play yet. Ask for a talk and it appears here.",
+                text = "Episodes",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            if (episodes.isNotEmpty()) {
+                Text(
+                    text = episodes.size.toString(),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
+        if (episodes.isEmpty()) {
+            // An empty list because the bridge has nothing and an empty list
+            // because the bridge could not be reached read differently here, as
+            // they do on the Files screen.
+            Text(
+                text = when {
+                    vm.filesLoading -> "Loading episodes…"
+                    !vm.isConfigured -> "No episodes here. Pair the bridge in Settings to see them."
+                    else -> vm.filesError ?: "No episodes yet."
+                },
+                style = MaterialTheme.typography.titleMedium,
+                color = if (!vm.filesLoading && vm.isConfigured && vm.filesError != null) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
         } else {
-            playable.forEach { row ->
-                CarPlayRow(vm = vm, row = row)
-                Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap),
+            ) {
+                items(episodes, key = { it.name }) { row ->
+                    CarEpisodeRow(vm = vm, row = row)
+                }
             }
         }
     }
 }
 
-/** One file in the short list, a full-width target that names what it plays. */
+/**
+ * What an episode row says under its title and whether a tap reaches it, as a
+ * pure decision so the four ways a row can be unplayable are testable without a
+ * player or a bridge.
+ */
+internal data class CarEpisodeState(val detail: String, val enabled: Boolean)
+
+internal fun carEpisodeState(
+    row: FileRow,
+    downloaded: Boolean,
+    progress: Float?,
+    playing: Boolean,
+    isPlayingThis: Boolean,
+    configured: Boolean,
+): CarEpisodeState = when {
+    row.state == "failed" -> CarEpisodeState(
+        detail = row.error?.takeIf { it.isNotBlank() }
+            ?.let { "the render failed, so there is nothing to play: $it" }
+            ?: "the render failed, so there is nothing to play",
+        enabled = false,
+    )
+    row.state == "rendering" -> CarEpisodeState("still rendering, so it cannot play yet", false)
+    progress != null -> CarEpisodeState("downloading ${(progress * 100).roundToInt()}%", false)
+    isPlayingThis && playing -> CarEpisodeState("playing now, tap to pause", true)
+    downloaded -> CarEpisodeState("on this phone, tap to play", true)
+    // Downloading is the only way a row that is not on the phone becomes playable,
+    // so a phone with no bridge paired can never make this one play.
+    !configured -> CarEpisodeState("not on this phone, and no bridge is paired to fetch it", false)
+    else -> CarEpisodeState("not on this phone, tap to download and play", true)
+}
+
+/**
+ * The category an episode belongs to, as the episodes carry it: their titles read
+ * "Biology: How antibiotics actually stop bacteria", so the words before the
+ * colon are the subject. The bridge sends no category field of its own, so this
+ * reads the title it does send, and a file whose title has no colon belongs to no
+ * category and is listed as other rather than given one it does not have.
+ */
+internal fun carCategory(row: FileRow): String {
+    val prefix = row.title.substringBefore(':', missingDelimiterValue = "").trim()
+    return prefix.takeIf { it.isNotEmpty() && it.length <= 24 } ?: "Other"
+}
+
+/**
+ * One episode, a full-width target that names the episode, its category and what
+ * a tap will do. A row that cannot play is drawn disabled with the reason on it,
+ * which is the one thing a control that does nothing cannot say.
+ */
 @Composable
-private fun CarPlayRow(vm: ChatViewModel, row: FileRow) {
+private fun CarEpisodeRow(vm: ChatViewModel, row: FileRow) {
     val downloaded = vm.downloadedIds.contains(row.name)
     val progress = vm.downloadProgress[row.name]
     val isThis = vm.player.playingId == row.name
-    Button(
+    val state = carEpisodeState(
+        row = row,
+        downloaded = downloaded,
+        progress = progress,
+        playing = vm.player.playing,
+        isPlayingThis = isThis,
+        configured = vm.isConfigured,
+    )
+    Surface(
         onClick = {
-            // A file already on the phone plays at once; one that is not is
-            // downloaded and then played, so a tap is one action either way.
+            // The same one-tap rule the short list had: a file already on the phone
+            // plays at once; one that is not is downloaded and then played.
             if (downloaded) vm.playOrPause(row.name) else vm.downloadFile(row.name, autoPlay = true)
         },
-        enabled = progress == null,
-        contentPadding = PaddingValues(horizontal = AnswerStyle.panelPadding),
+        enabled = state.enabled,
+        color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = CarStyle.tap)
-            .tactile(haptics = true, enabled = progress == null, depth = AnswerStyle.keyDepth),
+            .tactile(haptics = true, enabled = state.enabled),
     ) {
-        Text(
-            text = when {
-                progress != null -> "Downloading ${(progress * 100).roundToInt()}%"
-                isThis && vm.player.playing -> "Pause ${row.title}"
-                else -> "Play ${row.title}"
-            },
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Column(modifier = Modifier.fillMaxWidth().padding(AnswerStyle.panelPadding)) {
+            Text(
+                text = row.title,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "${carCategory(row)} · ${state.detail}",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (row.state == "failed") {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

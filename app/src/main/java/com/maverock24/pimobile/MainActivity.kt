@@ -313,6 +313,11 @@ class MainActivity : ComponentActivity() {
                         lastCrash = vm.lastCrash,
                         quarantined = vm.quarantinedData,
                         onClearCrashState = vm::clearCrashState,
+                        localCopiesBytes = vm.localCopiesBytes,
+                        // A clear waits for a download that is still writing.
+                        clearingBlocked = vm.downloadProgress.isNotEmpty(),
+                        onMeasureLocalCopies = vm::measureLocalCopies,
+                        onClearLocalCopies = vm::clearLocalCopies,
                         onBack = { showSettings = false },
                     )
                 } else if (showFiles) {

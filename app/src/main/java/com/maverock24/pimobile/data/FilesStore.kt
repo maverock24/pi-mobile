@@ -86,6 +86,16 @@ class FilesStore(context: Context) {
         metaFile(name)?.delete()
     }
 
+    /** What every copy saved here takes, the sidecar records included. */
+    fun totalBytes(): Long = directoryBytes(dir)
+
+    /**
+     * Delete every copy saved here and say how many bytes that freed. This is
+     * the bulk form of [delete], so it only reaches files in this store's own
+     * directory, and the laptop is not involved: see [clearDirectory].
+     */
+    fun clearAll(): Long = clearDirectory(dir)
+
     private fun metaFile(name: String): File? = if (isSafeName(name)) File(dir, "$name.json") else null
 
     private fun read(file: File): DownloadedFile? = runCatching {

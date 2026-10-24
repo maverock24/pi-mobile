@@ -448,7 +448,8 @@ private fun formatMillis(ms: Long): String {
     return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
-private fun formatSize(bytes: Long): String = when {
+/** A size as one short line, shared by the library rows, Settings and the notices. */
+internal fun formatSize(bytes: Long): String = when {
     bytes <= 0L -> ""
     bytes < 1024 * 1024 -> "%.0f kB".format(bytes / 1024.0)
     else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))

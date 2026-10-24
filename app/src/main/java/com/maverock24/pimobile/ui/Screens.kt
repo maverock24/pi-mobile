@@ -1919,6 +1919,10 @@ fun SettingsScreen(
     lastCrash: String?,
     quarantined: Boolean,
     onClearCrashState: () -> Unit,
+    localCopiesBytes: Long,
+    clearingBlocked: Boolean,
+    onMeasureLocalCopies: () -> Unit,
+    onClearLocalCopies: () -> Unit,
     onBack: () -> Unit,
 ) {
     var baseUrl by rememberSaveable { mutableStateOf(initialBaseUrl) }
@@ -1932,6 +1936,13 @@ fun SettingsScreen(
     // Clearing the stored data takes the token with it, so it asks twice rather
     // than doing it under a thumb that was reaching for something else.
     var confirmingClear by rememberSaveable { mutableStateOf(false) }
+
+    // Clearing the phone's copies has no undo either, so it asks the same way.
+    var confirmingStorageClear by rememberSaveable { mutableStateOf(false) }
+
+    // The size is a directory walk, so it is read once when Settings opens and
+    // again after a clear, rather than on every recomposition of this list.
+    LaunchedEffect(Unit) { onMeasureLocalCopies() }
 
     // Pairing lives here rather than in the chat screen because it is setup work: the
     // scanner reads the QR /pair drew, and both routes end in the same link parser.
@@ -2199,6 +2210,82 @@ fun SettingsScreen(
                         text = if (updateStatus == UpdateStatus.Checking) "Checking…" else "Check for updates",
                         style = MaterialTheme.typography.bodyLarge,
                     )
+                }
+            }
+
+            SettingsSection(
+                title = "Storage",
+                subtitle = when {
+                    clearingBlocked -> "A download is running"
+                    localCopiesBytes > 0L -> "${formatSize(localCopiesBytes)} of downloads and cache"
+                    else -> "Nothing stored on this phone"
+                },
+                icon = Icons.Filled.Delete,
+                expanded = openSection == "storage",
+                onToggle = { toggle("storage") },
+            ) {
+                Text(
+                    text = "Clearing deletes the episodes and other files this app downloaded to " +
+                        "the phone, and its cache. The bridge's library and the talks folder on the " +
+                        "laptop are not touched: this app only reads those over the network, so it " +
+                        "has no path to them. There is no undo, and a deleted episode is downloaded " +
+                        "again from the bridge when it is played.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = if (localCopiesBytes > 0L) {
+                        "Clearing now frees ${formatSize(localCopiesBytes)}."
+                    } else {
+                        "Nothing is stored on this phone, so there is nothing to clear."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (clearingBlocked) {
+                    // Deleting under a download that is still writing would leave a row
+                    // claiming bytes that are gone, so the control waits for it.
+                    Text(
+                        text = "A download is still running. Clear again once it has finished.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // A clear that is playing audio stops the player first, and says so
+                // afterwards, because the alternative is audio that vanishes.
+                val canClear = localCopiesBytes > 0L && !clearingBlocked
+                if (confirmingStorageClear) {
+                    Text(
+                        text = "This deletes ${formatSize(localCopiesBytes)} of downloaded episodes and " +
+                            "cache from this phone. It cannot be undone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(AnswerStyle.controlGap)) {
+                        val label = MaterialTheme.typography.bodyLarge
+                        val size = Modifier.heightIn(min = AnswerStyle.buttonHeight)
+                        Button(
+                            onClick = {
+                                confirmingStorageClear = false
+                                onClearLocalCopies()
+                            },
+                            modifier = size.tactile(haptics = true, depth = AnswerStyle.keyDepth),
+                        ) { Text("Delete them", style = label) }
+                        OutlinedButton(
+                            onClick = { confirmingStorageClear = false },
+                            modifier = size.tactile(depth = AnswerStyle.keyDepth),
+                        ) { Text("Cancel", style = label) }
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { confirmingStorageClear = true },
+                        enabled = canClear,
+                        modifier = Modifier.fillMaxWidth()
+                            .heightIn(min = AnswerStyle.buttonHeight)
+                            .tactile(haptics = true, enabled = canClear, depth = AnswerStyle.keyDepth),
+                    ) {
+                        Text("Clear downloads and cache", style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
             }
 
