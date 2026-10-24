@@ -12,6 +12,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -21,6 +26,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -32,7 +38,11 @@ import com.maverock24.pimobile.ui.NoticeAction
 import com.maverock24.pimobile.ui.PiRemoteTheme
 import com.maverock24.pimobile.ui.SettingsScreen
 import com.maverock24.pimobile.ui.FilesScreen
+import com.maverock24.pimobile.ui.LocalScreenInsets
+import com.maverock24.pimobile.ui.MiniPlayer
 import com.maverock24.pimobile.ui.UpdateStatus
+import com.maverock24.pimobile.ui.insetsAboveMiniPlayer
+import com.maverock24.pimobile.ui.miniPlayerVisible
 import com.maverock24.pimobile.update.UpdateChecker
 import com.maverock24.pimobile.voice.Dictation
 import kotlinx.coroutines.launch
@@ -274,75 +284,114 @@ class MainActivity : ComponentActivity() {
                 // are seeded from the view model on every entry, and a saved field
                 // would re-seed them with a stale token after a pairing.
                 val holder = rememberSaveableStateHolder()
-                if (vm.carMode) {
-                    // Car mode is the outermost branch: it replaces the chat
-                    // whole, and the way out is its own big Exit button rather
-                    // than the system back gesture, so back is wired to the
-                    // same exit as a convenience.
-                    BackHandler(enabled = true) { vm.updateCarMode(false) }
-                    CarScreen(
-                        vm = vm,
-                        listening = listening,
-                        partialText = partialText,
-                        onToggleMic = toggleMic,
-                    )
-                } else if (showSettings) {
-                    // Back leaves settings rather than the app. The screen is a
-                    // destination and the chat is the app's body, so the gesture
-                    // that closes a layer should land on the chat, not finish.
-                    BackHandler(enabled = showSettings) { showSettings = false }
-                    SettingsScreen(
-                        initialBaseUrl = vm.baseUrl,
-                        initialToken = vm.token,
-                        statusLine = vm.statusLine,
-                        versionLabel = "Pi Remote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                        sessionLabel = vm.attachedLabel.ifBlank { vm.sessionTitle },
-                        appearance = vm.appearance,
-                        onAppearanceChange = vm::updateAppearance,
-                        theme = vm.theme,
-                        onThemeChange = vm::updateTheme,
-                        updateStatus = updateStatus,
-                        onCheckUpdates = checkForUpdates,
-                        onInstallUpdate = installUpdate,
-                        onPairLink = { pendingPairLink.value = it },
-                        onSave = { url, token ->
-                            vm.saveSettings(url, token)
-                            showSettings = false
-                        },
-                        onTest = vm::testConnection,
-                        lastCrash = vm.lastCrash,
-                        quarantined = vm.quarantinedData,
-                        onClearCrashState = vm::clearCrashState,
-                        localCopiesBytes = vm.localCopiesBytes,
-                        // A clear waits for a download that is still writing.
-                        clearingBlocked = vm.downloadProgress.isNotEmpty(),
-                        onMeasureLocalCopies = vm::measureLocalCopies,
-                        onClearLocalCopies = vm::clearLocalCopies,
-                        onBack = { showSettings = false },
-                    )
-                } else if (showFiles) {
-                    // Back leaves the library rather than the app, same as settings.
-                    BackHandler(enabled = showFiles) { showFiles = false }
-                    FilesScreen(
-                        vm = vm,
-                        onBack = { showFiles = false },
-                    )
-                } else {
-                    holder.SaveableStateProvider("chat") {
-                        ChatScreen(
-                            vm = vm,
-                            listening = listening,
-                            partialText = partialText,
-                            onToggleMic = toggleMic,
-                            onOpenSettings = { showSettings = true },
-                            onOpenFiles = { showFiles = true },
-                            onOpenCar = { vm.updateCarMode(true) },
-                            onNoticeAction = { action ->
-                                when (action) {
-                                    is NoticeAction.InstallUpdate -> installUpdate(action.info)
+                // The mini player is drawn once, here, under whatever screen is
+                // up. It is not part of a screen: a bar added to each screen
+                // would be a copy per screen and the copies would drift, so the
+                // root is the only place it can live and still survive a tab
+                // switch, Settings and the library.
+                val nowPlaying = vm.player.playingId
+                val miniSlot = miniPlayerVisible(nowPlaying, vm.carMode)
+                // While the bar is on screen it owns the bottom of the window,
+                // so the screens stop padding for the navigation bar there and
+                // the composer sits on the bar instead of a navigation bar's
+                // height above it. With no bar the screens pad exactly as before.
+                val screenInsets = if (miniSlot) insetsAboveMiniPlayer() else null
+                CompositionLocalProvider(LocalScreenInsets provides screenInsets) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                            if (vm.carMode) {
+                                // Car mode is the outermost branch: it replaces the chat
+                                // whole, and the way out is its own big Exit button rather
+                                // than the system back gesture, so back is wired to the
+                                // same exit as a convenience. No mini player goes over it:
+                                // car mode already has one big play and pause, and a second
+                                // set of the same controls is a thing to look at while
+                                // driving.
+                                BackHandler(enabled = true) { vm.updateCarMode(false) }
+                                CarScreen(
+                                    vm = vm,
+                                    listening = listening,
+                                    partialText = partialText,
+                                    onToggleMic = toggleMic,
+                                )
+                            } else if (showSettings) {
+                                // Back leaves settings rather than the app. The screen is a
+                                // destination and the chat is the app's body, so the gesture
+                                // that closes a layer should land on the chat, not finish.
+                                BackHandler(enabled = showSettings) { showSettings = false }
+                                SettingsScreen(
+                                    initialBaseUrl = vm.baseUrl,
+                                    initialToken = vm.token,
+                                    statusLine = vm.statusLine,
+                                    versionLabel = "Pi Remote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                                    sessionLabel = vm.attachedLabel.ifBlank { vm.sessionTitle },
+                                    appearance = vm.appearance,
+                                    onAppearanceChange = vm::updateAppearance,
+                                    theme = vm.theme,
+                                    onThemeChange = vm::updateTheme,
+                                    updateStatus = updateStatus,
+                                    onCheckUpdates = checkForUpdates,
+                                    onInstallUpdate = installUpdate,
+                                    onPairLink = { pendingPairLink.value = it },
+                                    onSave = { url, token ->
+                                        vm.saveSettings(url, token)
+                                        showSettings = false
+                                    },
+                                    onTest = vm::testConnection,
+                                    lastCrash = vm.lastCrash,
+                                    quarantined = vm.quarantinedData,
+                                    onClearCrashState = vm::clearCrashState,
+                                    localCopiesBytes = vm.localCopiesBytes,
+                                    // A clear waits for a download that is still writing.
+                                    clearingBlocked = vm.downloadProgress.isNotEmpty(),
+                                    onMeasureLocalCopies = vm::measureLocalCopies,
+                                    onClearLocalCopies = vm::clearLocalCopies,
+                                    onBack = { showSettings = false },
+                                )
+                            } else if (showFiles) {
+                                // Back leaves the library rather than the app, same as settings.
+                                BackHandler(enabled = showFiles) { showFiles = false }
+                                FilesScreen(
+                                    vm = vm,
+                                    onBack = { showFiles = false },
+                                )
+                            } else {
+                                holder.SaveableStateProvider("chat") {
+                                    ChatScreen(
+                                        vm = vm,
+                                        listening = listening,
+                                        partialText = partialText,
+                                        onToggleMic = toggleMic,
+                                        onOpenSettings = { showSettings = true },
+                                        onOpenFiles = { showFiles = true },
+                                        onOpenCar = { vm.updateCarMode(true) },
+                                        onNoticeAction = { action ->
+                                            when (action) {
+                                                is NoticeAction.InstallUpdate -> installUpdate(action.info)
+                                            }
+                                        },
+                                    )
                                 }
-                            },
-                        )
+                            }
+                        }
+                        if (miniSlot && nowPlaying != null) {
+                            MiniPlayer(
+                                vm = vm,
+                                name = nowPlaying,
+                                onOpen = {
+                                    // The library is where an episode is played,
+                                    // paused and scrubbed, so the bar opens that,
+                                    // scrolled to this file, rather than a player
+                                    // screen the app does not have. Settings is a
+                                    // layer over the chat with its own editors, so
+                                    // it closes; the full screen library is
+                                    // already the list the episode lives in, so it
+                                    // stays and only scrolls.
+                                    showSettings = false
+                                    vm.openNowPlaying()
+                                },
+                            )
+                        }
                     }
                 }
             }

@@ -6,15 +6,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -83,6 +82,19 @@ fun FilesView(
     }
 
     Column(modifier = modifier) {
+        // A tap on the mini player asks for one file by name. The list scrolls to
+        // that row and drops the request, so a later refresh does not drag the
+        // list back to a row the human has already scrolled away from. The size
+        // is part of the key because the library may still be on its way.
+        val listState = rememberLazyListState()
+        val focus = vm.filesFocus
+        LaunchedEffect(focus, vm.files.size) {
+            val wanted = focus ?: return@LaunchedEffect
+            val index = vm.files.indexOfFirst { it.name == wanted }
+            if (index < 0) return@LaunchedEffect
+            listState.scrollToItem(index)
+            vm.clearFilesFocus()
+        }
         if (vm.token.isBlank()) {
             // Without a token there is nothing to ask, and saying so is more
             // useful than an empty list that looks like a failed render.
@@ -106,7 +118,7 @@ fun FilesView(
                 )
             }
         }
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (vm.files.isEmpty()) {
                 item {
                     Box(
@@ -147,7 +159,9 @@ fun FilesScreen(
 ) {
     Scaffold(
         containerColor = Color.Transparent,
-        contentWindowInsets = WindowInsets.safeDrawing,
+        // The mini player owns the bottom of the window while it is on screen;
+        // see screenContentInsets.
+        contentWindowInsets = screenContentInsets(),
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -424,7 +438,9 @@ private fun FileRowCard(vm: ChatViewModel, row: FileRow) {
     }
 }
 
-private fun fileKindLabel(kind: String): String = when (kind) {
+/** The word a row shows for a file's kind. Shared with the mini player, so what
+ * is playing is named there exactly as it is named in the list. */
+internal fun fileKindLabel(kind: String): String = when (kind) {
     "audio" -> "audio"
     "video" -> "video"
     "image" -> "image"
@@ -443,7 +459,9 @@ private fun fileDuration(row: FileRow): String {
     return formatMillis((seconds * 1000).toLong())
 }
 
-private fun formatMillis(ms: Long): String {
+/** A length on one line. Shared by the library rows, the mini player's clock and
+ * the notices, so the same position is written the same way everywhere. */
+internal fun formatMillis(ms: Long): String {
     val totalSeconds = (ms / 1000).coerceAtLeast(0L)
     return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }

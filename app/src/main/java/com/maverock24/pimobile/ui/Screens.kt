@@ -22,14 +22,12 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -360,8 +358,9 @@ fun ChatScreen(
         containerColor = Color.Transparent,
         // Edge-to-edge draws the content under the status and navigation bars;
         // safe drawing is what keeps the composer off the gesture bar and the
-        // app bar out of the status bar.
-        contentWindowInsets = WindowInsets.safeDrawing,
+        // app bar out of the status bar. The mini player takes the bottom of it
+        // while it is on screen, which screenContentInsets reports.
+        contentWindowInsets = screenContentInsets(),
         topBar = {
             TopAppBar(
                 // The working accent line rides on the bar's own top edge and the
@@ -1973,8 +1972,9 @@ fun SettingsScreen(
         // once, behind everything, and this must not paint over it.
         containerColor = Color.Transparent,
         // Same safe-drawing inset as the chat screen: the settings list must not
-        // run under the gesture bar either.
-        contentWindowInsets = WindowInsets.safeDrawing,
+        // run under the gesture bar either, unless the mini player is holding
+        // that strip, in which case screenContentInsets says so.
+        contentWindowInsets = screenContentInsets(),
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },

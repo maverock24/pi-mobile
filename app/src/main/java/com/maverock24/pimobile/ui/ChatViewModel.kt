@@ -508,6 +508,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var filePreview by mutableStateOf<FilePreview?>(null)
         private set
 
+    /**
+     * The library row the Files view should scroll to, by file name, or null
+     * when nothing asks. The mini player sets it when it is tapped, and the list
+     * clears it once it has scrolled there, so a later refresh does not drag the
+     * list back to a row the human has already scrolled away from.
+     */
+    var filesFocus by mutableStateOf<String?>(null)
+        private set
+
     /** Names with a download in flight, so a repeated event does not start a second. */
     private val downloadsInFlight = HashSet<String>()
 
@@ -2293,6 +2302,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun seekPlayback(positionMs: Long) = player.seekTo(positionMs)
+
+    /**
+     * Stop the audio and put the player down. This is the mini player's close:
+     * a bar with nothing loaded has nothing to report, so it goes away until the
+     * next play instead of sitting there offering a pause on silence.
+     */
+    fun stopPlayback() = player.stop()
+
+    /**
+     * Open what the player holds, in the library, scrolled to its own row. The
+     * library is where an episode is played, paused and scrubbed, so the mini
+     * player opens that rather than a player screen the app does not have.
+     */
+    fun openNowPlaying() {
+        val name = player.playingId ?: return
+        updateViewMode("files")
+        filesFocus = name
+    }
+
+    /** Drop the scroll request once the Files view has honoured it. */
+    fun clearFilesFocus() {
+        filesFocus = null
+    }
 
     /**
      * Do the obvious thing for a file's kind on a tap. Audio and video play

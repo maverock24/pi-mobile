@@ -130,6 +130,13 @@ class TalkPlayer(private val context: Context) {
     /** Forget the current talk and stop the service from lingering. */
     fun stop() {
         queued = null
+        // The controller answers on its own thread, so waiting for its cleared
+        // item leaves the app claiming a talk it no longer holds for a frame or
+        // two. Clearing here is what makes the mini player go on the tap that
+        // asked for the stop rather than after it.
+        playingId = null
+        playing = false
+        durationMs = 0L
         controller?.run {
             stop()
             clearMediaItems()
