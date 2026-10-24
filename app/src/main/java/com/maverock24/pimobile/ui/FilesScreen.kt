@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,8 +68,13 @@ fun FilesView(
     modifier: Modifier = Modifier,
 ) {
     // Reading the library is cheap and it is the reason the view was opened, so
-    // it happens on entry rather than on a manual refresh.
-    LaunchedEffect(Unit) { vm.refreshFiles() }
+    // it happens whenever the view comes on screen, and the view model keeps that
+    // fact so a return to the foreground reads it again. Leaving the view clears
+    // it, so a resume from anywhere else costs no fetch.
+    DisposableEffect(Unit) {
+        vm.filesShown()
+        onDispose { vm.filesHidden() }
+    }
 
     val preview = vm.filePreview
     if (preview != null) {
@@ -210,6 +216,13 @@ private fun FilePreviewView(
                     contentDescription = preview.title,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // A script is written prose, so it is drawn with the same blocks,
+                // type scale and paragraph rhythm an answer is drawn with. A plain
+                // text file keeps the selectable body text it has always had.
+                preview.text != null && preview.kind == "script" -> AnswerView(
+                    text = preview.text,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 preview.text != null -> SelectionContainer {
                     Text(
                         text = preview.text,
@@ -275,6 +288,11 @@ private fun FileRowCard(vm: ChatViewModel, row: FileRow) {
     val downloaded = vm.downloadedIds.contains(row.name)
     val progress = vm.downloadProgress[row.name]
     val isPlayingThis = vm.player.playingId == row.name && vm.player.playing
+    // A talk's row carries the id the record was written under and the mp3 the
+    // id renders to, so the two differing is what says "this has a script beside
+    // it". A bare file's row has its own name as its id and gets no script tap.
+    val scriptName = if (row.id.isNotBlank() && row.id != row.name) "${row.id}.txt" else null
+    val scriptProgress = scriptName?.let { vm.downloadProgress[it] }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 6.dp),
@@ -363,6 +381,27 @@ private fun FileRowCard(vm: ChatViewModel, row: FileRow) {
                             ) {
                                 Text("Play")
                             }
+                        }
+                    }
+                    // The script sits under the play controls rather than beside
+                    // them: three buttons in one row overflow at a large font scale,
+                    // and reading the words is a second thing to do with an episode,
+                    // not an alternative to hearing it.
+                    if (scriptName != null) {
+                        Spacer(modifier = Modifier.height(AnswerStyle.controlGap))
+                        OutlinedButton(
+                            onClick = { vm.openScript(row) },
+                            enabled = scriptProgress == null,
+                            modifier = Modifier.fillMaxWidth().tactile(enabled = scriptProgress == null),
+                        ) {
+                            Text(
+                                text = when {
+                                    scriptProgress != null -> "Loading script ${(scriptProgress * 100).roundToInt()}%"
+                                    else -> "Read the script"
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
                 }

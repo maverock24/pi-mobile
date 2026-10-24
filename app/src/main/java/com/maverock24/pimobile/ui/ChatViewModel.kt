@@ -122,6 +122,73 @@ internal fun promptBeforeSubmitTrigger(text: String): String? {
 }
 
 /**
+ * The word that turns a spoken utterance into a request to play a file. It has
+ * to be the first word said, which is what stops a prompt that mentions playing
+ * from starting audio in the middle of a sentence: "play the chemistry one"
+ * plays, and "I want you to play with the timeline" is dictated like any other
+ * prompt.
+ */
+internal const val PLAY_TRIGGER = "play"
+
+/**
+ * Words a spoken play request can carry without naming a file. Dropping them is
+ * what lets "play the chemistry one" and "play chemistry" be one request, and
+ * "one" must go or it would have to appear in a title.
+ */
+private val PLAY_FILLER = setOf(
+    "play", "please", "the", "a", "an", "one", "it", "this", "that",
+    "episode", "talk", "file", "about", "of", "on", "for", "me", "my", "now",
+)
+
+/**
+ * The words after a spoken "play", or null when the utterance is not a play
+ * request at all. Case, punctuation and a leading "please" are ignored, since a
+ * recogniser returns "Please play the chemistry one." for the same request.
+ */
+internal fun playPhrase(text: String): List<String>? {
+    val words = text.lowercase()
+        .replace(Regex("[^a-z0-9']+"), " ")
+        .trim()
+        .split(' ')
+        .filter { it.isNotBlank() }
+        .dropWhile { it == "please" }
+    if (words.firstOrNull() != PLAY_TRIGGER) return null
+    return words.drop(1)
+}
+
+/** The words of a play request that have to name the file, in the order said. */
+internal fun playKeywords(spoken: List<String>): List<String> =
+    spoken.filter { it !in PLAY_FILLER && it.length > 1 }
+
+/**
+ * True when [keyword] is a word of [row]'s title or id. A prefix of three letters
+ * or more counts, because a person says "chem" and the title says "Chemistry:",
+ * while a two letter fragment would match too much to be a choice.
+ */
+internal fun rowAnswersTo(row: FileRow, keyword: String): Boolean =
+    "${row.title} ${row.id}".lowercase()
+        .split(Regex("[^a-z0-9]+"))
+        .filter { it.isNotBlank() }
+        .any { word -> word == keyword || (keyword.length >= 3 && word.startsWith(keyword)) }
+
+/**
+ * The files a spoken play request names, newest first. Every word the person said
+ * has to name a word of the file, so a sentence that merely starts with "play"
+ * matches nothing rather than quietly picking the first file in the list. A row
+ * that is still rendering or has failed is not offered: there is nothing to play
+ * yet, so it cannot answer the request.
+ */
+internal fun spokenFileMatches(spoken: List<String>, rows: List<FileRow>): List<FileRow> {
+    val keywords = playKeywords(spoken)
+    if (keywords.isEmpty()) return emptyList()
+    return rows.filter { row ->
+        (row.kind == "audio" || row.kind == "video") &&
+            row.state == "ready" &&
+            keywords.all { keyword -> rowAnswersTo(row, keyword) }
+    }
+}
+
+/**
  * Names a session on screen: the folder it runs in first, then the name it
  * carries. Either can be missing, so the result can come back empty and each
  * caller says what it means by that.
@@ -897,6 +964,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Called when the app comes back to the foreground. */
     fun ensureConnected() {
         if (!connected) connect() else refreshState()
+        // A file generated while the app was in a pocket is the one thing the
+        // library is opened for, so a return to the foreground asks again while
+        // the library is still the view on screen. Without this the list only
+        // ever refreshed when the view was newly composed, and an app left on it
+        // kept showing what it fetched before those files existed.
+        if (filesOnScreen) refreshFiles()
     }
 
     /**
@@ -1450,6 +1523,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun appendToDraft(text: String) {
         if (text.isBlank()) return
         val joined = if (draft.isBlank()) text else "${draft.trimEnd()} $text"
+        // Dictation is the only caller of this, so a spoken request to play a file
+        // is recognised here rather than in a second listening path. It counts
+        // only as the whole utterance, which is what keeps the same words inside
+        // a longer prompt as words: nothing plays by accident mid-sentence.
+        if (draft.isBlank()) {
+            val spoken = playPhrase(joined)
+            if (spoken != null && playFromSpeech(spoken)) {
+                draft = ""
+                return
+            }
+        }
         applyDictatedDraft(joined)
     }
 
@@ -2041,6 +2125,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** True while the library is the view on screen, so a resume knows to ask again. */
+    private var filesOnScreen by mutableStateOf(false)
+
+    /**
+     * The library came into view: read it now, and remember that it is on screen
+     * so [ensureConnected] asks again when the app returns to the foreground.
+     */
+    fun filesShown() {
+        filesOnScreen = true
+        refreshFiles()
+    }
+
+    /** The library left the screen, so a resume no longer costs a fetch. */
+    fun filesHidden() {
+        filesOnScreen = false
+    }
+
     private fun applyFiles(remote: List<FileRow>) {
         val remoteNames = remote.mapTo(HashSet()) { it.name }
         val merged = ArrayList<FileRow>(remote)
@@ -2072,7 +2173,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * is already stored is not fetched again, and a name with a download in
      * flight returns false rather than starting a second.
      */
-    private suspend fun performDownload(name: String): Boolean {
+    private suspend fun performDownload(name: String, report: Boolean = true): Boolean {
         if (!filesStore.isSafeName(name)) return false
         if (filesStore.hasDownload(name)) return true
         if (downloadsInFlight.contains(name)) return false
@@ -2102,7 +2203,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
             .onFailure { error ->
                 dest.delete()
-                notifyError("file download: ${Diagnostics.describe(error, store.baseUrl)}")
+                // A caller that has its own sentence for a missing file asks for
+                // the download to be quiet, so the human is told once, in words
+                // about the thing they tapped rather than about a download.
+                if (report) notifyError("file download: ${Diagnostics.describe(error, store.baseUrl)}")
             }
             .isSuccess
     }
@@ -2127,6 +2231,36 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (!file.isFile) return
         val title = files.firstOrNull { it.name == name }?.title ?: "File"
         player.play(file, name, title)
+    }
+
+    /**
+     * Start the file a spoken request named, or say what could not be found.
+     * Returns true when playback was asked for, which tells the caller the words
+     * were a command rather than a prompt. Several matches is not an error while
+     * driving: the newest one plays and the notice names it, so a wrong guess is
+     * one sentence the driver can hear and correct.
+     */
+    private fun playFromSpeech(spoken: List<String>): Boolean {
+        val keywords = playKeywords(spoken)
+        if (keywords.isEmpty()) {
+            notifyError("Say which file to play, like \u201cplay the chemistry one\u201d")
+            return false
+        }
+        val matches = spokenFileMatches(spoken, files)
+        val pick = matches.firstOrNull()
+        if (pick == null) {
+            // Naming what was heard is the difference between a request that did
+            // not land and one that went into the composer as a prompt.
+            notifyError("No file matches \u201c${keywords.joinToString(" ")}\u201d")
+            return false
+        }
+        // A file already on the phone plays at once; one that is not is
+        // downloaded and then played, which is the same tap the Files view makes.
+        openFile(pick.name)
+        notifyConfirmation(
+            if (matches.size > 1) "Playing newest match: ${pick.title}" else "Playing ${pick.title}",
+        )
+        return true
     }
 
     fun togglePlayback() = player.toggle()
@@ -2191,11 +2325,54 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Open a talk's spoken script as readable text. The bridge lists a talk as its
+     * audio row, so the script beside it is not a row of its own: its name is the
+     * talk's id with `.txt`, which is the name the same download route serves and
+     * the same shape the file is stored under here. Nothing new is asked of the
+     * bridge, and no route is added for it.
+     */
+    fun openScript(row: FileRow) {
+        val title = row.title
+        val script = "${row.id}.txt"
+        if (row.id.isBlank() || !filesStore.isSafeName(script)) {
+            notifyError("$title has no script to read")
+            return
+        }
+        safeLaunch {
+            val file = if (filesStore.hasDownload(script)) {
+                filesStore.fileFor(script)
+            } else if (performDownload(script, report = false)) {
+                filesStore.fileFor(script)
+            } else {
+                null
+            }
+            if (file == null) {
+                // Not every audio file has a script beside it, and saying which
+                // one is missing beats an empty screen or a download error.
+                notifyError("No script for $title")
+                return@safeLaunch
+            }
+            // A script is a couple of thousand words, so it is read off the main
+            // thread and only the screen that shows it follows.
+            val text = withContext(Dispatchers.IO) { runCatching { readTextCapped(file) }.getOrElse { "" } }
+            if (text.isBlank()) {
+                notifyError("The script for $title is empty")
+                return@safeLaunch
+            }
+            filePreview = FilePreview(name = script, title = title, kind = "script", text = text)
+        }
+    }
+
+    /**
      * Delete this phone's copy. The master on the laptop is left alone: whether
      * deleting a download should delete the original is a separate question and
      * is not answered by a tap here.
      */
     fun deleteFile(name: String) {
+        // A talk's script was fetched beside its audio, so it goes with it; left
+        // behind it would be bytes nothing lists again.
+        val row = files.firstOrNull { it.name == name }
+        if (row != null && row.id.isNotBlank() && row.id != name) filesStore.delete("${row.id}.txt")
         filesStore.delete(name)
         downloadedIds.remove(name)
         downloadProgress.remove(name)

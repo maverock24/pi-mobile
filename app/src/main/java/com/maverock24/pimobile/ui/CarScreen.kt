@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -89,12 +90,16 @@ fun CarScreen(
     // entered, so the primary action is never hidden behind a previous choice.
     var panel by rememberSaveable { mutableStateOf("ask") }
 
-    // The library is what Listen offers, so it is read on entry exactly as the
-    // Files view reads it, and the player is connected so a play tap is not
-    // dropped while the controller is still connecting. Neither starts audio.
+    // The library is what Listen offers, so it is read whenever this mode is on
+    // screen, by the same rule the Files view uses: on entry, and again when the
+    // app comes back to the foreground. The player is connected so a play tap is
+    // not dropped while the controller is still connecting. Neither starts audio.
     LaunchedEffect(Unit) {
-        vm.refreshFiles()
         vm.player.connect()
+    }
+    DisposableEffect(Unit) {
+        vm.filesShown()
+        onDispose { vm.filesHidden() }
     }
 
     // The same confirm or reject tick the chat plays, because a driver cannot
@@ -228,6 +233,15 @@ private fun CarAskPanel(
         Text(
             text = "Say \u201csend it now\u201d to send",
             style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        // The play request is the second phrase a driver needs and it is one
+        // sentence, so it is on screen beside the first.
+        Text(
+            text = "Say \u201cplay\u201d and a name to play an episode",
+            style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
