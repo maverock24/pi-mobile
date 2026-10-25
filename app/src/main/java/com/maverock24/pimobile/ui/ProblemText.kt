@@ -2,7 +2,8 @@ package com.maverock24.pimobile.ui
 
 import android.content.Context
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.ButtonColors
@@ -16,7 +17,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -34,6 +34,7 @@ import com.maverock24.pimobile.net.VpnState
  * last several debugging rounds depended on reading the exception, and the whole
  * point of the summary is that it is short enough to read without one.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ProblemFold(
     problem: Problem,
@@ -72,7 +73,9 @@ internal fun ProblemFold(
         val chips = hasDetail || showTailscale ||
             (actionLabel != null && onAction != null) || onDismiss != null
         if (chips) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // A flow rather than a row: four chips do not fit one line on a
+            // narrow phone, and a clipped "Dismiss" is a dead end.
+            FlowRow {
                 val colors = ButtonDefaults.textButtonColors(contentColor = summaryColor)
                 if (hasDetail) {
                     TextButton(
