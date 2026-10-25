@@ -1,7 +1,27 @@
 # WLAN web access for Pi Remote: design
 
-Status: design only, revised against `security-review.md` and `ux-review.md`. Nothing
-here is implemented, and nothing is committed.
+## Current state, 2026-10-25
+
+The feature works over the phone's own hotspot: another computer on that hotspot
+reaches the app, the TLS handshake completes, and the page and its assets render.
+Stages 1 to 5 are built: the TLS listener and static page, session auth, the prompt
+loop with the questionnaire card, the remaining screens, and audio playback. The
+implementation notes are the `implementation-*.md` files in this directory.
+
+Outstanding:
+
+- **Browser parity.** The app-side changes after stage 5 are not mirrored: the mini
+  player, the foreground library refresh, the script view and spoken playback are
+  phone-only, and car mode and clearing local copies are phone-only by decision.
+  Section 16 accepts the drift but requires it to be recorded.
+- **The questionnaire has never been run in a browser.** The code and the relay tests
+  cover it, but a real pi question tool has not been driven through the browser card
+  and answered on a desktop browser.
+
+Update this header when a stage or a parity change lands.
+
+Status: built in stages; the design was revised against `security-review.md` and
+`ux-review.md`.
 Scope: the Android app in this repo. The bridge, the tailnet and the host firewall do
 not change.
 Worktree: `/home/maverock24/github/pi-mobile-keys`, branch `main`, clean apart from
