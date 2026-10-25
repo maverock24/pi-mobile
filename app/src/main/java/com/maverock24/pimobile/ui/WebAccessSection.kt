@@ -28,7 +28,9 @@ import com.maverock24.pimobile.web.WebAccess
 import com.maverock24.pimobile.web.WebAccessService
 import com.maverock24.pimobile.web.WebAccessStatus
 import com.maverock24.pimobile.web.WebApprovalGate
+import com.maverock24.pimobile.net.Problem
 import com.maverock24.pimobile.web.WebDiagnostics
+import com.maverock24.pimobile.web.diagnosticsHeadline
 import com.maverock24.pimobile.web.diagnosticsSummary
 
 /**
@@ -56,7 +58,7 @@ internal fun WebAccessSection() {
                 is WebAccessStatus.On -> current.addresses.firstOrNull()
                     ?.let { "On · ${it.url(WebAccess.PORT)}" }
                     ?: "On · no address right now"
-                is WebAccessStatus.Failed -> current.message
+                is WebAccessStatus.Failed -> current.problem.summary
             }
         },
         icon = Icons.Filled.Share,
@@ -123,22 +125,27 @@ internal fun WebAccessSection() {
                 // of GET /api/diagnostics, so a connection that closed with no
                 // response has a reason the human can read without a working
                 // browser, and a listener that is up but cannot answer does not
-                // look the same as one that is serving.
+                // look the same as one that is serving. The counters and the
+                // close reason sit behind Details, because the SSLHandshake text
+                // is unreadable inline and it is exactly what is needed when the
+                // browser shows nothing.
                 SectionLabel("Listener")
-                Text(
-                    text = diagnosticsSummary(diagnostics),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (diagnostics.lastCloseReason.isNotBlank()) {
+                ProblemFold(
+                    problem = Problem(
+                        summary = diagnosticsHeadline(diagnostics),
+                        detail = diagnosticsSummary(diagnostics),
+                    ),
+                    summaryColor = if (diagnostics.lastCloseReason.isNotBlank()) {
                         MaterialTheme.colorScheme.error
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
+                    offerTailscale = false,
                 )
             }
-            is WebAccessStatus.Failed -> Text(
-                text = current.message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+            is WebAccessStatus.Failed -> ProblemFold(
+                problem = current.problem,
+                offerTailscale = false,
             )
             else -> Unit
         }

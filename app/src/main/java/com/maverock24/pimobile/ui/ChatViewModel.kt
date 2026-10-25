@@ -28,6 +28,8 @@ import com.maverock24.pimobile.data.mergeTranscript
 import com.maverock24.pimobile.net.BridgeException
 import com.maverock24.pimobile.net.Diagnostics
 import com.maverock24.pimobile.net.PiRemoteClient
+import com.maverock24.pimobile.net.Problem
+import com.maverock24.pimobile.net.Problems
 import com.maverock24.pimobile.notify.Notifier
 import com.maverock24.pimobile.player.TalkPlayer
 import com.maverock24.pimobile.update.UpdateChecker
@@ -402,6 +404,13 @@ data class Notice(
     val text: String,
     val actionLabel: String? = null,
     val action: NoticeAction? = null,
+    /**
+     * The technical half of a failure, unfolded on demand. A confirmation or a
+     * nudge leaves it empty, because there is nothing behind those worth reading.
+     */
+    val detail: String = "",
+    /** True when the failure looks like a missing tailnet link, so the bar can offer Tailscale. */
+    val tailnet: Boolean = false,
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -501,7 +510,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /** Why the last library fetch failed, or null when it did not. */
-    var filesError by mutableStateOf<String?>(null)
+    var filesError by mutableStateOf<Problem?>(null)
         private set
 
     /** What a text or image row opened, or null while the list is on screen. */
@@ -570,6 +579,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
+     * The last connection or request failure, ready to draw with its detail
+     * folded away. [statusLine] keeps the short standing truth, so a failure is
+     * one tap from its exception instead of being a paragraph in a line that the
+     * phone would cut. Null means nothing has failed since the last success.
+     */
+    var statusProblem by mutableStateOf<Problem?>(null)
+        private set
+
+    /**
+     * True when [statusProblem] came from a Test that answered. The same fold then
+     * reads as a diagnostic readout rather than as a fault, which is the only
+     * difference between the two: both keep the technical part one tap away.
+     */
+    var statusOk by mutableStateOf(false)
+        private set
+
+    /**
      * Every transient message, drawn in read order: an error, then the
      * actionable entry, then the confirmations. One channel rather than seven
      * independent lines, so two messages cannot stack and none is
@@ -585,6 +611,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun notifyError(text: String) {
         notices = reorder(
             notices.filterNot { it.kind == NoticeKind.Error } + Notice(++noticeSeq, NoticeKind.Error, text),
+        )
+    }
+
+    /** The same channel, with the failure's technical half kept behind an unfold. */
+    fun notifyError(problem: Problem) {
+        notices = reorder(
+            notices.filterNot { it.kind == NoticeKind.Error } +
+                Notice(
+                    id = ++noticeSeq,
+                    kind = NoticeKind.Error,
+                    text = problem.summary,
+                    detail = problem.detail,
+                    tailnet = problem.tailnet,
+                ),
         )
     }
 
@@ -871,9 +911,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         recoverFromStartupCrash()
         if (!store.isConfigured) {
             statusLine = "Add the bridge token in Settings"
+            statusProblem = null
             return
         }
         statusLine = "connecting to ${store.baseUrl}"
+        statusProblem = null
+        statusOk = false
         val generation = ++streamGeneration
         val call = runCatching {
             client.streamEvents(
@@ -882,6 +925,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         if (generation != streamGeneration) return@post
                         connected = true
                         statusLine = "connected"
+                        // A success clears the previous failure, so a line that
+                        // says the link is down cannot outlive the link.
+                        statusProblem = null
+                        statusOk = false
                         reconnectAttempt = 0
                     }
                 },
@@ -897,11 +944,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         if (generation != streamGeneration) return@post
                         connected = false
                         busy = false
-                        statusLine = if (error == null) {
-                            "disconnected"
-                        } else {
-                            Diagnostics.describe(error, store.baseUrl)
-                        }
+                        // The standing line stays one word; what to do about it
+                        // and the exception behind it are the folded problem.
+                        statusLine = if (error == null) "disconnected" else "not connected"
+                        statusProblem = error?.let { Problems.of(it, store.baseUrl) }
+                        statusOk = false
                         // Find out whose session the bridge serves now, then
                         // reopen the stream. A handover closes the old server, so
                         // the poll alone would take three seconds to show it.
@@ -911,7 +958,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }.getOrElse { error ->
-            statusLine = Diagnostics.describe(error, store.baseUrl)
+            statusLine = "not connected"
+            statusProblem = Problems.of(error, store.baseUrl)
             connected = false
             return
         }
@@ -1087,7 +1135,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         .filter { it.isNotBlank() }
                         .joinToString(" · ")
                 }
-                .onFailure { notifyError("state: ${Diagnostics.describe(it, store.baseUrl)}") }
+                .onFailure { notifyError(Problems.of(it, store.baseUrl, subject = "state")) }
         }
     }
 
@@ -1096,7 +1144,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             var limit = HISTORY_LIMIT
             while (true) {
                 val payload = runCatching { client.history(limit) }.getOrElse { error ->
-                    notifyError("history: ${Diagnostics.describe(error, store.baseUrl)}")
+                    notifyError(Problems.of(error, store.baseUrl, subject = "history"))
                     return@safeLaunch
                 }
                 val array = payload.optJSONArray("messages") ?: JSONArray()
@@ -1186,7 +1234,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Throwable) {
-                notifyError(error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName)
+                // The last resort: an unexpected throw is still shown the way
+                // every other failure is, short summary first and the trace one
+                // tap away.
+                notifyError(Problems.of(error))
             }
         }
     }
@@ -1379,9 +1430,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     // know, and the running bridge stays old until it is reloaded.
                     notifyError(
                         if (error is BridgeException && error.code == 404) {
-                            "this bridge has no search yet; reload it on the laptop"
+                            Problems.note("This bridge has no search yet. Reload it on the laptop.")
                         } else {
-                            Diagnostics.describe(error, store.baseUrl)
+                            Problems.of(error, store.baseUrl, subject = "search")
                         },
                     )
                 }
@@ -1602,7 +1653,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         if (draft.isBlank()) draft = trimmed
                         handleWrongSession()
                     } else {
-                        notifyError("prompt: ${Diagnostics.describe(error, store.baseUrl)}")
+                        notifyError(Problems.of(error, store.baseUrl, subject = "prompt"))
                     }
                     outcome = RequestOutcome(++outcomeSeq, ok = false)
                 }
@@ -1617,7 +1668,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (wrongSession(error)) {
                         handleWrongSession()
                     } else {
-                        error.message?.let { notifyError(it) }
+                        notifyError(Problems.of(error, store.baseUrl, subject = "abort"))
                     }
                 }
         }
@@ -1626,11 +1677,27 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun testConnection() {
         safeLaunch {
             val context = getApplication<Application>()
-            statusLine = runCatching { Diagnostics.probe(context, store.baseUrl) }
-                .getOrElse { "probe error: ${it.javaClass.simpleName}" }
+            // The probe says which network the phone is on, what the name resolved
+            // to and whether the port answered. That is what the last debugging
+            // rounds read, so it is kept whole, one tap below the line that says
+            // whether the bridge answered at all.
+            val probe = runCatching { Diagnostics.probe(context, store.baseUrl) }
+                .getOrElse { "probe failed (${it.javaClass.simpleName})" }
             runCatching { client.state() }
-                .onSuccess { statusLine = "$statusLine · HTTP OK" }
-                .onFailure { statusLine = "$statusLine · ${Diagnostics.describe(it, store.baseUrl)}" }
+                .onSuccess {
+                    // The result is a readout rather than a fault: the same fold,
+                    // drawn in the theme's quiet colour, with the probe under it.
+                    statusProblem = Problem(
+                        summary = "Test: the bridge answered, HTTP OK.",
+                        detail = probe,
+                    )
+                    statusOk = true
+                }
+                .onFailure { error ->
+                    val problem = Problems.of(error, store.baseUrl, subject = "test")
+                    statusProblem = problem.copy(detail = "$probe\n${problem.detail}")
+                    statusOk = false
+                }
         }
     }
 
@@ -1658,6 +1725,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         quarantinedData = false
         clearNotices()
         statusLine = "Add the bridge token in Settings"
+        statusProblem = null
+        statusOk = false
     }
 
     /**
@@ -1721,7 +1790,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (wrongSession(error)) {
                         handleWrongSession()
                     } else {
-                        notifyError("answer: ${Diagnostics.describe(error, store.baseUrl)}")
+                        notifyError(Problems.of(error, store.baseUrl, subject = "answer"))
                     }
                     outcome = RequestOutcome(++outcomeSeq, ok = false)
                 }
@@ -1746,7 +1815,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (wrongSession(error)) {
                         handleWrongSession()
                     } else {
-                        notifyError("cancel: ${Diagnostics.describe(error, store.baseUrl)}")
+                        notifyError(Problems.of(error, store.baseUrl, subject = "cancel"))
                     }
                 }
         }
@@ -2150,7 +2219,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     applyFiles(rows)
                     filesError = null
                 }
-                .onFailure { error -> filesError = Diagnostics.describe(error, store.baseUrl) }
+                .onFailure { error -> filesError = Problems.of(error, store.baseUrl, subject = "files") }
             filesLoading = false
         }
     }
@@ -2237,7 +2306,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // A caller that has its own sentence for a missing file asks for
                 // the download to be quiet, so the human is told once, in words
                 // about the thing they tapped rather than about a download.
-                if (report) notifyError("file download: ${Diagnostics.describe(error, store.baseUrl)}")
+                if (report) notifyError(Problems.of(error, store.baseUrl, subject = "file download"))
             }
             .isSuccess
     }

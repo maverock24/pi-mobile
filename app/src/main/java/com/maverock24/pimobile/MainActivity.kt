@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.maverock24.pimobile.net.Pairing
+import com.maverock24.pimobile.net.Problems
 import com.maverock24.pimobile.ui.CarScreen
 import com.maverock24.pimobile.ui.ChatScreen
 import com.maverock24.pimobile.ui.ChatViewModel
@@ -115,7 +116,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onFailure = { error ->
-                                UpdateStatus.Failed(error.message ?: error.javaClass.simpleName)
+                                UpdateStatus.Failed(Problems.of(error, subject = "update check"))
                             },
                         )
                     }
@@ -148,7 +149,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             .onFailure { error ->
-                                updateStatus = UpdateStatus.Failed(error.message ?: "Update failed")
+                                updateStatus = UpdateStatus.Failed(Problems.of(error, subject = "update"))
                             }
                     }
                 }
@@ -242,7 +243,7 @@ class MainActivity : ComponentActivity() {
                             vm.notifyConfirmation("Paired as ${paired.device}")
                             showSettings = false // pairing is setup work; go back to the chat
                         }
-                        .onFailure { vm.notifyError("Pairing failed: ${it.message}") }
+                        .onFailure { vm.notifyError(Problems.of(it, subject = "pairing")) }
                 }
 
                 DisposableEffect(Unit) {
@@ -323,6 +324,8 @@ class MainActivity : ComponentActivity() {
                                     initialBaseUrl = vm.baseUrl,
                                     initialToken = vm.token,
                                     statusLine = vm.statusLine,
+                                    statusProblem = vm.statusProblem,
+                                    statusOk = vm.statusOk,
                                     versionLabel = "Pi Remote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
                                     sessionLabel = vm.attachedLabel.ifBlank { vm.sessionTitle },
                                     appearance = vm.appearance,

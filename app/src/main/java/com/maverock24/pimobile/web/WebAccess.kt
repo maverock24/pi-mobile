@@ -1,5 +1,6 @@
 package com.maverock24.pimobile.web
 
+import com.maverock24.pimobile.net.Problem
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,8 +27,12 @@ internal sealed interface WebAccessStatus {
      */
     data class On(val addresses: List<WebAddress>, val fingerprint: String) : WebAccessStatus
 
-    /** It could not start, or stopped on its own for a reason worth naming. */
-    data class Failed(val message: String) : WebAccessStatus
+    /**
+     * It could not start, or stopped on its own for a reason worth naming. The
+     * short summary is what the human reads; the exception behind it is in the
+     * same [Problem] and stays folded until asked for.
+     */
+    data class Failed(val problem: Problem) : WebAccessStatus
 }
 
 internal object WebAccess {

@@ -9,12 +9,11 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URI
-import javax.net.ssl.SSLException
 
 /**
- * Failure reporting for a phone-to-laptop link over Tailscale. The platform
- * throws transport exceptions with empty messages, so always name the exception
- * class and add the likely cause.
+ * What the link is doing, for the Settings line and for [Problems]: the network
+ * the phone is on, and a TCP probe that tells DNS, routing and HTTP-policy
+ * failures apart.
  */
 object Diagnostics {
 
@@ -72,51 +71,5 @@ object Diagnostics {
                 .append(it.javaClass.simpleName).append(")")
         }
         return summary.toString()
-    }
-
-    fun hint(error: Throwable): String {
-        val message = error.message.orEmpty()
-        if (message.contains("CLEARTEXT", ignoreCase = true)) {
-            return "Android blocked cleartext HTTP for this host. Pair again to get the " +
-                "laptop's MagicDNS name; a bare tailnet IP is not allowed through."
-        }
-        return when (error) {
-            is android.os.NetworkOnMainThreadException ->
-                "internal bug — a blocking network call ran on the UI thread"
-            is java.net.UnknownHostException ->
-                "host not found — Tailscale is probably not running on the phone, so " +
-                    "this name cannot be resolved; if it is running, MagicDNS may be off or " +
-                    "the URL has a typo"
-            is java.net.SocketTimeoutException ->
-                "timed out — Tailscale may be connected but blocked, or the laptop is asleep"
-            is SSLException ->
-                "TLS failed — drop https:// unless you set up tailscale serve"
-            // SocketException is the whole transport family, not only a missing
-            // route: it also covers a refused, reset or closed connection. Claiming
-            // "no TCP route" for all of them told the human the network was down
-            // when the request had failed for another reason, which is why a Files
-            // fetch could read as a route failure while the event stream stayed up.
-            // Only NoRouteToHostException actually means no route; the others are
-            // reported as what they are.
-            is java.net.NoRouteToHostException ->
-                "no TCP route to the laptop: check that Tailscale is connected on the phone"
-            is java.net.ConnectException ->
-                "the bridge refused the connection: it is probably not running on that port"
-            is java.net.SocketException ->
-                "the connection to the bridge failed" +
-                    (if (message.isBlank()) "" else " ($message)") +
-                    ": check the bridge on the laptop and the Tailscale link on the phone"
-            else -> error.javaClass.simpleName + if (message.isBlank()) "" else ": $message"
-        }
-    }
-
-    fun describe(error: Throwable, baseUrl: String): String {
-        val raw = error.message?.takeIf { it.isNotBlank() }
-        val detail = raw ?: error.javaClass.simpleName
-        // The hint is what the user can act on, so it leads the string: the chat
-        // screen renders this with a single-line ellipsis and would otherwise cut
-        // off the half that says what to fix. Settings shows the same string and
-        // lets it wrap.
-        return "${hint(error)} · failed · $baseUrl · $detail"
     }
 }

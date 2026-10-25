@@ -69,6 +69,10 @@ internal object WebDiagnostics {
  * are the two facts that decide whether a shown address can answer at all. When
  * a handshake has failed it says so, since a browser only shows that as an empty
  * response and the phone is the only place the reason can appear.
+ *
+ * This is the detail behind [diagnosticsHeadline], not a line to read on a phone:
+ * it carries the counters and the whole close reason, so it is drawn unfolded
+ * only when the human asks for it.
  */
 internal fun diagnosticsSummary(state: ListenerDiagnostics): String {
     if (!state.certificateLoaded) {
@@ -83,5 +87,16 @@ internal fun diagnosticsSummary(state: ListenerDiagnostics): String {
             "handshakes failed, ${state.backendFailures} with no backend."
     }
     if (state.lastCloseReason.isNotBlank()) lines += state.lastCloseReason
-    return lines.joinToString(" ")
+    return lines.joinToString("\n")
+}
+
+/**
+ * The one line the Settings screen shows before anyone unfolds anything. It says
+ * whether the listener is up and whether the last connection failed, which is all
+ * a human needs to decide whether to open a browser or read the detail.
+ */
+internal fun diagnosticsHeadline(state: ListenerDiagnostics): String {
+    if (!state.certificateLoaded) return "The listener did not start: no certificate."
+    if (state.lastCloseReason.isNotBlank()) return "The listener is up and the last connection failed."
+    return "The listener is up on port ${state.listenPort}."
 }

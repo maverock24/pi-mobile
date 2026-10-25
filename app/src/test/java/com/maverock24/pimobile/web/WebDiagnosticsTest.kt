@@ -1,6 +1,7 @@
 package com.maverock24.pimobile.web
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -68,5 +69,23 @@ class WebDiagnosticsTest {
         )
         assertTrue(text, text.contains("TLS handshakes failed"))
         assertTrue("the reason is shown", text.contains("no cipher suites in common"))
+    }
+
+    @Test
+    fun `the headline stays short and names the failing state`() {
+        val failed = diagnosticsHeadline(
+            ListenerDiagnostics(
+                certificateLoaded = true,
+                listenPort = 8788,
+                lastCloseReason = "10.0.0.2: TLS handshake failed (no cipher suites in common)",
+            ),
+        )
+        assertEquals("The listener is up and the last connection failed.", failed)
+        assertFalse("the exception text stays folded", failed.contains("cipher"))
+        assertEquals("The listener did not start: no certificate.", diagnosticsHeadline(ListenerDiagnostics()))
+        assertEquals(
+            "The listener is up on port 8788.",
+            diagnosticsHeadline(ListenerDiagnostics(certificateLoaded = true, listenPort = 8788)),
+        )
     }
 }

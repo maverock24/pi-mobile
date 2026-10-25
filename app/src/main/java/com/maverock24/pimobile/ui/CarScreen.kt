@@ -406,7 +406,10 @@ private fun CarListenPanel(vm: ChatViewModel, modifier: Modifier = Modifier) {
                 text = when {
                     vm.filesLoading -> "Loading episodes…"
                     !vm.isConfigured -> "No episodes here. Pair the bridge in Settings to see them."
-                    else -> vm.filesError ?: "No episodes yet."
+                    // Car mode shows the summary only. The details stay folded
+                    // in the phone UI, where a driver is not the reader: a tap to
+                    // unfold an exception is not something to do at 80 km/h.
+                    else -> vm.filesError?.summary ?: "No episodes yet."
                 },
                 style = MaterialTheme.typography.titleMedium,
                 color = if (!vm.filesLoading && vm.isConfigured && vm.filesError != null) {
@@ -552,6 +555,9 @@ private fun CarPlaybackReadout(vm: ChatViewModel) {
 /**
  * The notice channel, in car-sized type. A send that failed has to be visible
  * here or the driver never learns the prompt did not leave; a tap clears it.
+ *
+ * Only the summary is drawn. The detail stays one tap away in the phone UI, so
+ * nothing here asks a driver to read an exception.
  */
 @Composable
 private fun CarNotices(vm: ChatViewModel) {

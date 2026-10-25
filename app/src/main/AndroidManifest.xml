@@ -26,6 +26,16 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- The app can open Tailscale so the human can connect the tunnel, and it
+         says the app is missing rather than failing silently when it is not
+         installed. Android 11 and later hide other packages from
+         getPackageInfo and getLaunchIntentForPackage unless the app names the
+         ones it talks to, so the package is declared here. This is visibility
+         only: it grants no permission and lets the app start nothing. -->
+    <queries>
+        <package android:name="com.tailscale.ipn" />
+    </queries>
+
     <application
         android:name=".PiRemoteApp"
         android:allowBackup="false"

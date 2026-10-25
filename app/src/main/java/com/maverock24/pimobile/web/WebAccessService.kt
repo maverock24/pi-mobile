@@ -15,6 +15,7 @@ import com.maverock24.pimobile.MainActivity
 import com.maverock24.pimobile.R
 import com.maverock24.pimobile.data.PinsStore
 import com.maverock24.pimobile.data.SettingsStore
+import com.maverock24.pimobile.net.Problems
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -136,7 +137,7 @@ class WebAccessService : Service() {
             } catch (error: Throwable) {
                 // Binding the fixed port can fail because something else holds
                 // it; that is worth telling the human rather than retrying.
-                teardown(WebAccessStatus.Failed(error.message ?: error.javaClass.simpleName))
+                teardown(WebAccessStatus.Failed(Problems.of(error, subject = "web access")))
             }
         }
     }

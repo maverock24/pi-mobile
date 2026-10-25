@@ -109,36 +109,34 @@ fun FilesView(
         // list is empty the box below carries the error instead, so the failure is
         // named once and never looks like the plain "No files yet" case.
         if (vm.files.isNotEmpty()) {
-            vm.filesError?.let { error ->
-                Text(
-                    text = error,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
+            vm.filesError?.let { problem ->
+                ProblemFold(
+                    problem = problem,
+                    modifier = Modifier.fillMaxWidth()
+                        .padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
                 )
             }
         }
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (vm.files.isEmpty()) {
                 item {
+                    val problem = vm.filesError
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(AnswerStyle.screenPadding),
                         contentAlignment = Alignment.Center,
                     ) {
-                        val error = vm.filesError
-                        Text(
-                            text = when {
-                                vm.filesLoading -> "Loading files…"
-                                error != null -> error
-                                else -> "No files yet"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (!vm.filesLoading && error != null) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
+                        if (vm.filesLoading || problem == null) {
+                            Text(
+                                text = if (vm.filesLoading) "Loading files…" else "No files yet",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            // The empty box carries the same fold as every other
+                            // failure, so the library's reason is short and its
+                            // exception is still one tap away.
+                            ProblemFold(problem = problem, modifier = Modifier.fillMaxWidth())
+                        }
                     }
                 }
             }

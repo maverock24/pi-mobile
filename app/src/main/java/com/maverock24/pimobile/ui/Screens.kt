@@ -118,6 +118,7 @@ import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.maverock24.pimobile.data.Pin
+import com.maverock24.pimobile.net.Problem
 import com.maverock24.pimobile.update.UpdateChecker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -451,6 +452,18 @@ fun ChatScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
                 )
             }
+            // A failed connection says what to try in one line and keeps the
+            // exception behind Details, so the reason is still there for a
+            // debugging round without filling the screen with it.
+            if (!vm.connected) {
+                vm.statusProblem?.let { problem ->
+                    ProblemFold(
+                        problem = problem,
+                        modifier = Modifier.fillMaxWidth()
+                            .padding(horizontal = AnswerStyle.screenPadding, vertical = 4.dp),
+                    )
+                }
+            }
             // The transcript under that line can be the copy saved on this phone
             // rather than live, and saying so is the difference between a record
             // and a claim that the bridge just said it.
@@ -467,7 +480,15 @@ fun ChatScreen(
             // confirmations. One render site is the whole of it, so nothing can
             // stack a second message on top of this one.
             vm.notices.forEach { n ->
-                NoticeBar(text = n.text, onDismiss = { vm.dismissNotice(n.id) }, isError = n.kind == NoticeKind.Error, actionLabel = n.actionLabel, onAction = n.action?.let { action -> { onNoticeAction(action) } })
+                NoticeBar(
+                    text = n.text,
+                    onDismiss = { vm.dismissNotice(n.id) },
+                    isError = n.kind == NoticeKind.Error,
+                    actionLabel = n.actionLabel,
+                    onAction = n.action?.let { action -> { onNoticeAction(action) } },
+                    detail = n.detail,
+                    tailnet = n.tailnet,
+                )
             }
 
             if (searchOpen) {
@@ -1639,6 +1660,8 @@ private fun NoticeBar(
     isError: Boolean = false,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    detail: String = "",
+    tailnet: Boolean = false,
 ) {
     // The text colour is passed with the fill rather than left to the container,
     // so it can never fall back to a default that does not match this theme.
@@ -1658,24 +1681,17 @@ private fun NoticeBar(
         modifier = Modifier.fillMaxWidth().padding(horizontal = AnswerStyle.panelPadding, vertical = 6.dp),
         shape = RoundedCornerShape(8.dp),
     ) {
-        Row(
+        // The same fold the status line uses, so a notice and a connection
+        // failure read the same way and one of them is never the long one.
+        ProblemFold(
+            problem = Problem(summary = text, detail = detail, tailnet = tailnet),
             modifier = Modifier.padding(horizontal = AnswerStyle.panelPadding, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = text,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall,
-                color = onContainer,
-            )
-            // The action and the dismiss are two controls, not one: a dismiss
-            // must never fire the action. Sharing the button is how the update
-            // banner used to start an install on a tap meant to close it.
-            if (actionLabel != null && onAction != null) {
-                TextButton(onClick = onAction, modifier = Modifier.tactile()) { Text(actionLabel) }
-            }
-            TextButton(onClick = onDismiss, modifier = Modifier.tactile()) { Text("Dismiss") }
-        }
+            summaryColor = onContainer,
+            detailColor = onContainer,
+            actionLabel = actionLabel,
+            onAction = onAction,
+            onDismiss = onDismiss,
+        )
     }
 }
 
@@ -1903,6 +1919,8 @@ fun SettingsScreen(
     initialBaseUrl: String,
     initialToken: String,
     statusLine: String,
+    statusProblem: Problem?,
+    statusOk: Boolean,
     versionLabel: String,
     sessionLabel: String,
     appearance: String,
@@ -2098,6 +2116,19 @@ fun SettingsScreen(
                 if (statusLine.isNotBlank()) {
                     Text(statusLine, style = MaterialTheme.typography.bodyMedium)
                 }
+                statusProblem?.let { problem ->
+                    // A Test that answered is a readout, not a fault, so it takes
+                    // the quiet colour. Both keep the technical part folded.
+                    ProblemFold(
+                        problem = problem,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        summaryColor = if (statusOk) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                }
                 if (sessionLabel.isNotBlank()) {
                     Text(
                         text = "session: $sessionLabel",
@@ -2174,11 +2205,7 @@ fun SettingsScreen(
                         )
                     }
                     is UpdateStatus.Failed -> StatusCard(border = MaterialTheme.colorScheme.error) {
-                        Text(
-                            text = status.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+                        ProblemFold(problem = status.problem, offerTailscale = false)
                     }
                     is UpdateStatus.UpToDate -> VersionCard(
                         versionName = status.versionName,
@@ -2400,8 +2427,8 @@ sealed interface UpdateStatus {
     /** A newer, verified build is ready to install. */
     data class Available(val info: UpdateChecker.Info) : UpdateStatus
 
-    /** The check or the install failed; the message is shown unchanged. */
-    data class Failed(val message: String) : UpdateStatus
+    /** The check or the install failed, with the technical half kept foldable. */
+    data class Failed(val problem: Problem) : UpdateStatus
 }
 
 /** The App Updates subtitle: it always states the state, as the media app does. */
@@ -2409,7 +2436,7 @@ private fun updateSubtitle(status: UpdateStatus): String = when (status) {
     UpdateStatus.Checking -> "Checking the latest build"
     is UpdateStatus.UpToDate -> "Up to date · ${status.versionName}"
     is UpdateStatus.Available -> "Update available · ${status.info.versionName}"
-    is UpdateStatus.Failed -> status.message
+    is UpdateStatus.Failed -> status.problem.summary
 }
 
 /** The stored appearance value as the word the Appearance subtitle shows. */
